@@ -36,8 +36,15 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     const finalName = `${Date.now()}-${sha256.slice(0,8)}${ext}`;
     const finalPath = path.join(targetDir, finalName);
 
-    // Use copy + unlink to support cross-volume/WebDAV targets
-    fs.copyFileSync(file.path, finalPath);
+    // Stream write to support WebDAV targets
+    await new Promise<void>((resolve, reject) => {
+      const rs = fs.createReadStream(file.path);
+      const ws = fs.createWriteStream(finalPath, { flags: 'w' });
+      rs.on('error', reject);
+      ws.on('error', reject);
+      ws.on('finish', () => resolve());
+      rs.pipe(ws);
+    });
     fs.unlinkSync(file.path);
 
     return res.json({ ok: true, name: originalName, size: file.size, sha256, savedPath: finalPath });
