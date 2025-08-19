@@ -1,0 +1,41 @@
+version: "3.8"
+services:
+  mongo:
+    image: mongo:6
+    container_name: admin-platform-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: admin-platform-server
+    restart: unless-stopped
+    environment:
+      - PORT=4000
+      - MONGODB_URI=mongodb://mongo:27017/admin_platform
+      - JWT_SECRET=${JWT_SECRET:-change_me}
+    depends_on:
+      - mongo
+    ports:
+      - "4000:4000"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: admin-platform-web
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    depends_on:
+      - server
+    ports:
+      - "3000:3000"
+
+volumes:
+  mongo-data: 
