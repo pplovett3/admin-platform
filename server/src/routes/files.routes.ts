@@ -35,7 +35,10 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     fs.mkdirSync(targetDir, { recursive: true });
     const finalName = `${Date.now()}-${sha256.slice(0,8)}${ext}`;
     const finalPath = path.join(targetDir, finalName);
-    fs.renameSync(file.path, finalPath);
+
+    // Use copy + unlink to support cross-volume/WebDAV targets
+    fs.copyFileSync(file.path, finalPath);
+    fs.unlinkSync(file.path);
 
     return res.json({ ok: true, name: originalName, size: file.size, sha256, savedPath: finalPath });
   } catch (e: any) {
