@@ -5,12 +5,97 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { authenticate } from '../middlewares/auth';
 import { config } from '../config/env';
+import { FileModel, FileVisibility, FileKind } from '../models/File';
+import mongoose from 'mongoose';
 
 const router = Router();
 const upload = multer({ dest: '/tmp/uploads' });
 
+function detectKindByExt(ext: string): FileKind {
+  switch (ext) {
+    case '.mp4':
+      return 'video';
+    case '.jpg':
+    case '.jpeg':
+    case '.png':
+      return 'image';
+    case '.pdf':
+      return 'pdf';
+    case '.ppt':
+    case '.pptx':
+      return 'ppt';
+    case '.doc':
+    case '.docx':
+      return 'word';
+    default:
+      return 'other';
+  }
+}
+
+router.get('/mine', authenticate as any, async (req, res) => {
+  const current = (req as any).user as { userId: string };
+  const { type, q, page = '1', pageSize = '20' } = req.query as any;
+  const filter: any = { ownerUserId: new mongoose.Types.ObjectId(current.userId) };
+  if (type) filter.type = type;
+  if (q) filter.originalName = { $regex: String(q), $options: 'i' };
+  const p = Math.max(parseInt(String(page), 10) || 1, 1);
+  const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 20, 1), 100);
+  const [rows, total] = await Promise.all([
+    FileModel.find(filter).sort({ createdAt: -1 }).skip((p - 1) * ps).limit(ps).lean(),
+    FileModel.countDocuments(filter),
+  ]);
+  const mapped = rows.map((r: any) => ({
+    id: r._id,
+    type: r.type,
+    originalName: r.originalName,
+    size: r.size,
+    createdAt: r.createdAt,
+    downloadUrl: `/api/files/${r._id}/download`,
+    visibility: r.visibility,
+  }));
+  res.json({ rows: mapped, total, page: p, pageSize: ps });
+});
+
+router.get('/public', authenticate as any, async (_req, res) => {
+  const rows = await FileModel.find({ visibility: 'public' }).sort({ createdAt: -1 }).limit(100).lean();
+  res.json(rows.map((r: any) => ({ id: r._id, type: r.type, originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: `/api/files/${r._id}/download` })));
+});
+
+router.get('/:id/download', authenticate as any, async (req, res) => {
+  const current = (req as any).user as { userId: string; role: string };
+  const id = req.params.id;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+  const doc = await FileModel.findById(id).lean();
+  if (!doc) return res.status(404).json({ message: 'Not found' });
+  const isOwner = String((doc as any).ownerUserId) === String(current.userId);
+  const isPublic = (doc as any).visibility === 'public';
+  const isSuper = current.role === 'superadmin';
+  if (!isOwner && !isPublic && !isSuper) return res.status(403).json({ message: 'Forbidden' });
+
+  const abs = path.join(config.storageRoot, (doc as any).storageRelPath.replace(/\\/g, '/'));
+  if (!fs.existsSync(abs)) return res.status(404).json({ message: 'File content missing' });
+
+  const stat = fs.statSync(abs);
+  const range = (req.headers.range || '').toString();
+  if (range && /^bytes=/.test(range)) {
+    const [startStr, endStr] = range.replace('bytes=', '').split('-');
+    let start = parseInt(startStr, 10) || 0;
+    let end = endStr ? parseInt(endStr, 10) : stat.size - 1;
+    if (start > end) start = 0;
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Length', String(end - start + 1));
+    fs.createReadStream(abs, { start, end }).pipe(res);
+    return;
+  }
+  res.setHeader('Content-Length', String(stat.size));
+  fs.createReadStream(abs).pipe(res);
+});
+
 router.post('/upload', authenticate as any, upload.single('file'), async (req, res) => {
   try {
+    const current = (req as any).user as { userId: string; role: string };
     const file = (req as any).file as any;
     if (!file) return res.status(400).json({ message: 'file is required' });
 
@@ -22,7 +107,16 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
       return res.status(400).json({ message: 'unsupported file type' });
     }
 
-    // hash
+    let visibility: FileVisibility = 'private';
+    const v = (req.body?.visibility || '').toString();
+    if (v === 'public') {
+      if (current.role !== 'superadmin') {
+        fs.unlinkSync(file.path);
+        return res.status(403).json({ message: 'only superadmin can upload public resource' });
+      }
+      visibility = 'public';
+    }
+
     const sha256 = await new Promise<string>((resolve, reject) => {
       const hash = crypto.createHash('sha256');
       fs.createReadStream(file.path)
@@ -31,12 +125,18 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
         .on('error', reject);
     });
 
-    const targetDir = path.join(config.storageRoot, 'test-uploads');
-    fs.mkdirSync(targetDir, { recursive: true });
-    const finalName = `${Date.now()}-${sha256.slice(0,8)}${ext}`;
-    const finalPath = path.join(targetDir, finalName);
+    const now = new Date();
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const id = new mongoose.Types.ObjectId().toString();
+    const rel = visibility === 'public'
+      ? path.posix.join('public', yyyy, mm, id, `original${ext}`)
+      : path.posix.join('users', current.userId, yyyy, mm, id, `original${ext}`);
 
-    // Stream write to support WebDAV targets
+    const targetDir = path.join(config.storageRoot, path.dirname(rel));
+    fs.mkdirSync(targetDir, { recursive: true });
+    const finalPath = path.join(config.storageRoot, rel);
+
     await new Promise<void>((resolve, reject) => {
       const rs = fs.createReadStream(file.path);
       const ws = fs.createWriteStream(finalPath, { flags: 'w' });
@@ -47,7 +147,21 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     });
     fs.unlinkSync(file.path);
 
-    return res.json({ ok: true, name: originalName, size: file.size, sha256, savedPath: finalPath });
+    const saved = await FileModel.create({
+      ownerUserId: new mongoose.Types.ObjectId(current.userId),
+      ownerRole: current.role as any,
+      visibility,
+      type: detectKindByExt(ext),
+      originalName,
+      ext,
+      size: file.size,
+      sha256,
+      storageRelPath: rel.replace(/\\/g, '/'),
+    } as any);
+
+    const savedId = ((saved as any)._id || '').toString();
+    const downloadUrl = `/api/files/${savedId}/download`;
+    return res.json({ ok: true, file: saved, downloadUrl });
   } catch (e: any) {
     return res.status(500).json({ message: e?.message || 'upload failed' });
   }

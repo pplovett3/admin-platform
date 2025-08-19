@@ -10,6 +10,7 @@ export interface IUser extends Document {
   studentId?: string;
   phone?: string;
   role: UserRole;
+  metaverseAllowed?: boolean;
   passwordHash: string;
 }
 
@@ -23,6 +24,7 @@ const UserSchema = new Schema<IUser>(
     phone: { type: String },
     role: { type: String, enum: ['superadmin', 'schoolAdmin', 'teacher', 'student'], required: true },
     passwordHash: { type: String, required: true },
+    metaverseAllowed: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

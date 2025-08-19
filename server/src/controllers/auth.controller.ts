@@ -6,6 +6,7 @@ import { config } from '../config/env';
 import { SchoolCourseModel } from '../models/Enrollment';
 import mongoose from 'mongoose';
 import { CourseModel } from '../models/Course';
+import { FileModel } from '../models/File';
 
 export async function login(req: Request, res: Response) {
   const { phone, password, courseId } = req.body as any;
@@ -41,14 +42,41 @@ export async function login(req: Request, res: Response) {
       role: (user as any).role,
       className: (user as any).className,
       school: (user as any).school,
-      schoolId: (user as any).schoolId?.toString() || undefined,
+      schoolId: (user as any).schoolId?.toString?.(),
       name: (user as any).name,
       phone: (user as any).phone,
+      metaverseAllowed: !!(user as any).metaverseAllowed,
     },
     config.jwtSecret,
     { expiresIn: '7d' }
   );
-  res.json({ token, user: { id: (user as any)._id, name: (user as any).name, role: (user as any).role, className: (user as any).className, school: (user as any).school, schoolId: (user as any).schoolId, phone: (user as any).phone } });
+
+  const myFiles = await FileModel.find({ ownerUserId: (user as any)._id })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  return res.json({
+    token,
+    user: {
+      id: (user as any)._id.toString(),
+      name: (user as any).name,
+      role: (user as any).role,
+      className: (user as any).className,
+      school: (user as any).school,
+      schoolId: (user as any).schoolId?.toString?.(),
+      phone: (user as any).phone,
+      metaverseAllowed: !!(user as any).metaverseAllowed,
+    },
+    myFiles: (myFiles as any[]).map((r) => ({
+      id: r._id,
+      type: (r as any).type,
+      originalName: (r as any).originalName,
+      size: (r as any).size,
+      createdAt: (r as any).createdAt,
+      downloadUrl: `/api/files/${r._id}/download`,
+    })),
+  });
 }
 
 export async function hasSchoolCourseAccess(schoolId?: string, courseId?: string): Promise<boolean> {
