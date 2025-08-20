@@ -1,6 +1,6 @@
 ### 培训后台管理平台 API 说明（更新）
 
-- 基础地址: `http://localhost:4000`
+- 基础地址: `http://106.15.229.165:4000`
 - 认证: JWT，放在请求头 `Authorization: Bearer <token>`
 - 内容类型: `application/json`
 - 角色: `superadmin` | `schoolAdmin` | `teacher` | `student`
@@ -17,6 +17,11 @@
     ```json
     { "phone": "13800000000", "password": "admin123" }
     ```
+  - Postman 示例
+    1) 新建请求：POST `http://106.15.229.165:4000/api/auth/login`
+    2) Headers: `Content-Type: application/json`
+    3) Body 选择 raw(JSON)，粘贴上面的示例 JSON
+    4) Send，复制响应中的 `token`
   - 200
     ```json
     {
@@ -49,6 +54,56 @@
 - 更新: PUT `/api/users/:id`
 - 删除: DELETE `/api/users/:id`（仅 superadmin）
 
+### 资源（需登录）
+- 类型字典
+  - `type` 中文：`图片` | `视频` | `模型` | `PDF` | `PPT` | `WORD` | `其他`
+  - 上传支持格式：图片（jpg/png）、视频（mp4）、模型（glb/fbx/obj/stl）、文档（pdf/ppt/pptx/doc/docx）
+- 上传
+  - POST `/api/files/upload`
+  - form-data: `file`；超管可额外传 `visibility=public` 上传公共资源，默认私有
+  - Postman 示例
+    1) 新建请求：POST `http://106.15.229.165:4000/api/files/upload`
+    2) Headers: `Authorization: Bearer <token>`
+    3) Body 选择 form-data：`file`(File) 选文件，(可选) `visibility=public`
+    4) Send
+- 我的资源（管理台使用）
+  - GET `/api/files/mine?type=&q=&page=&pageSize=` → 返回分页（含下载/查看链接）
+  - Postman 示例：GET `http://106.15.229.165:4000/api/files/mine`，Headers 带 `Authorization: Bearer <token>`，必要时加 Query
+- 公共资源（管理台使用）
+  - GET `/api/files/public?type=&q=&page=&pageSize=` → 返回分页（含下载/查看链接）
+  - Postman 示例：GET `http://106.15.229.165:4000/api/files/public`，Headers 带 `Authorization: Bearer <token>`
+- 下载（鉴权）
+  - GET `/api/files/:id/download` → 仅本人/公共/超管可下
+  - Postman 示例：GET `http://106.15.229.165:4000/api/files/<id>/download`，Headers 带 `Authorization: Bearer <token>`
+- 删除
+  - DELETE `/api/files/:id` → 本人或超管
+  - Postman 示例：DELETE `http://106.15.229.165:4000/api/files/<id>`，Headers 带 `Authorization: Bearer <token>`
+- 简化获取列表（给客户端/大厅使用，需在请求头携带 JWT：`Authorization: Bearer <token>`）
+  - 个人资源
+    - GET `/api/files/client/mine`
+    - 200
+      ```json
+      {
+        "rows": [
+          { "name": "手签图片.png", "type": "图片", "download": "https://dl.yf-xr.com/users/.../手签图片.png" }
+        ]
+      }
+      ```
+    - Postman 示例
+      1) 新建请求：GET `http://106.15.229.165:4000/api/files/client/mine`
+      2) Headers: `Authorization: Bearer <token>`
+      3) Send
+  - 公共资源
+    - GET `/api/files/client/public`
+    - 200 与上相同结构
+    - Postman 示例
+      1) 新建请求：GET `http://106.15.229.165:4000/api/files/client/public`
+      2) Headers: `Authorization: Bearer <token>`
+      3) Send
+  - 说明
+    - `download` 为你在后端 `.env` 设置的 `PUBLIC_DOWNLOAD_BASE`（例如 `https://dl.yf-xr.com`）拼上存储相对路径
+    - 仅图片/视频返回 `viewUrl`（管理台分页接口中），指向 `PUBLIC_VIEW_BASE`（例如 `https://video.yf-xr.com`）
+
 ### 学校管理（superadmin）
 - 基础 CRUD：`/api/schools`
 
@@ -80,10 +135,7 @@
       ]
     }
     ```
-  - 说明
-    - `score`: 模块历史最高分；未提交过为 `null`
-    - `attempts`: 模块提交次数（从历史记录汇总）
-    - `completedAt`: 最高分对应的完成时间；无则为 `null`
+  - Postman 示例：GET `http://106.15.229.165:4000/api/scores/user/<userId>?courseId=<id|code|name>`，Headers 带 `Authorization: Bearer <token>`
 
 - 写入/更新某学生成绩（teacher/schoolAdmin/superadmin；student 仅可提交自己的成绩）
   - PUT `/api/scores/user/:userId`
@@ -97,8 +149,6 @@
       ]
     }
     ```
-  - 说明
-    - `moreDetail`：可选，外链 URL。若提供，将被写入“提交历史”；若该次分数成为该模块的最高分，也会同步到聚合成绩中。
   - 200（返回聚合后的当前成绩文档，非本次“原始提交”）
     ```json
     {
@@ -110,47 +160,48 @@
       ]
     }
     ```
-  - 说明
-    - 服务端会同时写入“提交历史”，并更新“聚合成绩”：每模块保留最高分并累计 `attempts`
+  - Postman 示例：PUT `http://106.15.229.165:4000/api/scores/user/<userId>`，Headers 带 `Authorization: Bearer <token>` 与 `Content-Type: application/json`，Body raw(JSON) 粘贴上面的结构
 
-- 提交历史（任意角色可看自己；教师/校级/超管可看任意学生）
-  - GET `/api/scores/user/:userId/submissions?courseId=<courseId|code|name>`
-  - 200（按提交时间倒序；单次仅包含一个模块）
-    ```json
-    {
-      "rows": [
-        {
-          "_id": "66c3...",
-          "user": "66b9...d3",
-          "courseId": "<normalizedCourseObjectId>",
-          "submittedAt": "2025-08-11T10:00:00.000Z",
-          "moduleScores": [ { "moduleId": "001", "moduleName": "产线认知", "score": 80, "maxScore": 100, "completedAt": "2025-08-11T10:00:00.000Z", "moreDetail": "https://example.com/report/123" } ]
-        }
-      ]
-    }
-    ```
-
-- 班级课程成绩汇总（modular，teacher/schoolAdmin/superadmin）
-  - GET `/api/scores/class/:className?courseId=<courseId|code|name>`
-  - 200（每个学生一条，带模块明细、提交时间、模块名称）
-    ```json
-    [
+### 提交历史（任意角色可看自己；教师/校级/超管可看任意学生）
+- GET `/api/scores/user/:userId/submissions?courseId=<courseId|code|name>`
+- 200（按提交时间倒序；单次仅包含一个模块）
+  ```json
+  {
+    "rows": [
       {
-        "userId": "66b9...d3",
-        "name": "李四",
-        "studentId": "A102",
-        "className": "演示一班",
-        "school": "浪浪山学校",
-        "total": 170,
-        "maxTotal": 200,
-        "lastSubmittedAt": "2025-08-11T09:55:21.000Z",
-        "moduleScores": [
-          { "moduleId": "001", "moduleName": "产线认知", "score": 80, "maxScore": 100, "attempts": 2, "completedAt": "2025-08-11T09:55:21.000Z" },
-          { "moduleId": "002", "moduleName": "机械安装", "score": 90, "maxScore": 100, "attempts": 1 }
-        ]
+        "_id": "66c3...",
+        "user": "66b9...d3",
+        "courseId": "<normalizedCourseObjectId>",
+        "submittedAt": "2025-08-11T10:00:00.000Z",
+        "moduleScores": [ { "moduleId": "001", "moduleName": "产线认知", "score": 80, "maxScore": 100, "completedAt": "2025-08-11T10:00:00.000Z", "moreDetail": "https://example.com/report/123" } ]
       }
     ]
-    ```
+  }
+  ```
+- Postman 示例：GET `http://106.15.229.165:4000/api/scores/user/<userId>/submissions?courseId=<id>`，Headers 带 `Authorization: Bearer <token>`
+
+### 班级课程成绩汇总（modular，teacher/schoolAdmin/superadmin）
+- GET `/api/scores/class/:className?courseId=<courseId|code|name>`
+- 200（每个学生一条，带模块明细、提交时间、模块名称）
+  ```json
+  [
+    {
+      "userId": "66b9...d3",
+      "name": "李四",
+      "studentId": "A102",
+      "className": "演示一班",
+      "school": "浪浪山学校",
+      "total": 170,
+      "maxTotal": 200,
+      "lastSubmittedAt": "2025-08-11T09:55:21.000Z",
+      "moduleScores": [
+        { "moduleId": "001", "moduleName": "产线认知", "score": 80, "maxScore": 100, "attempts": 2, "completedAt": "2025-08-11T09:55:21.000Z" },
+        { "moduleId": "002", "moduleName": "机械安装", "score": 90, "maxScore": 100, "attempts": 1 }
+      ]
+    }
+  ]
+  ```
+- Postman 示例：GET `http://106.15.229.165:4000/api/scores/class/<className>?courseId=<id>`，Headers 带 `Authorization: Bearer <token>`
 
 ### 时长（simple 课程，需登录）
 - 学生个人课程时长（教师/校级/超管也可查任意学生）

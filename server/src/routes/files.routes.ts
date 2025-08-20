@@ -30,8 +30,25 @@ function detectKindByExt(ext: string): FileKind {
     case '.doc':
     case '.docx':
       return 'word';
+    case '.glb':
+    case '.fbx':
+    case '.obj':
+    case '.stl':
+      return 'model';
     default:
       return 'other';
+  }
+}
+
+function kindToZh(kind: FileKind): string {
+  switch (kind) {
+    case 'video': return '视频';
+    case 'image': return '图片';
+    case 'model': return '模型';
+    case 'pdf': return 'PDF';
+    case 'ppt': return 'PPT';
+    case 'word': return 'WORD';
+    default: return '其他';
   }
 }
 
@@ -85,12 +102,12 @@ router.get('/mine', authenticate as any, async (req, res) => {
   ]);
   const mapped = rows.map((r: any) => ({
     id: r._id,
-    type: r.type,
+    type: kindToZh(r.type),
     originalName: r.originalName,
     size: r.size,
     createdAt: r.createdAt,
     downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`,
-    viewUrl: config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined,
+    viewUrl: (r.type==='image'||r.type==='video') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined,
     visibility: r.visibility,
   }));
   res.json({ rows: mapped, total, page: p, pageSize: ps });
@@ -107,7 +124,22 @@ router.get('/public', authenticate as any, async (_req, res) => {
     FileModel.find(filter).sort({ createdAt: -1 }).skip((p - 1) * ps).limit(ps).lean(),
     FileModel.countDocuments(filter),
   ]);
-  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: r.type, originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`, viewUrl: config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined })), total, page: p, pageSize: ps });
+  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: kindToZh(r.type), originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`, viewUrl: (r.type==='image'||r.type==='video') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined })), total, page: p, pageSize: ps });
+});
+
+router.get('/client/mine', authenticate as any, async (req, res) => {
+  const current = (req as any).user as { userId: string };
+  const rows = await FileModel.find({ ownerUserId: new mongoose.Types.ObjectId(current.userId) }).sort({ createdAt: -1 }).lean();
+  const base = config.publicDownloadBase.replace(/\/$/, '');
+  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download` }));
+  res.json({ rows: mapped });
+});
+
+router.get('/client/public', authenticate as any, async (_req, res) => {
+  const rows = await FileModel.find({ visibility: 'public' }).sort({ createdAt: -1 }).lean();
+  const base = config.publicDownloadBase.replace(/\/$/, '');
+  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download` }));
+  res.json({ rows: mapped });
 });
 
 router.get('/:id/download', authenticate as any, async (req, res) => {
@@ -150,7 +182,7 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
 
     const decodedName = decodeOriginalName(file.originalname as string);
     const ext = path.extname(decodedName).toLowerCase();
-    const allowed = ['.mp4','.jpg','.jpeg','.png','.pdf','.ppt','.pptx','.doc','.docx'];
+    const allowed = ['.mp4','.jpg','.jpeg','.png','.pdf','.ppt','.pptx','.doc','.docx','.glb','.fbx','.obj','.stl'];
     if (!allowed.includes(ext)) {
       fs.unlinkSync(file.path);
       return res.status(400).json({ message: 'unsupported file type' });
