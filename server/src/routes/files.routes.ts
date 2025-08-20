@@ -35,6 +35,15 @@ function detectKindByExt(ext: string): FileKind {
   }
 }
 
+function decodeOriginalName(name: string): string {
+  try {
+    // Multer on some platforms reads as latin1 for non-ASCII; convert to utf8
+    return Buffer.from(name, 'latin1').toString('utf8');
+  } catch {
+    return name;
+  }
+}
+
 function ensureNestedDir(root: string, relDir: string): void {
   const segs = relDir.replace(/^[\\/]+|[\\/]+$/g, '').split(/[\\/]+|\//g).filter(Boolean);
   let curr = root;
@@ -80,7 +89,8 @@ router.get('/mine', authenticate as any, async (req, res) => {
     originalName: r.originalName,
     size: r.size,
     createdAt: r.createdAt,
-    downloadUrl: `/api/files/${r._id}/download`,
+    downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`,
+    viewUrl: config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined,
     visibility: r.visibility,
   }));
   res.json({ rows: mapped, total, page: p, pageSize: ps });
@@ -97,7 +107,7 @@ router.get('/public', authenticate as any, async (_req, res) => {
     FileModel.find(filter).sort({ createdAt: -1 }).skip((p - 1) * ps).limit(ps).lean(),
     FileModel.countDocuments(filter),
   ]);
-  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: r.type, originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: `/api/files/${r._id}/download` })), total, page: p, pageSize: ps });
+  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: r.type, originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`, viewUrl: config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined })), total, page: p, pageSize: ps });
 });
 
 router.get('/:id/download', authenticate as any, async (req, res) => {
@@ -138,8 +148,8 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     const file = (req as any).file as any;
     if (!file) return res.status(400).json({ message: 'file is required' });
 
-    const originalName = file.originalname as string;
-    const ext = path.extname(originalName).toLowerCase();
+    const decodedName = decodeOriginalName(file.originalname as string);
+    const ext = path.extname(decodedName).toLowerCase();
     const allowed = ['.mp4','.jpg','.jpeg','.png','.pdf','.ppt','.pptx','.doc','.docx'];
     if (!allowed.includes(ext)) {
       fs.unlinkSync(file.path);
@@ -169,8 +179,8 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const id = new mongoose.Types.ObjectId().toString();
     const rel = visibility === 'public'
-      ? path.posix.join('public', yyyy, mm, id, `original${ext}`)
-      : path.posix.join('users', current.userId, yyyy, mm, id, `original${ext}`);
+      ? path.posix.join('public', yyyy, mm, id, decodedName)
+      : path.posix.join('users', current.userId, yyyy, mm, id, decodedName);
 
     const relDir = path.posix.dirname(rel);
     const targetDir = path.join(config.storageRoot, relDir);
@@ -195,11 +205,13 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
       ownerRole: current.role as any,
       visibility,
       type: detectKindByExt(ext),
-      originalName,
+      originalName: decodedName,
+      originalNameSaved: decodedName,
       ext,
       size: file.size,
       sha256,
       storageRelPath: rel.replace(/\\/g, '/'),
+      storageDir: relDir.replace(/\\/g, '/'),
     } as any);
 
     const savedId = ((saved as any)._id || '').toString();
@@ -209,6 +221,24 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     console.error('upload failed:', e);
     return res.status(500).json({ message: e?.message || 'upload failed' });
   }
+});
+
+router.delete('/:id', authenticate as any, async (req, res) => {
+  const current = (req as any).user as { userId: string; role: string };
+  const id = req.params.id;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+  const doc = await FileModel.findById(id);
+  if (!doc) return res.status(404).json({ message: 'Not found' });
+  const isOwner = String((doc as any).ownerUserId) === String(current.userId);
+  const isSuper = current.role === 'superadmin';
+  if (!isOwner && !isSuper) return res.status(403).json({ message: 'Forbidden' });
+  // best-effort remove file
+  try {
+    const abs = path.join(config.storageRoot, (doc as any).storageRelPath.replace(/\\/g, '/'));
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+  } catch {}
+  await (doc as any).deleteOne();
+  res.json({ ok: true });
 });
 
 export default router; 

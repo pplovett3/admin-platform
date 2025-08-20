@@ -9,11 +9,13 @@ export interface IFile extends Document {
 	ownerRole: UserRole;
 	visibility: FileVisibility;
 	type: FileKind;
-	originalName: string;
+	originalName: string; // display name (decoded)
+	originalNameSaved: string; // real saved filename
 	ext: string;
 	size: number;
 	sha256: string;
-	storageRelPath: string; // POSIX-like relative path under STORAGE_ROOT
+	storageRelPath: string; // POSIX-like relative path to saved file
+	storageDir: string; // POSIX-like relative directory
 	createdAt: Date;
 	updatedAt: Date;
 }
@@ -25,10 +27,12 @@ const FileSchema = new Schema<IFile>(
 		visibility: { type: String, enum: ['private', 'public'], required: true, index: true },
 		type: { type: String, enum: ['video', 'image', 'pdf', 'ppt', 'word', 'other'], required: true },
 		originalName: { type: String, required: true },
+		originalNameSaved: { type: String, required: true },
 		ext: { type: String, required: true },
 		size: { type: Number, required: true },
 		sha256: { type: String, required: true, index: true },
 		storageRelPath: { type: String, required: true },
+		storageDir: { type: String, required: true },
 	},
 	{ timestamps: true }
 );
