@@ -46,6 +46,16 @@ export async function authFetch<T = any>(path: string, init: RequestInit = {}): 
 }
 
 export async function authDownload(path: string, filename?: string): Promise<void> {
+	// If it's an absolute URL (e.g., dl.yf-xr.com / video.yf-xr.com), open directly
+	if (/^https?:\/\//i.test(path)) {
+		const a = document.createElement('a');
+		a.href = path;
+		if (filename) a.download = filename;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		return;
+	}
 	const token = getToken();
 	const res = await fetch(`${API_URL}${path}`, {
 		headers: { Authorization: token ? `Bearer ${token}` : "" },
