@@ -33,12 +33,13 @@ export default function ResourcesPage() {
   async function refresh() {
     try {
       setLoading(true);
+      const qs = new URLSearchParams({ type: type||"", q }).toString();
       if (active === "mine") {
-        const resp = await authFetch<{ rows: FileRow[] }>(`/api/files/mine?${new URLSearchParams({ type: type||"", q })}`);
+        const resp = await authFetch<{ rows: FileRow[] }>(`/api/files/mine?${qs}`);
         setRows(resp.rows);
       } else {
-        const resp = await authFetch<FileRow[]>(`/api/files/public?${new URLSearchParams({ type: type||"", q })}`);
-        setRows(resp);
+        const resp = await authFetch<{ rows: FileRow[] }>(`/api/files/public?${qs}`);
+        setRows(resp.rows);
       }
     } catch (e:any) {
       message.error(e?.message||"加载失败");

@@ -1,5 +1,16 @@
 # 更新部署指南（Windows 服务器 + NSSM + Git）
 
+cd "E:\上信校产线动画\admin-platform"
+
+# 可先看下有哪些改动
+git status
+
+# 提交并推送（请改成你的提交说明）
+git add -A
+git commit -m "chore: update code"
+git pull --rebase origin main
+git push origin main
+
 > 适用于此前按指南在 Windows 上用 NSSM 注册了两个服务：`AdminPlatform-API` 和 `AdminPlatform-Web`。
 
 ## 快速更新（每次上线）
@@ -19,8 +30,10 @@ nssm start AdminPlatform-API
 
 # 3) 前端更新与重启
 cd C:\admin-platform\web
+$env:NEXT_PUBLIC_API_URL="http://106.15.229.165:4000"
 npm ci --legacy-peer-deps
 npm run build
+nssm set AdminPlatform-Web AppEnvironmentExtra "NEXT_PUBLIC_API_URL=http://106.15.229.165:4000"
 nssm start AdminPlatform-Web
 
 # 4) 健康检查（后端）
