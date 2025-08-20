@@ -14,6 +14,19 @@ export function getToken(): string {
 	}
 }
 
+export function getCurrentRole(): string | undefined {
+	const t = getToken();
+	if (!t) return undefined;
+	const parts = t.split(".");
+	if (parts.length < 2) return undefined;
+	try {
+		const json = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+		return json?.role;
+	} catch {
+		return undefined;
+	}
+}
+
 export async function authFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
 	const token = getToken();
 	const res = await fetch(`${API_URL}${path}`, {

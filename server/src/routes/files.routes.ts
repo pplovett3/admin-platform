@@ -7,9 +7,12 @@ import { authenticate } from '../middlewares/auth';
 import { config } from '../config/env';
 import { FileModel, FileVisibility, FileKind } from '../models/File';
 import mongoose from 'mongoose';
+import os from 'os';
 
 const router = Router();
-const upload = multer({ dest: '/tmp/uploads' });
+const tempDir = path.join(os.tmpdir(), 'uploads');
+try { fs.mkdirSync(tempDir, { recursive: true }); } catch {}
+const upload = multer({ dest: tempDir });
 
 function detectKindByExt(ext: string): FileKind {
   switch (ext) {
@@ -32,10 +35,37 @@ function detectKindByExt(ext: string): FileKind {
   }
 }
 
+function ensureNestedDir(root: string, relDir: string): void {
+  const segs = relDir.replace(/^[\\/]+|[\\/]+$/g, '').split(/[\\/]+|\//g).filter(Boolean);
+  let curr = root;
+  for (const seg of segs) {
+    curr = path.join(curr, seg);
+    try {
+      if (!fs.existsSync(curr)) {
+        try {
+          fs.mkdirSync(curr);
+        } catch (e: any) {
+          // WebDAV/WebClient may return EPERM/EEXIST even if dir exists; re-check then continue
+          if ((e && (e.code === 'EEXIST' || e.code === 'EPERM')) && fs.existsSync(curr)) {
+            continue;
+          }
+          throw e;
+        }
+      }
+    } catch (err) {
+      throw err;
+    }
+  }
+}
+
+router.get('/_debug', (_req, res) => {
+  res.json({ storageRoot: config.storageRoot, env: process.env.STORAGE_ROOT });
+});
+
 router.get('/mine', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string };
   const { type, q, page = '1', pageSize = '20' } = req.query as any;
-  const filter: any = { ownerUserId: new mongoose.Types.ObjectId(current.userId) };
+  const filter: any = { ownerUserId: new mongoose.Types.ObjectId(current.userId), visibility: 'private' };
   if (type) filter.type = type;
   if (q) filter.originalName = { $regex: String(q), $options: 'i' };
   const p = Math.max(parseInt(String(page), 10) || 1, 1);
@@ -57,8 +87,17 @@ router.get('/mine', authenticate as any, async (req, res) => {
 });
 
 router.get('/public', authenticate as any, async (_req, res) => {
-  const rows = await FileModel.find({ visibility: 'public' }).sort({ createdAt: -1 }).limit(100).lean();
-  res.json(rows.map((r: any) => ({ id: r._id, type: r.type, originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: `/api/files/${r._id}/download` })));
+  const { type, q, page = '1', pageSize = '20' } = _req.query as any;
+  const filter: any = { visibility: 'public' };
+  if (type) filter.type = type;
+  if (q) filter.originalName = { $regex: String(q), $options: 'i' };
+  const p = Math.max(parseInt(String(page), 10) || 1, 1);
+  const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 20, 1), 100);
+  const [rows, total] = await Promise.all([
+    FileModel.find(filter).sort({ createdAt: -1 }).skip((p - 1) * ps).limit(ps).lean(),
+    FileModel.countDocuments(filter),
+  ]);
+  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: r.type, originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: `/api/files/${r._id}/download` })), total, page: p, pageSize: ps });
 });
 
 router.get('/:id/download', authenticate as any, async (req, res) => {
@@ -133,8 +172,12 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
       ? path.posix.join('public', yyyy, mm, id, `original${ext}`)
       : path.posix.join('users', current.userId, yyyy, mm, id, `original${ext}`);
 
-    const targetDir = path.join(config.storageRoot, path.dirname(rel));
-    fs.mkdirSync(targetDir, { recursive: true });
+    const relDir = path.posix.dirname(rel);
+    const targetDir = path.join(config.storageRoot, relDir);
+    try { ensureNestedDir(config.storageRoot, relDir); } catch (mkErr: any) {
+      console.error('ensure dir failed:', targetDir, mkErr?.message);
+      throw mkErr;
+    }
     const finalPath = path.join(config.storageRoot, rel);
 
     await new Promise<void>((resolve, reject) => {
@@ -163,6 +206,7 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     const downloadUrl = `/api/files/${savedId}/download`;
     return res.json({ ok: true, file: saved, downloadUrl });
   } catch (e: any) {
+    console.error('upload failed:', e);
     return res.status(500).json({ message: e?.message || 'upload failed' });
   }
 });

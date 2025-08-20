@@ -4,6 +4,7 @@ import { Button, Card, Divider, Flex, Input, message, Select, Space, Table, Tabs
 import type { UploadProps } from "antd";
 import { InboxOutlined, DownloadOutlined } from "@ant-design/icons";
 import { authDownload, authFetch } from "../_lib/api";
+import { API_URL } from "../_lib/api";
 
 interface FileRow { id: string; type: string; originalName: string; size: number; createdAt: string; downloadUrl: string; visibility?: string }
 
@@ -56,9 +57,8 @@ export default function ResourcesPage() {
       try {
         const fd = new FormData();
         fd.append("file", file as any);
-        // 普通用户默认私有；若角色是超管可在 UI 增加一个选择，这里先不暴露
         const token = (typeof localStorage !== 'undefined' && (localStorage.getItem('token')||localStorage.getItem('authToken'))) || '';
-        const res = await fetch((process as any).env.NEXT_PUBLIC_API_URL + "/api/files/upload", {
+        const res = await fetch(`${API_URL}/api/files/upload`, {
           method: 'POST',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
           body: fd,
