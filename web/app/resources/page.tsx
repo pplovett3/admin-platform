@@ -28,7 +28,13 @@ export default function ResourcesPage() {
     { title: "大小", dataIndex: "size", render: (v:number)=>humanSize(v) },
     { title: "上传时间", dataIndex: "createdAt", render: (v:string)=>new Date(v).toLocaleString() },
     { title: "操作", key: "op", render: (_:any, r:FileRow)=> <Space>
-      {r.viewUrl && <Button icon={<EyeOutlined/>} onClick={()=> window.open(r.viewUrl!, '_blank')}>查看</Button>}
+      {((r.type==='图片'||r.type==='视频') && r.viewUrl) && <Button icon={<EyeOutlined/>} onClick={()=> window.open(r.viewUrl!, '_blank')}>查看</Button>}
+      {(r.type==='模型') && (()=>{
+        const src = (r.viewUrl||r.downloadUrl||'').toLowerCase();
+        if (!src.endsWith('.glb')) return null;
+        const url = r.viewUrl || r.downloadUrl;
+        return <Button icon={<EyeOutlined/>} onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(url)}`,'_blank')}>查看</Button>;
+      })()}
       <Button icon={<DownloadOutlined/>} onClick={()=>authDownload(r.downloadUrl, r.originalName)}>下载</Button>
       <Popconfirm title="确定删除该文件吗？" onConfirm={()=>onDelete(r)}>
         <Button danger icon={<DeleteOutlined/>}>删除</Button>
