@@ -119,3 +119,22 @@ try { Invoke-WebRequest http://127.0.0.1:4000/health -UseBasicParsing | Out-Null
   - `MONGODB_URI=mongodb://127.0.0.1:27017/admin_platform`
   - `JWT_SECRET=change_me_prod`
 - 前端（可选）：`AdminPlatform-Web` 服务可设置 `AppEnvironmentExtra` 为 `NEXT_PUBLIC_API_URL=http://<你的IP或域名>:4000` 
+
+
+
+
+
+# 设定 App 路径/目录/参数（按你的 Node 安装路径调整）
+nssm set AdminPlatform-API AppPath "C:\Program Files\nodejs\node.exe"
+nssm set AdminPlatform-API AppDirectory "C:\admin-platform\server"
+nssm set AdminPlatform-API AppParameters "dist/index.js"
+
+# 建议设置日志输出
+mkdir C:\admin-platform\server\logs -Force
+nssm set AdminPlatform-API AppStdout C:\admin-platform\server\logs\run-server.out.log
+nssm set AdminPlatform-API AppStderr C:\admin-platform\server\logs\run-server.err.log
+nssm set AdminPlatform-API AppRotateFiles 1
+
+# 确认状态并重启
+nssm stop AdminPlatform-API
+nssm start AdminPlatform-API
