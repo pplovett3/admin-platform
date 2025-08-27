@@ -74,7 +74,19 @@ async function bootstrap() {
   await ensureDefaultAdmin();
 
   const app = express();
-  app.use(cors());
+  const corsOptions: cors.CorsOptions = {
+    origin: [
+      'http://106.15.229.165:3000',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000'
+    ],
+    credentials: true,
+    methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+    allowedHeaders: ['Authorization','Content-Type','Accept'],
+    maxAge: 86400
+  };
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
   app.use(express.json());
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
