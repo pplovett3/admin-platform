@@ -71,7 +71,11 @@ async function bootstrap() {
   await dropEmailIndexIfExists();
   await migrateLegacyRoles();
   await migrateAdminPhone();
-  await ensureDefaultAdmin();
+  if (process.env.SEED_DEFAULT_ADMIN !== 'false') {
+    await ensureDefaultAdmin();
+  } else {
+    console.log('Skip default admin seeding due to SEED_DEFAULT_ADMIN=false');
+  }
 
   const app = express();
   const corsOptions: cors.CorsOptions = {
