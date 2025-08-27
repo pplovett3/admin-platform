@@ -9,6 +9,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload } from 'antd';
+import { getToken } from '@/app/_lib/api';
 import type { UploadProps } from 'antd';
 
 type TreeNode = {
@@ -181,9 +182,24 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       setAnnotations([]);
 
       const manager = new THREE.LoadingManager();
-      const ktx2 = new KTX2Loader(manager).setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/').detectSupport(rendererRef.current!);
-      const draco = new DRACOLoader(manager).setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
-      const loader = new GLTFLoader(manager).setKTX2Loader(ktx2).setDRACOLoader(draco);
+      const ktx2 = new KTX2Loader(manager)
+        .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
+        .detectSupport(rendererRef.current!);
+      const draco = new DRACOLoader(manager)
+        .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+      const loader = new GLTFLoader(manager)
+        .setKTX2Loader(ktx2)
+        .setDRACOLoader(draco);
+
+      // 如果通过后端代理加载（/api/files/proxy?...）需要携带鉴权头
+      try {
+        const token = getToken?.();
+        if (token) {
+          (loader as any).setRequestHeader?.({ Authorization: `Bearer ${token}` });
+          (ktx2 as any).setRequestHeader?.({ Authorization: `Bearer ${token}` });
+          (draco as any).setRequestHeader?.({ Authorization: `Bearer ${token}` });
+        }
+      } catch {}
       const gltf = await loader.loadAsync(src);
       const root = gltf.scene || gltf.scenes[0];
       modelRootRef.current = root;
