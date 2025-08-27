@@ -476,7 +476,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr 320px', gap: 12, height: 'calc(100vh - 140px)' }}>
-      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden' }}>
+      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden', height: '100%' }}>
         <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
             <Input placeholder="https://.../model.glb" allowClear />
@@ -502,10 +502,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           />
         </div>
       </Card>
-      <Card title="三维视窗" bodyStyle={{ padding: 0 }}>
+      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%' }}>
         <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: 480 }} />
       </Card>
-      <Card title="属性 / 选中信息" bodyStyle={{ padding: 12 }}>
+      <Card title="属性 / 选中信息" bodyStyle={{ padding: 12 }} style={{ height: '100%', overflow: 'auto' }}>
         {selectedKey ? (
           <Flex vertical gap={8}>
             <div>已选中：{selectedKey}</div>
