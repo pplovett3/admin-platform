@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Readable } from 'stream';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -86,6 +87,36 @@ function ensureNestedDir(root: string, relDir: string): void {
 
 router.get('/_debug', (_req, res) => {
   res.json({ storageRoot: config.storageRoot, env: process.env.STORAGE_ROOT });
+});
+
+// 简单代理：用于前端三维编辑器加载跨域 GLB 等静态资源
+// 限定白名单域名，避免被用于开放代理
+router.get('/proxy', authenticate as any, async (req, res) => {
+  try {
+    const raw = String((req.query as any).url || '').trim();
+    if (!raw) return res.status(400).json({ message: 'url is required' });
+    let u: URL;
+    try { u = new URL(raw); } catch { return res.status(400).json({ message: 'invalid url' }); }
+    const allowHosts = new Set([
+      'video.yf-xr.com',
+      'dl.yf-xr.com',
+    ]);
+    if (!(u.protocol === 'https:' || u.protocol === 'http:')) return res.status(400).json({ message: 'unsupported protocol' });
+    if (allowHosts.size && !allowHosts.has(u.hostname)) return res.status(403).json({ message: 'host not allowed' });
+
+    const r = await fetch(u.toString());
+    if (!r.ok || !r.body) {
+      return res.status(r.status || 502).end();
+    }
+    const ct = r.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    // Pipe WebReadableStream → Node Readable → res
+    const nodeStream = Readable.fromWeb(r.body as any);
+    nodeStream.pipe(res);
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'proxy failed' });
+  }
 });
 
 router.get('/mine', authenticate as any, async (req, res) => {

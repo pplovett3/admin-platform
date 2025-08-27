@@ -9,9 +9,21 @@ const ModelEditor3D = dynamic(()=>import('../_components/ModelEditor3D'), { ssr:
 function Inner(){
   const sp = useSearchParams();
   const src = sp.get('src') || '';
-  return (
-    <ModelEditor3D initialUrl={src || undefined} />
-  );
+  const proxied = (() => {
+    try {
+      if (!src) return '';
+      const u = new URL(src);
+      // 仅对指定域名进行代理，以绕过跨域下载限制
+      const allow = new Set(['video.yf-xr.com','dl.yf-xr.com']);
+      if (allow.has(u.hostname)) {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL || '';
+        const base = (apiBase || '').replace(/\/$/, '');
+        return `${base}/api/files/proxy?url=${encodeURIComponent(src)}`;
+      }
+      return src;
+    } catch { return src; }
+  })();
+  return <ModelEditor3D initialUrl={proxied || undefined} />;
 }
 
 export default function QuickEditorPage(){
