@@ -90,8 +90,9 @@ async function bootstrap() {
     maxAge: 86400
   };
   app.use(cors(corsOptions));
-  app.options('*', cors(corsOptions));
   app.use(express.json());
+  // 处理预检请求：显式允许所有路径的 OPTIONS（Express 5 推荐使用正则通配）
+  app.options(/.*/, cors(corsOptions));
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRoutes);
