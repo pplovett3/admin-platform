@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Card, Button, Space, Table, Typography, Upload, App, Input, Select, Tag, Switch } from 'antd';
 import type { UploadProps } from 'antd';
-import { apiGet, authDownload, authFetch } from '@/app/_lib/api';
+import { apiGet } from '@/app/_utils/api';
 
 interface CoursewareRow { _id: string; name: string; glbUrl?: string; createdAt?: string; updatedAt?: string; modelStats?: any }
 

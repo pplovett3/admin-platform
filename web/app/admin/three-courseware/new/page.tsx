@@ -14,7 +14,7 @@ export default function ThreeCoursewareCreatePage() {
     const v = await form.validateFields();
     setSubmitting(true);
     try {
-      const created = await apiPost('/api/coursewares', v);
+      const created: any = await apiPost('/api/coursewares', v);
       message.success('已创建');
       router.push(`/admin/three-courseware/${created._id}`);
     } catch (e: any) { message.error(e?.message || '创建失败'); } finally { setSubmitting(false); }

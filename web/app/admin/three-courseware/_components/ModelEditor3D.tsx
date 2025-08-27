@@ -309,7 +309,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     root.traverse(o => {
       if (o === root) return;
       if ((o as any).isObject3D) {
-        (o as any).visible = sel ? o === sel || sel.children.includes(o as any) || o.parent === sel || sel.isDescendantOf?.(o) : true;
+        const isChildOfSel = (() => {
+          if (!sel) return false;
+          let p: THREE.Object3D | null = o;
+          while (p) { if (p === sel) return true; p = p.parent as any; }
+          return false;
+        })();
+        (o as any).visible = sel ? (o === sel || isChildOfSel) : true;
       }
     });
   };
