@@ -30,10 +30,14 @@ export default function ResourcesPage() {
     { title: "操作", key: "op", render: (_:any, r:FileRow)=> <Space>
       {((r.type==='图片'||r.type==='视频') && r.viewUrl) && <Button icon={<EyeOutlined/>} onClick={()=> window.open(r.viewUrl!, '_blank')}>查看</Button>}
       {(r.type==='模型') && (()=>{
-        const src = (r.viewUrl||r.downloadUrl||'').toLowerCase();
-        if (!src.endsWith('.glb')) return null;
-        const url = r.viewUrl || r.downloadUrl;
-        return <Button icon={<EyeOutlined/>} onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(url)}`,'_blank')}>查看</Button>;
+        const raw = (r.viewUrl||r.downloadUrl||'');
+        const lower = raw.toLowerCase();
+        if (!(lower.endsWith('.glb') || lower.includes('.glb?'))) return null;
+        const viewerSrc = raw; // 直接使用直链：video.yf-xr.com 或 dl.yf-xr.com
+        return <Space>
+          <Button icon={<EyeOutlined/>} onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(viewerSrc)}`,'_blank')}>查看</Button>
+          <Button type="primary" onClick={()=> window.open(`/admin/three-courseware/editor?src=${encodeURIComponent(viewerSrc)}`,'_blank')}>用三维课件编辑器打开</Button>
+        </Space>;
       })()}
       <Button icon={<DownloadOutlined/>} onClick={()=>authDownload(r.downloadUrl, r.originalName)}>下载</Button>
       <Popconfirm title="确定删除该文件吗？" onConfirm={()=>onDelete(r)}>
