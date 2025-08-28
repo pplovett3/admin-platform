@@ -107,6 +107,48 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [highlightMode, setHighlightMode] = useState<'outline'|'emissive'>('outline');
   const materialBackup = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMats = useRef<Set<any>>(new Set());
+  const [showLeft, setShowLeft] = useState(true);
+  const [showRight, setShowRight] = useState(true);
+
+  type Clip = { id: string; name: string; description?: string; timeline: TimelineState };
+  const [clips, setClips] = useState<Clip[]>([]);
+  const [activeClipId, setActiveClipId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('three_courseware_clips');
+      if (raw) {
+        const arr = JSON.parse(raw) as Clip[];
+        if (Array.isArray(arr)) { setClips(arr); setActiveClipId(arr[0]?.id || null); if (arr[0]?.timeline) setTimeline(arr[0].timeline); }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('three_courseware_clips', JSON.stringify(clips)); } catch {}
+  }, [clips]);
+
+  const createClip = () => {
+    const name = window.prompt('新建动画名称', `动画${clips.length + 1}`) || '';
+    if (!name.trim()) return;
+    const description = window.prompt('动画描述（可选）', '') || '';
+    const id = generateUuid();
+    const clip: Clip = { id, name, description, timeline: JSON.parse(JSON.stringify(timeline)) };
+    setClips(prev => [clip, ...prev]);
+    setActiveClipId(id);
+  };
+
+  const saveClip = () => {
+    if (!activeClipId) return message.warning('请先选择或新建动画');
+    setClips(prev => prev.map(c => c.id === activeClipId ? { ...c, timeline: JSON.parse(JSON.stringify(timeline)) } : c));
+    message.success('动画已保存');
+  };
+
+  const onSelectClip = (id: string) => {
+    setActiveClipId(id);
+    const c = clips.find(x => x.id === id);
+    if (c) setTimeline(JSON.parse(JSON.stringify(c.timeline)));
+  };
 
   useEffect(() => {
     initRenderer();
@@ -558,17 +600,16 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const root = modelRootRef.current;
     if (!root || !selectedKey) return;
     const sel = keyToObject.current.get(selectedKey);
+    if (!sel) return;
+    const allowed = new Set<THREE.Object3D>();
+    // 选中及其子孙
+    sel.traverse(o => allowed.add(o));
+    // 选中的祖先链
+    let p: THREE.Object3D | null = sel;
+    while (p) { allowed.add(p); p = p.parent as any; }
     root.traverse(o => {
-      if (o === root) return;
-      if ((o as any).isObject3D) {
-        const isChildOfSel = (() => {
-          if (!sel) return false;
-          let p: THREE.Object3D | null = o;
-          while (p) { if (p === sel) return true; p = p.parent as any; }
-          return false;
-        })();
-        (o as any).visible = sel ? (o === sel || isChildOfSel) : true;
-      }
+      if (o === root) { (o as any).visible = true; return; }
+      (o as any).visible = allowed.has(o);
     });
   };
 
@@ -841,9 +882,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     return cur;
   }
 
+  const colLeft = showLeft ? '340px' : '0px';
+  const colRight = showRight ? '320px' : '0px';
+  const timelineHeight = 280;
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr 320px', gap: 12, height: 'calc(100vh - 140px)' }}>
-      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden', height: '100%' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `1fr ${timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, gap: 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden' }}>
+      {showLeft && (
+      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left' }}>
         <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
             <Input placeholder="https://.../model.glb" allowClear />
@@ -869,10 +914,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           />
         </div>
       </Card>
-      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%' }}>
-        <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: 480 }} />
+      )}
+      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column' }}>
+        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 480 }} />
       </Card>
-      <Card title="属性 / 选中信息" bodyStyle={{ padding: 12 }} style={{ height: '100%', overflow: 'auto' }}>
+      {showRight && (
+      <Card title="属性 / 选中信息" bodyStyle={{ padding: 12 }} style={{ height: '100%', overflow: 'auto', gridArea: 'right' }}>
         {selectedKey ? (
           <Flex vertical gap={8}>
             <div>已选中：{selectedKey}</div>
@@ -903,19 +950,30 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             ))}
           </div>
         </div>
-        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #334155' }}>
-          <Flex justify="space-between" align="center">
-            <strong>时间线</strong>
+      </Card>
+      )}
+      <Card title="时间线" bodyStyle={{ padding: 12 }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <Flex justify="space-between" align="center" wrap style={{ flex: '0 0 auto' }}>
             <Space>
               <Button onClick={onTogglePlay}>{timeline.playing ? '暂停' : '播放'}</Button>
               <Upload {...importTimeline}><Button>导入</Button></Upload>
               <Button onClick={exportTimeline}>导出</Button>
               <span style={{ color: '#94a3b8' }}>高亮</span>
-              <Select size="small" value={highlightMode} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
+              <Select size="small" value={highlightMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
                 options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
+              <span style={{ color: '#94a3b8' }}>视图</span>
+              <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
+              <Button size="small" onClick={()=>setShowRight(v=>!v)}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
+            </Space>
+            <Space>
+              <span style={{ color: '#94a3b8' }}>动画</span>
+              <Select size="small" placeholder="选择动画" style={{ width: 160 }} value={activeClipId||undefined} onChange={onSelectClip}
+                options={(clips||[]).map(c=>({ label: c.name, value: c.id }))} />
+              <Button size="small" onClick={createClip}>新建</Button>
+              <Button size="small" type="primary" onClick={saveClip}>保存</Button>
             </Space>
           </Flex>
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 8, flex: '1 1 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <Flex align="center" gap={8}>
               <span>时长(s)</span>
               <InputNumber min={1} max={600} value={timeline.duration} onChange={onChangeDuration} />
@@ -1031,7 +1089,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               )}
             </Flex>
           </div>
-        </div>
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
     </div>

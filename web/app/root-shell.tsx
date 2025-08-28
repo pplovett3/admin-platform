@@ -7,11 +7,20 @@ import TopBarClient from './topbar-client';
 export default function RootShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isLogin = pathname === '/login';
+  const isEditorFullscreen = pathname?.startsWith('/admin/three-courseware/editor');
 
   if (isLogin) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--background)', color: 'var(--foreground)' }}>
         {children}
+      </div>
+    );
+  }
+
+  if (isEditorFullscreen) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--background)', color: 'var(--foreground)' }}>
+        <div style={{ height: '100vh', padding: 0, margin: 0 }}>{children}</div>
       </div>
     );
   }
