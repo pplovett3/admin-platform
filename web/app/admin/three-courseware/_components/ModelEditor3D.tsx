@@ -562,7 +562,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
             <Input placeholder="https://.../model.glb" allowClear />
           </Form.Item>
-          <Space>
+          <Space wrap size={[8, 8]}>
             <Button type="primary" htmlType="submit" loading={loading}>加载</Button>
             <Button onClick={onFocusSelected} disabled={!selectedKey}>对焦所选</Button>
             <Button onClick={onIsolateSelected} disabled={!selectedKey}>隔离所选</Button>
