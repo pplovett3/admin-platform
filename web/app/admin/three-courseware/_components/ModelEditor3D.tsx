@@ -73,6 +73,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [editingAnno, setEditingAnno] = useState<Annotation | null>(null);
   const keyToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   const markersGroupRef = useRef<THREE.Group | null>(null);
+  const pendingImportRef = useRef<any | null>(null); // 缓存导入的 JSON，待模型加载后再解析
 
   useEffect(() => {
     initRenderer();
@@ -206,6 +207,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       setSelectedKey(undefined);
       setHiddenKeys(new Set());
       setAnnotations([]);
+      pendingImportRef.current && (pendingImportRef.current = pendingImportRef.current); // 保留缓存
 
       const manager = new THREE.LoadingManager();
       const ktx2 = new KTX2Loader(manager)
@@ -244,11 +246,42 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
       focusObject(root);
       message.success('模型已加载');
+      // 若存在待恢复的标注，模型加载完成后尝试按路径绑定
+      if (pendingImportRef.current) {
+        tryRestoreFromPending();
+      }
     } catch (e: any) {
       console.error(e);
       message.error(e?.message || '加载失败');
     } finally {
       setLoading(false);
+    }
+  }
+
+  function tryRestoreFromPending() {
+    const pending = pendingImportRef.current;
+    if (!pending) return;
+    try {
+      const restored: Annotation[] = [];
+      (pending.annotations || []).forEach((x: any) => {
+        const target = findByPath(String(x?.target?.path || ''));
+        if (!target) return;
+        const offset = x?.anchor?.offset || [0,0,0];
+        restored.push({
+          id: String(x.id || generateUuid()),
+          targetKey: target.uuid,
+          targetPath: buildPath(target),
+          anchor: { space: 'local', offset: [Number(offset[0]||0), Number(offset[1]||0), Number(offset[2]||0)] },
+          label: { title: String(x?.label?.title || target.name || '未命名'), summary: String(x?.label?.summary || '') },
+          media: Array.isArray(x?.media) ? x.media.filter((m:any)=>m?.src).map((m:any)=>({ type: m.type==='video'?'video':'image', src: String(m.src)})) : []
+        });
+      });
+      setAnnotations(restored);
+      pendingImportRef.current = null;
+      if (restored.length === 0) message.warning('已导入，但未找到匹配的节点（请确认模型一致或节点名称未变化）');
+      else message.success(`已恢复 ${restored.length} 条标注`);
+    } catch (e:any) {
+      message.error(e?.message || '恢复标注失败');
     }
   }
 
@@ -464,24 +497,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       try {
         const text = await file.text();
         const json = JSON.parse(text);
-        if (Array.isArray(json?.annotations)) {
-          // 以路径匹配目标（简单实现）
-          const restored: Annotation[] = [];
-          json.annotations.forEach((x: any) => {
-            const target = findByPath(String(x?.target?.path || ''));
-            if (!target) return;
-            const offset = x?.anchor?.offset || [0,0,0];
-            restored.push({
-              id: String(x.id || generateUuid()),
-              targetKey: target.uuid,
-              targetPath: buildPath(target),
-              anchor: { space: 'local', offset: [Number(offset[0]||0), Number(offset[1]||0), Number(offset[2]||0)] },
-              label: { title: String(x?.label?.title || target.name || '未命名'), summary: String(x?.label?.summary || '') },
-              media: Array.isArray(x?.media) ? x.media.filter((m:any)=>m?.src).map((m:any)=>({ type: m.type==='video'?'video':'image', src: String(m.src)})) : []
-            });
-          });
-          setAnnotations(restored);
-          message.success('已导入标注');
+        if (!Array.isArray(json?.annotations)) throw new Error('文件格式不正确');
+        // 若模型未加载，先缓存，待加载完后再解析
+        if (!modelRootRef.current) {
+          pendingImportRef.current = json;
+          message.info('已读取标注，待模型加载后自动恢复');
+        } else {
+          pendingImportRef.current = json;
+          tryRestoreFromPending();
         }
       } catch (e: any) { message.error(e?.message || '导入失败'); }
       return false;
