@@ -28,6 +28,27 @@ type Annotation = {
   media: AnnotationMedia[];
 };
 
+function generateUuid(): string {
+  try {
+    if (typeof globalThis !== 'undefined' && (globalThis as any).crypto?.randomUUID) {
+      return (globalThis as any).crypto.randomUUID();
+    }
+    const arr = new Uint8Array(16);
+    if ((globalThis as any).crypto?.getRandomValues) {
+      (globalThis as any).crypto.getRandomValues(arr);
+    } else {
+      for (let i = 0; i < 16; i++) arr[i] = Math.floor(Math.random() * 256);
+    }
+    arr[6] = (arr[6] & 0x0f) | 0x40; // version
+    arr[8] = (arr[8] & 0x3f) | 0x80; // variant
+    const toHex = (n: number) => n.toString(16).padStart(2, '0');
+    const s = Array.from(arr, toHex).join('');
+    return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
+  } catch {
+    return `uuid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+
 export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -86,6 +107,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
     mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -97,10 +120,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     camera.position.set(2.6, 1.8, 2.6);
     cameraRef.current = camera;
 
-    const light = new THREE.DirectionalLight(0xffffff, 1.0);
+    const light = new THREE.DirectionalLight(0xffffff, 1.2);
     light.position.set(3, 5, 2);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x404040, 0.6);
+    hemi.position.set(0, 1, 0);
+    scene.add(hemi);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -393,7 +419,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const local = obj.worldToLocal(center.clone());
     const path = buildPath(obj);
     const anno: Annotation = {
-      id: crypto.randomUUID(),
+      id: generateUuid(),
       targetKey: obj.uuid,
       targetPath: path,
       anchor: { space: 'local', offset: [local.x, local.y, local.z] },
@@ -446,7 +472,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             if (!target) return;
             const offset = x?.anchor?.offset || [0,0,0];
             restored.push({
-              id: String(x.id || crypto.randomUUID()),
+              id: String(x.id || generateUuid()),
               targetKey: target.uuid,
               targetPath: buildPath(target),
               anchor: { space: 'local', offset: [Number(offset[0]||0), Number(offset[1]||0), Number(offset[2]||0)] },
