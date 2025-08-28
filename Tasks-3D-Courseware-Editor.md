@@ -12,16 +12,20 @@
 - [x] Web: 标注创建/编辑/删除（标题、摘要，锚点默认包围盒中心）
 - [x] Web: 标注标记点渲染与点击交互（球体占位）
 - [x] Web: 保存/加载 `annotations.json`（路径匹配目标）
+- [x] Web: 标注导入鲁棒性提升（支持过滤 UUID 段、按 `namePath` 还原）
+- [x] Web: 左侧工具按钮组支持自动换行（窄屏不裁切）
 - [x] Server: 上传沿用现有资源管理（模型上传复用，无需新建 API）
 - [ ] Server: FBX→GLB 转换任务（FBX2glTF/Blender 子进程）、任务查询
 - [ ] Server: 课件 CRUD（记录 annotations/timeline/course URL 与版本）
 
 ### M2 动画与时间线
-- [ ] Web: 时间线 UI（轨道：相机/显隐/高亮/节点 TRS/标注显示）
-- [ ] Web: 关键帧操作（添加/删除/拖拽、缓动、区间拉伸、复制粘贴）
-- [ ] Web: 预览插值器（AnimationMixer 或自定义），与视窗状态同步
-- [ ] Web: 导出/导入 `timeline.json`
+- [x] Web: 时间线 UI 基础（相机/显隐/TRS 轨道，刻度与列表）
+- [x] Web: 关键帧操作（增删/时间调整、缓动 linear/easeInOut）
+- [x] Web: 预览插值器（自定义插值），与视窗状态同步
+- [x] Web: 导出/导入 `timeline.json`（v1.1，含 `trsTracks`）
+- [ ] Web: 时间线帧点可拖拽、区间拉伸、复制粘贴
 - [ ] Web: 高亮稳定方案（OutlinePass 与材质描边二选一）
+- [ ] Web: 标注显示轨道（按时间显示/隐藏指定标注）
 - [ ] Server: 课件版本化与回滚；打包导出（GLB + JSON + 媒体清单）
 
 ### M3 AI 与媒体
@@ -47,9 +51,35 @@
 - M1: L  | M2: L  | M3: M  | M4: M  | 基建: M
 
 ### 里程碑验收清单
-- [ ] M1：导入/树/标注可用，annotations 保存与重载正常
+- [x] M1：导入/树/标注可用，annotations 保存与重载正常（含无 UUID 名称链匹配）
 - [ ] M2：时间线可编辑与预览，timeline 保存与重载正常
 - [ ] M3：AI 生成 `course.json` 并可回放；（可选）TTS 播放与字幕
 - [ ] M4：Unity 端使用同一资产与 JSON 成功回放；平台权限与发布打通
+
+### 下一步开发计划（滚动两周）
+
+1) 收尾 M1（后端能力补齐）
+- [ ] Server: 课件 CRUD 与数据模型（Mongo 集合：coursewares、schemas/校验）
+- [ ] Web: 列表/编辑页对接 CRUD（创建/更新/查询/删除，绑定 annotations.json 与 model URL）
+- [ ] Server: `/api/tools/fbx2glb` 队列与状态轮询；落盘至 NAS/对象存储
+- [ ] Web: 支持上传 FBX 并展示转换状态，完成后自动回填 GLB URL
+
+2) M2 时间线（最小可用版本）
+- [ ] Web: 时间线 UI 骨架（轨道：相机、显隐、高亮、节点 TRS、标注显隐）
+- [ ] Web: 关键帧增删改与拖拽，支持缓动（含线性/平滑）
+- [ ] Web: 播放器与三维联动（相机/显隐/高亮/标注）
+- [ ] Web: 导出/导入 `timeline.json`（与 annotations 关联）
+- [ ] Web: 高亮稳定方案（OutlinePass 或材质描边二选一，可切换）
+
+3) M3 AI 讲解（DeepSeek 集成）
+- [ ] Server: `/api/ai/course/generate`（提示词模板、JSON Schema 校验，返回 `course.json`）
+- [ ] Web: “生成 AI 讲解”面板（选择片段/时长/语气），触发生成并展示结果
+- [ ] Web: `course.json` 播放（镜头聚焦/高亮/媒体弹窗/字幕）
+
+### 近期可测试内容
+- 导入/导出标注：支持 UUID 变化时基于名称链匹配（`namePath`）自动还原
+- 结构树与拾取选中/对焦/隔离/显示全部：交互链路稳定
+- 左侧按钮组在窄屏自动换行；3D 视窗与右侧面板滚动布局
+- 通过后端代理加载 GLB（携带鉴权头）
 
 
