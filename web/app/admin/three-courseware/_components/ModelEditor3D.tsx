@@ -8,7 +8,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
-import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select } from 'antd';
+import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs } from 'antd';
 import { getToken } from '@/app/_lib/api';
 import type { UploadProps } from 'antd';
 
@@ -109,6 +109,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const highlightedMats = useRef<Set<any>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
+  const [rightTab, setRightTab] = useState<'annot'|'anim'>('annot');
+  const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
+  const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
 
   type Clip = { id: string; name: string; description?: string; timeline: TimelineState };
   const [clips, setClips] = useState<Clip[]>([]);
@@ -884,11 +887,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   const colLeft = showLeft ? '340px' : '0px';
   const colRight = showRight ? '320px' : '0px';
-  const timelineHeight = 280;
+  const [timelineHeight, setTimelineHeight] = useState<number>(()=>{
+    try { return Number(localStorage.getItem('three_timeline_h')||'280') || 280; } catch { return 280; }
+  });
+  useEffect(()=>{ try { localStorage.setItem('three_timeline_h', String(timelineHeight)); } catch {} }, [timelineHeight]);
+  const isTimelineCollapsed = rightTab !== 'anim';
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `1fr ${timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, gap: 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden' }}>
-      {showLeft && (
-      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease' }}>
+      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear' }}>
         <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
             <Input placeholder="https://.../model.glb" allowClear />
@@ -914,56 +920,118 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           />
         </div>
       </Card>
-      )}
-      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column' }}>
+      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column' }}
+        extra={(
+          <Space>
+            <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
+            <Button size="small" onClick={()=>setShowRight(v=>!v)}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
+            <Select size="small" value={highlightMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
+              options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
+          </Space>
+        )}
+      >
         <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 480 }} />
       </Card>
-      {showRight && (
-      <Card title="属性 / 选中信息" bodyStyle={{ padding: 12 }} style={{ height: '100%', overflow: 'auto', gridArea: 'right' }}>
-        {selectedKey ? (
-          <Flex vertical gap={8}>
-            <div>已选中：{selectedKey}</div>
-            <Button onClick={onFocusSelected}>相机对焦</Button>
-            <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
-          </Flex>
-        ) : <div>点击结构树或视窗选择对象</div>}
-        <div style={{ marginTop: 12 }}>
-          <Flex justify="space-between" align="center">
-            <strong>标注</strong>
-            <Space>
-              <Upload {...importProps}><Button>导入</Button></Upload>
-              <Button onClick={exportAnnotations}>导出</Button>
-            </Space>
-          </Flex>
-          <div style={{ marginTop: 8 }}>
-            {(annotations || []).map(a => (
-              <div key={a.id} style={{ padding: '6px 8px', border: '1px solid #334155', borderRadius: 6, marginBottom: 6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>{a.label.title}</span>
+      <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear' }}>
+        <Tabs activeKey={rightTab} onChange={(k)=>setRightTab(k as any)} items={[
+          { key: 'annot', label: '标注', children: (
+            <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
+              {selectedKey ? (
+                <Flex vertical gap={8}>
+                  <div>已选中：{selectedKey}</div>
+                  <Button onClick={onFocusSelected}>相机对焦</Button>
+                  <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
+                </Flex>
+              ) : <div>点击结构树或视窗选择对象</div>}
+              <div style={{ marginTop: 12 }}>
+                <Flex justify="space-between" align="center">
+                  <strong>标注</strong>
                   <Space>
-                    <Button size="small" onClick={()=>{ setEditingAnno(a); const t = keyToObject.current.get(a.targetKey); if (t) selectObject(t); }}>编辑</Button>
-                    <Button size="small" danger onClick={()=> setAnnotations(prev => prev.filter(x => x.id !== a.id))}>删除</Button>
+                    <Upload {...importProps}><Button>导入</Button></Upload>
+                    <Button onClick={exportAnnotations}>导出</Button>
                   </Space>
+                </Flex>
+                <div style={{ marginTop: 8 }}>
+                  {(annotations || []).map(a => (
+                    <div key={a.id} style={{ padding: '6px 8px', border: '1px solid #334155', borderRadius: 6, marginBottom: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>{a.label.title}</span>
+                        <Space>
+                          <Button size="small" onClick={()=>{ setEditingAnno(a); const t = keyToObject.current.get(a.targetKey); if (t) selectObject(t); }}>编辑</Button>
+                          <Button size="small" danger onClick={()=> setAnnotations(prev => prev.filter(x => x.id !== a.id))}>删除</Button>
+                        </Space>
+                      </div>
+                      <div style={{ color: '#94a3b8', marginTop: 4 }}>{a.label.summary || '-'}</div>
+                    </div>
+                  ))}
                 </div>
-                <div style={{ color: '#94a3b8', marginTop: 4 }}>{a.label.summary || '-'}</div>
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          )},
+          { key: 'anim', label: '动画', children: (
+            <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
+              <strong>关键帧属性</strong>
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>相机</div>
+                <Space wrap>
+                  <InputNumber addonBefore="时间(s)" min={0} max={timeline.duration} step={0.01} value={selectedCamKeyIdx!=null ? Number((timeline.cameraKeys[selectedCamKeyIdx]?.time||0).toFixed(2)) : undefined} onChange={(val)=>{
+                    if (selectedCamKeyIdx==null) return; updateCameraKeyTime(selectedCamKeyIdx, Number(val||0));
+                  }} disabled={selectedCamKeyIdx==null} />
+                  <Select value={selectedCamKeyIdx!=null ? (timeline.cameraKeys[selectedCamKeyIdx]?.easing||'easeInOut') : cameraKeyEasing} style={{ width: 140 }} onChange={v=>{
+                    if (selectedCamKeyIdx==null) { setCameraKeyEasing(v); return; }
+                    setTimeline(prev=>{ const keys = prev.cameraKeys.slice(); keys[selectedCamKeyIdx] = { ...keys[selectedCamKeyIdx], easing: v }; return { ...prev, cameraKeys: keys }; });
+                  }} options={[{label:'easeInOut', value:'easeInOut'},{label:'linear', value:'linear'}]} />
+                  <Button disabled={selectedCamKeyIdx==null} onClick={()=>{ if (selectedCamKeyIdx==null) return; deleteCameraKey(selectedCamKeyIdx); setSelectedCamKeyIdx(null); }}>删除</Button>
+                  <Button type="primary" disabled={selectedCamKeyIdx==null} onClick={()=>{
+                    if (selectedCamKeyIdx==null) return;
+                    const camera = cameraRef.current!; const controls = controlsRef.current!;
+                    setTimeline(prev=>{ const keys = prev.cameraKeys.slice(); keys[selectedCamKeyIdx] = { ...keys[selectedCamKeyIdx], position: [camera.position.x, camera.position.y, camera.position.z], target: [controls.target.x, controls.target.y, controls.target.z] }; return { ...prev, cameraKeys: keys }; });
+                  }}>设为当前位置</Button>
+                </Space>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>TRS(所选)</div>
+                <Space direction="vertical" size={6}>
+                  <InputNumber addonBefore="t" min={0} max={timeline.duration} step={0.01} value={selectedTrs? Number((timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.time||0).toFixed(2)) : undefined} onChange={(val)=>{
+                    if (!selectedTrs) return; setSelectedCamKeyIdx(null); updateTRSKeyTime(selectedTrs.index, Number(val||0));
+                  }} disabled={!selectedTrs} />
+                  <Space>
+                    <InputNumber addonBefore="Px" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Py" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Pz" step={0.01} disabled={!selectedTrs} />
+                  </Space>
+                  <Space>
+                    <InputNumber addonBefore="Rx" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Ry" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Rz" step={0.01} disabled={!selectedTrs} />
+                  </Space>
+                  <Space>
+                    <InputNumber addonBefore="Sx" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Sy" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Sz" step={0.01} disabled={!selectedTrs} />
+                  </Space>
+                </Space>
+              </div>
+            </div>
+          )}
+        ]} />
       </Card>
-      )}
-      <Card title="时间线" bodyStyle={{ padding: 12 }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <Card title="时间线" bodyStyle={{ padding: 12, position: 'relative' }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -1px 0 #334155 inset' }}>
+          <div onMouseDown={(e)=>{
+            const startY = e.clientY; const start = timelineHeight;
+            const onMove = (ev: MouseEvent) => { setTimelineHeight(Math.max(160, Math.min(window.innerHeight-120, start + (startY - ev.clientY)))); };
+            const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }}
+            title="拖拽调整时间线高度"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 12, cursor: 'row-resize', zIndex: 10, background: 'rgba(148,163,184,0.15)' }}
+          />
           <Flex justify="space-between" align="center" wrap style={{ flex: '0 0 auto' }}>
             <Space>
               <Button onClick={onTogglePlay}>{timeline.playing ? '暂停' : '播放'}</Button>
               <Upload {...importTimeline}><Button>导入</Button></Upload>
               <Button onClick={exportTimeline}>导出</Button>
-              <span style={{ color: '#94a3b8' }}>高亮</span>
-              <Select size="small" value={highlightMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
-                options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
-              <span style={{ color: '#94a3b8' }}>视图</span>
-              <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
-              <Button size="small" onClick={()=>setShowRight(v=>!v)}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
             </Space>
             <Space>
               <span style={{ color: '#94a3b8' }}>动画</span>
@@ -973,7 +1041,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <Button size="small" type="primary" onClick={saveClip}>保存</Button>
             </Space>
           </Flex>
-          <div style={{ marginTop: 8, flex: '1 1 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ marginTop: 8, flex: '0 0 auto', display: 'flex', flexDirection: 'column' }}>
             <Flex align="center" gap={8}>
               <span>时长(s)</span>
               <InputNumber min={1} max={600} value={timeline.duration} onChange={onChangeDuration} />
@@ -987,8 +1055,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               }}
               onChange={(v)=> onScrub(Number(v))}
             />
+            {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 8, flex: '1 1 0', minHeight: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
             <Flex vertical gap={8}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>相机</strong>
@@ -1004,18 +1073,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   duration={timeline.duration}
                   keys={(timeline.cameraKeys||[]).map(k=>k.time)}
                   color="#60a5fa"
-                  onChangeKeyTime={(idx, t)=> updateCameraKeyTime(idx, t)}
+                  onChangeKeyTime={(idx, t)=> { setSelectedTrs(null); updateCameraKeyTime(idx, t); }}
+                  onSelectKey={(idx)=>{ setRightTab('anim'); setSelectedTrs(null); setSelectedCamKeyIdx(idx); }}
                 />
-              </div>
-              <div style={{ paddingLeft: 80 }}>
-                {(timeline.cameraKeys||[]).sort((a,b)=>a.time-b.time).map((k,idx)=> (
-                  <div key={`ck-${idx}`} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ width: 60 }}>t={k.time.toFixed(2)}</span>
-                    <span style={{ width: 90 }}>easing={k.easing||'easeInOut'}</span>
-                    <Button size="small" onClick={()=> updateCameraKeyTime(idx, timeline.current)}>设为当前时间</Button>
-                    <Button size="small" danger onClick={()=> deleteCameraKey(idx)}>删除</Button>
-                  </div>
-                ))}
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>显隐(所选)</strong>
@@ -1028,7 +1088,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     duration={timeline.duration}
                     keys={((timeline.visTracks[selectedKey]||[]) as VisibilityKeyframe[]).map(k=>k.time)}
                     color="#34d399"
-                    onChangeKeyTime={(idx, t)=> updateVisibilityKeyTime(idx, t)}
+                    onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs(null); updateVisibilityKeyTime(idx, t);} }
                   />
                 </div>
               )}
@@ -1043,7 +1103,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     duration={timeline.duration}
                     keys={((timeline.trsTracks[selectedKey]||[]) as TransformKeyframe[]).map(k=>k.time)}
                     color="#f59e0b"
-                    onChangeKeyTime={(idx, t)=> updateTRSKeyTime(idx, t)}
+                    onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs({ key: selectedKey!, index: idx }); updateTRSKeyTime(idx, t);} }
+                    onSelectKey={(idx)=>{ setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs({ key: selectedKey!, index: idx }); }}
                   />
                 </div>
               )}
@@ -1129,13 +1190,14 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
     const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left));
     return (p / Math.max(1, rect.width)) * duration;
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
+    onSelectKey?.(idx);
     const onMove = (ev: MouseEvent) => { onChangeKeyTime(idx, Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
     window.addEventListener('mousemove', onMove);
