@@ -264,7 +264,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     try {
       const restored: Annotation[] = [];
       (pending.annotations || []).forEach((x: any) => {
-        const target = findByPath(String(x?.target?.path || ''));
+        const pathRaw = String(x?.target?.path || '');
+        const namePathRaw = String(x?.target?.namePath || '');
+        const target = findByFlexiblePath(pathRaw) || findByFlexiblePath(namePathRaw);
         if (!target) return;
         const offset = x?.anchor?.offset || [0,0,0];
         restored.push({
@@ -470,13 +472,44 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     return names.reverse().join('/');
   }
 
+  function buildNamePath(object: THREE.Object3D): string {
+    const segs: string[] = [];
+    let o: THREE.Object3D | null = object;
+    while (o) { if (o.name) segs.push(o.name); o = o.parent as any; }
+    return segs.reverse().join('/');
+  }
+
+  function isUuidLike(s: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+  }
+
+  function findByFlexiblePath(path: string): THREE.Object3D | undefined {
+    const direct = findByPath(path);
+    if (direct) return direct;
+    const segs = String(path).split('/').filter(Boolean);
+    const nameSegs = segs.filter(s => !isUuidLike(s));
+    if (nameSegs.length === 0) return undefined;
+    const leafName = nameSegs[nameSegs.length - 1];
+    const candidates: THREE.Object3D[] = [];
+    (modelRootRef.current || sceneRef.current)?.traverse(o => { if ((o as any).name === leafName) candidates.push(o as THREE.Object3D); });
+    const isSubsequence = (full: string[], sub: string[]) => { let i = 0; for (let j = 0; j < full.length && i < sub.length; j++) { if (full[j] === sub[i]) i++; } return i === sub.length; };
+    for (const c of candidates) {
+      const chain: string[] = [];
+      let p: THREE.Object3D | null = c;
+      while (p) { if (p.name) chain.push(p.name); p = p.parent as any; }
+      chain.reverse();
+      if (isSubsequence(chain, nameSegs)) return c;
+    }
+    return undefined;
+  }
+
   const exportAnnotations = () => {
     const data = {
       version: '1.0',
       model: (urlForm.getFieldValue('url') as string) || '',
       annotations: annotations.map(a => ({
         id: a.id,
-        target: { path: a.targetPath },
+        target: { path: a.targetPath, namePath: (() => { const obj = keyToObject.current.get(a.targetKey); return obj ? buildNamePath(obj) : undefined; })() },
         anchor: a.anchor,
         label: a.label,
         media: a.media
@@ -498,7 +531,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         const text = await file.text();
         const json = JSON.parse(text);
         if (!Array.isArray(json?.annotations)) throw new Error('文件格式不正确');
-        // 若模型未加载，先缓存，待加载完后再解析
         if (!modelRootRef.current) {
           pendingImportRef.current = json;
           message.info('已读取标注，待模型加载后自动恢复');
