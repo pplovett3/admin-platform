@@ -111,6 +111,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [gizmoSpace, setGizmoSpace] = useState<'local'|'world'>('local');
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [autoKey, setAutoKey] = useState<boolean>(false);
+  const autoKeyRef = useRef<boolean>(false);
+  useEffect(()=>{ autoKeyRef.current = autoKey; }, [autoKey]);
   const trackLabelWidth = 160;
   const materialBackup = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMats = useRef<Set<any>>(new Set());
@@ -210,6 +212,17 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         if (trsSel) {
           setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[trsSel.key]||[]).slice(); list.splice(trsSel.index,1); tracks[trsSel.key]=list; return { ...prev, trsTracks: tracks }; });
           setSelectedTrs(null);
+          return;
+        }
+        if (selectedKey) {
+          const key = selectedKey;
+          // 删除当前对象在当前时间的显隐关键帧
+          setTimeline(prev=>{
+            const list = (prev.visTracks[key]||[]).slice();
+            const eps=1e-3; const idx = list.findIndex(k=>Math.abs(k.time - prev.current) < eps);
+            if (idx<0) return prev; list.splice(idx,1);
+            return { ...prev, visTracks: { ...prev.visTracks, [key]: list } };
+          });
         }
       }
     };
@@ -282,7 +295,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     tcontrols.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
       // 撤销：拖拽开始/结束各入栈一次
-      if (e.value) { pushHistory(); } else { pushHistory(); }
+      if (e.value) { pushHistory(); }
     });
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
@@ -293,7 +306,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         const list = (tracks[key] || []).slice();
         const eps = 1e-3; let idx = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
         if (idx < 0) {
-          if (!autoKey) return prev;
+          if (!autoKeyRef.current) return prev;
           // 自动落帧
           const newKey: TransformKeyframe = {
             time: prev.current,
@@ -311,6 +324,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         list[idx] = next; tracks[key] = list;
         return { ...prev, trsTracks: tracks };
       });
+      // 拖拽结束再入一次撤销快照
+      if (!(tcontrols as any).dragging) pushHistory();
     });
     scene.add(tcontrols as any);
     tcontrolsRef.current = tcontrols;
