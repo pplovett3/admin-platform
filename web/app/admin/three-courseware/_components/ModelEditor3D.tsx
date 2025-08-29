@@ -107,6 +107,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const lastTickRef = useRef<number>(performance.now());
   const [cameraKeyEasing, setCameraKeyEasing] = useState<'linear'|'easeInOut'>('easeInOut');
   const [highlightMode, setHighlightMode] = useState<'outline'|'emissive'>('outline');
+  const [gizmoMode, setGizmoMode] = useState<'translate'|'rotate'|'scale'>('translate');
+  const [gizmoSpace, setGizmoSpace] = useState<'local'|'world'>('local');
+  const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const materialBackup = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMats = useRef<Set<any>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
@@ -114,6 +117,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [rightTab, setRightTab] = useState<'annot'|'anim'>('annot');
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
+  const timelineRef = useRef<TimelineState>(
+    { duration: 10, current: 0, playing: false, cameraKeys: [], visTracks: {}, trsTracks: {}, annotationTracks: {} }
+  );
+  useEffect(()=>{ timelineRef.current = timeline; }, [timeline]);
 
   type Clip = { id: string; name: string; description?: string; timeline: TimelineState };
   const [clips, setClips] = useState<Clip[]>([]);
@@ -160,8 +167,21 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     animate();
     const handleResize = () => resize();
     window.addEventListener('resize', handleResize);
+    // 热键：1/2/3 切换 gizmo 模式；L 切换局部/世界；Ctrl/Shift+Z 撤销/重做；Delete 删除选中关键帧
+    const onKey = (e: KeyboardEvent) => {
+      const t = tcontrolsRef.current;
+      if (e.key === '1') { setGizmoMode('translate'); t?.setMode('translate'); }
+      else if (e.key === '2') { setGizmoMode('rotate'); t?.setMode('rotate'); }
+      else if (e.key === '3') { setGizmoMode('scale'); t?.setMode('scale'); }
+      else if (e.key.toLowerCase() === 'l') { const next = gizmoSpace === 'local' ? 'world' : 'local'; setGizmoSpace(next); t?.setSpace(next as any); }
+      else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey) { undo(); }
+      else if (((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && e.shiftKey) || ((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey))) { redo(); }
+      else if (e.key === 'Delete') { quickDeleteSelectedKeyframe(); }
+    };
+    window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', onKey);
       if (rendererRef.current) {
         rendererRef.current.dispose();
         rendererRef.current.forceContextLoss();
@@ -170,6 +190,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 当左右面板显隐、时间线高度或折叠状态变化时，触发一次 resize（含轻微延迟，等待过渡完成）
+  useEffect(() => {
+    resize();
+    const id = setTimeout(() => resize(), 240);
+    return () => clearTimeout(id);
+  }, [showLeft, showRight, timelineHeight, rightTab]);
 
   useEffect(() => {
     if (initialUrl) {
@@ -227,6 +254,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     });
     scene.add(tcontrols as any);
     tcontrolsRef.current = tcontrols;
+    // 初始化 gizmo 配置
+    tcontrols.setMode(gizmoMode);
+    tcontrols.setSpace(gizmoSpace);
+    tcontrols.setTranslationSnap(gizmoSnap.t ?? null as any);
+    tcontrols.setRotationSnap(gizmoSnap.r ?? null as any);
+    tcontrols.setScaleSnap(gizmoSnap.s ?? null as any);
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
@@ -289,8 +322,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   }
 
   function applyTimelineAt(t: number) {
+    const tl = timelineRef.current;
     // camera
-    const camKeys = timeline.cameraKeys.sort((a,b)=>a.time-b.time);
+    const camKeys = [...(tl.cameraKeys||[])].sort((a,b)=>a.time-b.time);
     if (camKeys.length > 0) {
       const camera = cameraRef.current!;
       const controls = controlsRef.current!;
@@ -323,22 +357,22 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       controls.update();
     }
     // visibility
-    const visTracks = timeline.visTracks || {};
+    const visTracks = tl.visTracks || {};
     for (const key of Object.keys(visTracks)) {
       const obj = keyToObject.current.get(key);
       if (!obj) continue;
-      const keys = (visTracks[key] || []).sort((a,b)=>a.time-b.time);
+      const keys = [...(visTracks[key] || [])].sort((a,b)=>a.time-b.time);
       if (keys.length === 0) continue;
       let value = keys[0].value;
       for (let i = 0; i < keys.length; i++) { if (keys[i].time <= t) value = keys[i].value; else break; }
       obj.visible = value;
     }
     // TRS
-    const trsTracks = timeline.trsTracks || {};
+    const trsTracks = tl.trsTracks || {};
     for (const key of Object.keys(trsTracks)) {
       const obj = keyToObject.current.get(key);
       if (!obj) continue;
-      const keys = (trsTracks[key] || []).sort((a,b)=>a.time-b.time);
+      const keys = [...(trsTracks[key] || [])].sort((a,b)=>a.time-b.time);
       if (keys.length === 0) continue;
       let k0 = keys[0]; let k1 = keys[keys.length-1];
       for (let i=0;i<keys.length;i++){ if (keys[i].time <= t) k0 = keys[i]; if (keys[i].time >= t) { k1 = keys[i]; break; } }
@@ -370,7 +404,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       obj.updateMatrixWorld();
     }
     // Annotations visibility
-    const annTracks = timeline.annotationTracks || {};
+    const annTracks = tl.annotationTracks || {};
     const group = markersGroupRef.current;
     if (group) {
       for (const child of group.children) {
@@ -514,6 +548,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         }
       }
     }
+    // 若点击在 TransformControls 的 gizmo 上，不做射线选取，交给 gizmo 处理
+    const tcontrols = tcontrolsRef.current;
+    if (tcontrols) {
+      const el = (renderer.domElement as any);
+      // 简易判断：若当前处于拖拽状态，或 gizmo 可见，则避免切换选中
+      if ((tcontrols as any).dragging) return;
+    }
     // 命中场景网格
     const meshes: THREE.Object3D[] = [];
     scene.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh) meshes.push(m); });
@@ -534,7 +575,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     setSelectedKey(obj.uuid);
     // attach transform controls
     const tcontrols = tcontrolsRef.current;
-    if (tcontrols) { tcontrols.attach(obj); (tcontrols as any).visible = true; }
+    if (tcontrols) { tcontrols.attach(obj); tcontrols.setMode(gizmoMode); tcontrols.setSpace(gizmoSpace); (tcontrols as any).visible = true; }
     // outline highlight
     const outline = outlineRef.current;
     if (outline && highlightMode === 'outline') {
@@ -705,10 +746,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   };
 
   // timeline actions
-  const onTogglePlay = () => setTimeline(prev => ({ ...prev, playing: !prev.playing }));
-  const onScrub = (val: number) => { setTimeline(prev => ({ ...prev, current: val })); applyTimelineAt(val); };
+  const onTogglePlay = () => setTimeline(prev => { const playing = !prev.playing; if (playing) applyTimelineAt(prev.current); return { ...prev, playing }; });
+  const onScrub = (val: number) => { pushHistory(); setTimeline(prev => ({ ...prev, current: val })); applyTimelineAt(val); };
   const onChangeDuration = (val: number | null) => setTimeline(prev => ({ ...prev, duration: Math.max(1, Number(val||10)) }));
   const addCameraKeyframe = () => {
+    pushHistory();
     const camera = cameraRef.current!;
     const controls = controlsRef.current!;
     setTimeline(prev => ({
@@ -725,7 +767,24 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     }));
   };
   const deleteCameraKey = (idx: number) => setTimeline(prev => ({ ...prev, cameraKeys: prev.cameraKeys.filter((_,i)=>i!==idx) }));
+  const quickDeleteSelectedKeyframe = () => {
+    // 相机关键帧优先
+    if (selectedCamKeyIdx!=null) { setTimeline(prev=>({ ...prev, cameraKeys: prev.cameraKeys.filter((_,i)=>i!==selectedCamKeyIdx) })); setSelectedCamKeyIdx(null); return; }
+    // TRS 关键帧
+    if (selectedTrs) {
+      const k = selectedTrs;
+      setTimeline(prev=>{
+        const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
+        const list = (tracks[k.key]||[]).slice();
+        list.splice(k.index, 1);
+        tracks[k.key] = list;
+        return { ...prev, trsTracks: tracks };
+      });
+      setSelectedTrs(null);
+    }
+  };
   const updateCameraKeyTime = (idx: number, time: number) => setTimeline(prev => {
+    pushHistory();
     const keys = prev.cameraKeys.slice();
     const k = { ...keys[idx], time: Math.max(0, Math.min(prev.duration, Number(time)||0)) };
     keys[idx] = k;
@@ -741,6 +800,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const obj = keyToObject.current.get(selectedKey);
     if (!obj) return;
     ensureVisTrackForSelected();
+    pushHistory();
     setTimeline(prev => {
       const track = prev.visTracks[selectedKey] || [];
       const nextTrack = [...track, { time: prev.current, value: obj.visible }].sort((a,b)=>a.time-b.time);
@@ -753,6 +813,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   };
   const writeBackTRSFromObject = (obj: THREE.Object3D) => {
     const key = obj.uuid;
+    pushHistory();
     setTimeline(prev => {
       const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
       const list = (tracks[key] || []).slice();
@@ -780,6 +841,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const obj = keyToObject.current.get(selectedKey);
     if (!obj) return;
     ensureTrsTrackForSelected();
+    pushHistory();
     setTimeline(prev => {
       const track = prev.trsTracks[selectedKey] || [];
       const k: TransformKeyframe = {
@@ -803,6 +865,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   };
   const updateTRSKeyTime = (idx: number, time: number) => {
     if (!selectedKey) return;
+    pushHistory();
     setTimeline(prev => {
       const track = (prev.trsTracks[selectedKey] || []).slice();
       if (!track[idx]) return prev;
@@ -837,6 +900,30 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const importTimeline: UploadProps = {
     accept: '.json,application/json', showUploadList: false,
     beforeUpload: async (file) => { try { const text = await file.text(); const json = JSON.parse(text); setTimeline(prev => ({ ...prev, duration: Number(json?.duration||prev.duration), cameraKeys: Array.isArray(json?.cameraKeys)? (json.cameraKeys as CameraKeyframe[]) : prev.cameraKeys, visTracks: (json?.visTracks||prev.visTracks) as Record<string, VisibilityKeyframe[]>, trsTracks: (json?.trsTracks||prev.trsTracks) as Record<string, TransformKeyframe[]> })); message.success('时间线已导入'); } catch (e:any) { message.error(e?.message||'导入失败'); } return false; }
+  };
+
+  // --- 撤销 / 重做 ---
+  type Snapshot = { timeline: TimelineState };
+  const undoStack = useRef<Snapshot[]>([]);
+  const redoStack = useRef<Snapshot[]>([]);
+  const pushHistory = () => {
+    undoStack.current.push({ timeline: JSON.parse(JSON.stringify(timelineRef.current)) });
+    // 压栈后清空重做栈
+    redoStack.current = [];
+  };
+  const undo = () => {
+    const last = undoStack.current.pop();
+    if (!last) return;
+    redoStack.current.push({ timeline: JSON.parse(JSON.stringify(timelineRef.current)) });
+    setTimeline(last.timeline);
+    applyTimelineAt(last.timeline.current);
+  };
+  const redo = () => {
+    const last = redoStack.current.pop();
+    if (!last) return;
+    undoStack.current.push({ timeline: JSON.parse(JSON.stringify(timelineRef.current)) });
+    setTimeline(last.timeline);
+    applyTimelineAt(last.timeline.current);
   };
 
   function buildPath(object: THREE.Object3D): string {
@@ -969,6 +1056,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           <Space>
             <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
             <Button size="small" onClick={()=>setShowRight(v=>!v)}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
+            <Select size="small" value={gizmoMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setGizmoMode(v); tcontrolsRef.current?.setMode(v as any); }}
+              options={[{label:'平移', value:'translate'},{label:'旋转', value:'rotate'},{label:'缩放', value:'scale'}]} />
+            <Select size="small" value={gizmoSpace} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setGizmoSpace(v); tcontrolsRef.current?.setSpace(v as any); }}
+              options={[{label:'局部', value:'local'},{label:'世界', value:'world'}]} />
+            <Space size={4}>
+              <InputNumber size="small" placeholder="平移吸附" value={gizmoSnap.t} min={0} step={0.01} style={{ width: 100 }} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, t: n })); tcontrolsRef.current?.setTranslationSnap((n as any) ?? null); }} />
+              <InputNumber size="small" placeholder="旋转吸附°" value={gizmoSnap.r} min={0} step={1} style={{ width: 100 }} onChange={(v)=>{ const n = (v==null? undefined: Number(v)*Math.PI/180); setGizmoSnap(s=>({ ...s, r: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setRotationSnap((n as any) ?? null); }} />
+              <InputNumber size="small" placeholder="缩放吸附" value={gizmoSnap.s} min={0} step={0.01} style={{ width: 100 }} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, s: n })); tcontrolsRef.current?.setScaleSnap((n as any) ?? null); }} />
+            </Space>
             <Select size="small" value={highlightMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
               options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
           </Space>
@@ -1162,32 +1258,44 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 <Button size="small" disabled={!selectedKey} onClick={addVisibilityKeyframeForSelected}>添加关键帧</Button>
                 <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.visTracks).length}</span>
               </div>
-              {selectedKey && (
-                <div style={{ paddingLeft: 80 }}>
-                  <DraggableMiniTrack
-                    duration={timeline.duration}
-                    keys={((timeline.visTracks[selectedKey]||[]) as VisibilityKeyframe[]).map(k=>k.time)}
-                    color="#34d399"
-                    onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs(null); updateVisibilityKeyTime(idx, t);} }
-                  />
-                </div>
-              )}
+              {/* 显示所有对象的显隐轨道 */}
+              <div style={{ paddingLeft: 80 }}>
+                {Object.entries(timeline.visTracks).map(([objKey, list]) => (
+                  <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ width: 160, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); }}>
+                      <DraggableMiniTrack
+                        duration={timeline.duration}
+                        keys={(list||[]).map(k=>k.time)}
+                        color="#34d399"
+                        onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs(null); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>TRS(所选)</strong>
                 <Button size="small" disabled={!selectedKey} onClick={addTRSKeyForSelected}>添加关键帧</Button>
                 <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.trsTracks).length}</span>
               </div>
-              {selectedKey && (
-                <div style={{ paddingLeft: 80 }}>
-                  <DraggableMiniTrack
-                    duration={timeline.duration}
-                    keys={((timeline.trsTracks[selectedKey]||[]) as TransformKeyframe[]).map(k=>k.time)}
-                    color="#f59e0b"
-                    onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs({ key: selectedKey!, index: idx }); updateTRSKeyTime(idx, t);} }
-                    onSelectKey={(idx)=>{ setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs({ key: selectedKey!, index: idx }); }}
-                  />
-                </div>
-              )}
+              {/* 显示所有对象的 TRS 轨道 */}
+              <div style={{ paddingLeft: 80 }}>
+                {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
+                  <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ width: 160, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); }}>
+                      <DraggableMiniTrack
+                        duration={timeline.duration}
+                        keys={(list||[]).map(k=>k.time)}
+                        color="#f59e0b"
+                        onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
+                        onSelectKey={(idx)=>{ setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>标注(全局)</strong>
                 <Button size="small" disabled={annotations.length===0} onClick={()=>{
@@ -1206,28 +1314,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 }}>添加关键帧(全部)</Button>
                 <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.annotationTracks).length}</span>
               </div>
-              {selectedKey && (
-                <div style={{ paddingLeft: 80 }}>
-                  {((timeline.visTracks[selectedKey]||[]) as VisibilityKeyframe[]).sort((a,b)=>a.time-b.time).map((k,idx)=> (
-                    <div key={`vk-${idx}`} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ width: 60 }}>t={k.time.toFixed(2)}</span>
-                      <span style={{ width: 60 }}>{k.value ? '显示' : '隐藏'}</span>
-                      <Button size="small" onClick={()=> updateVisibilityKeyTime(idx, timeline.current)}>设为当前时间</Button>
-                      <Button size="small" danger onClick={()=> deleteVisibilityKey(idx)}>删除</Button>
-                    </div>
-                  ))}
-                  {((timeline.trsTracks[selectedKey]||[]) as TransformKeyframe[]).sort((a,b)=>a.time-b.time).map((k,idx)=> (
-                    <div key={`tk-${idx}`} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ width: 60 }}>t={k.time.toFixed(2)}</span>
-                      <span style={{ width: 160 }}>pos={k.position?.map(n=>n.toFixed(2)).join(',')||'-'}</span>
-                      <span style={{ width: 160 }}>rot={k.rotationEuler?.map(n=>n.toFixed(2)).join(',')||'-'}</span>
-                      <span style={{ width: 120 }}>scl={k.scale?.map(n=>n.toFixed(2)).join(',')||'-'}</span>
-                      <Button size="small" onClick={()=> updateTRSKeyTime(idx, timeline.current)}>设为当前时间</Button>
-                      <Button size="small" danger onClick={()=> deleteTRSKey(idx)}>删除</Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* 简化：暂不在此处列出逐帧删除入口（按需求移除） */}
             </Flex>
           </div>
       </Card>
