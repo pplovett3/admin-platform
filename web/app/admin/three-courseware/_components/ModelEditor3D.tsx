@@ -150,6 +150,22 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     try { localStorage.setItem('three_courseware_clips', JSON.stringify(clips)); } catch {}
   }, [clips]);
 
+  // 依据 Tab/选中对象/模式与坐标系，统一管理 TransformControls 的挂载与可见
+  useEffect(() => {
+    const t = tcontrolsRef.current;
+    if (!t) return;
+    const obj = selectedKey ? keyToObject.current.get(selectedKey) : undefined;
+    if (rightTab === 'anim' && obj) {
+      t.attach(obj);
+      t.setMode(gizmoMode);
+      t.setSpace(gizmoSpace as any);
+      (t as any).visible = true;
+    } else {
+      t.detach();
+      (t as any).visible = false;
+    }
+  }, [rightTab, selectedKey, gizmoMode, gizmoSpace]);
+
   const createClip = () => {
     const name = window.prompt('新建动画名称', `动画${clips.length + 1}`) || '';
     if (!name.trim()) return;
@@ -271,7 +287,30 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
       if (!obj) return;
-      writeBackTRSFromObject(obj);
+      const key = obj.uuid;
+      setTimeline(prev => {
+        const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
+        const list = (tracks[key] || []).slice();
+        const eps = 1e-3; let idx = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
+        if (idx < 0) {
+          if (!autoKey) return prev;
+          // 自动落帧
+          const newKey: TransformKeyframe = {
+            time: prev.current,
+            position: [obj.position.x, obj.position.y, obj.position.z],
+            rotationEuler: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+            scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+            easing: 'easeInOut'
+          };
+          const newList = [...list, newKey].sort((a,b)=>a.time-b.time);
+          tracks[key] = newList;
+          return { ...prev, trsTracks: tracks };
+        }
+        // 写回现有帧
+        const next = { ...list[idx], position: [obj.position.x, obj.position.y, obj.position.z], rotationEuler: [obj.rotation.x, obj.rotation.y, obj.rotation.z], scale: [obj.scale.x, obj.scale.y, obj.scale.z] } as TransformKeyframe;
+        list[idx] = next; tracks[key] = list;
+        return { ...prev, trsTracks: tracks };
+      });
     });
     scene.add(tcontrols as any);
     tcontrolsRef.current = tcontrols;
@@ -604,9 +643,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     // attach transform controls
     const tcontrols = tcontrolsRef.current;
     if (tcontrols) {
-      (tcontrols as any).visible = rightTab === 'anim';
-      if (rightTab === 'anim') { tcontrols.attach(obj); tcontrols.setMode(gizmoMode); tcontrols.setSpace(gizmoSpace); }
-      else { tcontrols.detach(); }
+      if (rightTab === 'anim') {
+        tcontrols.attach(obj);
+        tcontrols.setMode(gizmoMode);
+        tcontrols.setSpace(gizmoSpace as any);
+        (tcontrols as any).visible = true;
+      } else {
+        tcontrols.detach();
+        (tcontrols as any).visible = false;
+      }
     }
     // outline highlight
     const outline = outlineRef.current;
@@ -1252,7 +1297,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           )}
         ]} />
       </Card>
-      <Card title="时间线" bodyStyle={{ padding: 12, position: 'relative' }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -1px 0 #334155 inset' }}>
+      <Card title="时间线" bodyStyle={{ padding: 12, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -1px 0 #334155 inset', minHeight: 0 }}>
           <div onMouseDown={(e)=>{
             const startY = e.clientY; const start = timelineHeight;
             const onMove = (ev: MouseEvent) => { setTimelineHeight(Math.max(160, Math.min(window.innerHeight-120, start + (startY - ev.clientY)))); };
@@ -1295,7 +1340,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div style={{ marginTop: 8, flex: '1 1 0', minHeight: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
+          <div style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
             <Flex vertical gap={8}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>相机</strong>
