@@ -119,6 +119,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [rightTab, setRightTab] = useState<'annot'|'anim'>('annot');
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
+  const selectedCamKeyIdxRef = useRef<number | null>(null);
+  const selectedTrsRef = useRef<{ key: string; index: number } | null>(null);
+  useEffect(()=>{ selectedCamKeyIdxRef.current = selectedCamKeyIdx; }, [selectedCamKeyIdx]);
+  useEffect(()=>{ selectedTrsRef.current = selectedTrs; }, [selectedTrs]);
   const [timelineHeight, setTimelineHeight] = useState<number>(()=>{
     try { return Number(localStorage.getItem('three_timeline_h')||'280') || 280; } catch { return 280; }
   });
@@ -182,7 +186,16 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       else if (e.key.toLowerCase() === 'l') { const next = gizmoSpace === 'local' ? 'world' : 'local'; setGizmoSpace(next); t?.setSpace(next as any); }
       else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey) { undo(); }
       else if (((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && e.shiftKey) || ((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey))) { redo(); }
-      else if (e.key === 'Delete') { quickDeleteSelectedKeyframe(); }
+      else if (e.key === 'Delete') {
+        // 使用 refs 获取最新选中状态
+        const camIdx = selectedCamKeyIdxRef.current;
+        const trsSel = selectedTrsRef.current;
+        if (camIdx!=null) { setTimeline(prev=>({ ...prev, cameraKeys: prev.cameraKeys.filter((_,i)=>i!==camIdx) })); setSelectedCamKeyIdx(null); return; }
+        if (trsSel) {
+          setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[trsSel.key]||[]).slice(); list.splice(trsSel.index,1); tracks[trsSel.key]=list; return { ...prev, trsTracks: tracks }; });
+          setSelectedTrs(null);
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => {
@@ -559,7 +572,18 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     // 若点击在 TransformControls 的 gizmo 上，不做射线选取，交给 gizmo 处理
     const tcontrols = tcontrolsRef.current;
     if (tcontrols && (tcontrols as any).dragging) return;
-    // 命中场景网格
+    // 动画编辑模式下，支持直接点选 3D 对象并出现 gizmo；标注模式下保持原逻辑
+    if (rightTab === 'anim') {
+      const meshesA: THREE.Object3D[] = [];
+      scene.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh) meshesA.push(m); });
+      const hitsA = raycaster.intersectObjects(meshesA, true);
+      if (hitsA.length > 0) {
+        const obj = hitsA[0].object as THREE.Object3D;
+        selectObject(obj);
+        return;
+      }
+    }
+    // 命中场景网格（标注或兜底）
     const meshes: THREE.Object3D[] = [];
     scene.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh) meshes.push(m); });
     const hits = raycaster.intersectObjects(meshes, true);
