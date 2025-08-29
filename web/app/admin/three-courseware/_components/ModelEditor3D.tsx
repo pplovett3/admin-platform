@@ -9,7 +9,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
-import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs } from 'antd';
+import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch } from 'antd';
 import { getToken } from '@/app/_lib/api';
 import type { UploadProps } from 'antd';
 
@@ -1222,29 +1222,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
                 </Flex>
               ) : <div>点击结构树或视窗选择对象</div>}
-              <div style={{ marginTop: 12 }}>
-                <Flex justify="space-between" align="center">
-                  <strong>标注</strong>
-                  <Space>
-                    <Upload {...importProps}><Button>导入</Button></Upload>
-                    <Button onClick={exportAnnotations}>导出</Button>
-                  </Space>
-                </Flex>
-                <div style={{ marginTop: 8 }}>
-                  {(annotations || []).map(a => (
-                    <div key={a.id} style={{ padding: '6px 8px', border: '1px solid #334155', borderRadius: 6, marginBottom: 6 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>{a.label.title}</span>
-                        <Space>
-                          <Button size="small" onClick={()=>{ setEditingAnno(a); const t = keyToObject.current.get(a.targetKey); if (t) selectObject(t); }}>编辑</Button>
-                          <Button size="small" danger onClick={()=> setAnnotations(prev => prev.filter(x => x.id !== a.id))}>删除</Button>
-                        </Space>
-                      </div>
-                      <div style={{ color: '#94a3b8', marginTop: 4 }}>{a.label.summary || '-'}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* 全局标注列表暂时隐藏 */}
             </div>
           )},
           { key: 'anim', label: '动画', children: (
@@ -1252,17 +1230,28 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               {selectedKey ? (
                 <div style={{ marginTop: 6 }}>
                   <div style={{ color: '#94a3b8', marginBottom: 6 }}>对象：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                    <div>Px：{keyToObject.current.get(selectedKey)?.position.x.toFixed(3)}</div>
-                    <div>Py：{keyToObject.current.get(selectedKey)?.position.y.toFixed(3)}</div>
-                    <div>Pz：{keyToObject.current.get(selectedKey)?.position.z.toFixed(3)}</div>
-                    <div>Rx：{keyToObject.current.get(selectedKey)?.rotation.x.toFixed(3)}</div>
-                    <div>Ry：{keyToObject.current.get(selectedKey)?.rotation.y.toFixed(3)}</div>
-                    <div>Rz：{keyToObject.current.get(selectedKey)?.rotation.z.toFixed(3)}</div>
-                    <div>Sx：{keyToObject.current.get(selectedKey)?.scale.x.toFixed(3)}</div>
-                    <div>Sy：{keyToObject.current.get(selectedKey)?.scale.y.toFixed(3)}</div>
-                    <div>Sz：{keyToObject.current.get(selectedKey)?.scale.z.toFixed(3)}</div>
-                  </div>
+                  <Space direction="vertical" size={6}>
+                    <Space>
+                      <InputNumber addonBefore="Px" step={0.01} value={keyToObject.current.get(selectedKey)?.position.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.x=Number(v||0); obj.updateMatrixWorld(); if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, obj.visible); }} />
+                      <InputNumber addonBefore="Py" step={0.01} value={keyToObject.current.get(selectedKey)?.position.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.y=Number(v||0); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Pz" step={0.01} value={keyToObject.current.get(selectedKey)?.position.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.z=Number(v||0); obj.updateMatrixWorld(); }} />
+                    </Space>
+                    <Space>
+                      <InputNumber addonBefore="Rx" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.x=Number(v||0); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Ry" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.y=Number(v||0); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Rz" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.z=Number(v||0); obj.updateMatrixWorld(); }} />
+                    </Space>
+                    <Space>
+                      <InputNumber addonBefore="Sx" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.x=Number(v||1); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Sy" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.y=Number(v||1); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Sz" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.z=Number(v||1); obj.updateMatrixWorld(); }} />
+                    </Space>
+                    <div>
+                      <span style={{ marginRight: 8 }}>显示</span>
+                      <Switch checked={!!keyToObject.current.get(selectedKey)?.visible} onChange={(checked)=>{
+                        const obj = keyToObject.current.get(selectedKey!); if(!obj) return; obj.visible = checked; if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, checked); }} />
+                    </div>
+                  </Space>
                 </div>
               ) : (
                 <div style={{ marginTop: 6, color: '#94a3b8' }}>未选中对象</div>
@@ -1339,8 +1328,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   duration={timeline.duration}
                   keys={(timeline.cameraKeys||[]).map(k=>k.time)}
                   color="#60a5fa"
-                  onChangeKeyTime={(idx, t)=> { setSelectedTrs(null); updateCameraKeyTime(idx, t); }}
-                  onSelectKey={(idx)=>{ setRightTab('anim'); setSelectedTrs(null); setSelectedCamKeyIdx(idx); }}
+                  onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyIdx = idx; setSelectedTrs(null); updateCameraKeyTime(idx, t); }}
+                  onSelectKey={(idx)=>{ (window as any).__selectedKeyIdx = idx; setRightTab('anim'); setSelectedTrs(null); setSelectedCamKeyIdx(idx); }}
                 />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1360,7 +1349,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         duration={timeline.duration}
                         keys={(list||[]).map(k=>k.time)}
                         color="#34d399"
-                        onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs(null); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
+                        onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyIdx = idx; setSelectedCamKeyIdx(null); setSelectedTrs(null); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
                       />
                     </div>
                   </div>
@@ -1381,8 +1370,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         duration={timeline.duration}
                         keys={(list||[]).map(k=>k.time)}
                         color="#f59e0b"
-                        onChangeKeyTime={(idx, t)=>{ setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
-                        onSelectKey={(idx)=>{ setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                        onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyIdx = idx; setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyIdx = idx; setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
                       />
                     </div>
                   </div>
@@ -1466,7 +1455,7 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4 }}>
       {keys.map((t, idx) => (
         <div key={idx} title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
-          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 10, height: 18, marginLeft: -5, borderRadius: 2, background: color, cursor: 'ew-resize' }} />
+          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 10, height: 18, marginLeft: -5, borderRadius: 2, background: color, cursor: 'ew-resize', boxShadow: (typeof onSelectKey==='function' && (window as any).__selectedKeyIdx===idx) ? '0 0 0 2px #fff' : 'none' }} />
       ))}
     </div>
   );
