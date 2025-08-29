@@ -117,6 +117,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [rightTab, setRightTab] = useState<'annot'|'anim'>('annot');
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
+  const [timelineHeight, setTimelineHeight] = useState<number>(()=>{
+    try { return Number(localStorage.getItem('three_timeline_h')||'280') || 280; } catch { return 280; }
+  });
+  useEffect(()=>{ try { localStorage.setItem('three_timeline_h', String(timelineHeight)); } catch {} }, [timelineHeight]);
   const timelineRef = useRef<TimelineState>(
     { duration: 10, current: 0, playing: false, cameraKeys: [], visTracks: {}, trsTracks: {}, annotationTracks: {} }
   );
@@ -1018,10 +1022,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   const colLeft = showLeft ? '340px' : '0px';
   const colRight = showRight ? '320px' : '0px';
-  const [timelineHeight, setTimelineHeight] = useState<number>(()=>{
-    try { return Number(localStorage.getItem('three_timeline_h')||'280') || 280; } catch { return 280; }
-  });
-  useEffect(()=>{ try { localStorage.setItem('three_timeline_h', String(timelineHeight)); } catch {} }, [timelineHeight]);
   const isTimelineCollapsed = rightTab !== 'anim';
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease' }}>
