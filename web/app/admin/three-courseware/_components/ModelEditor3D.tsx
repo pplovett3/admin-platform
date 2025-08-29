@@ -110,6 +110,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [gizmoMode, setGizmoMode] = useState<'translate'|'rotate'|'scale'>('translate');
   const [gizmoSpace, setGizmoSpace] = useState<'local'|'world'>('local');
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
+  const [autoKey, setAutoKey] = useState<boolean>(false);
+  const trackLabelWidth = 160;
   const materialBackup = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMats = useRef<Set<any>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
@@ -250,6 +252,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     (tcontrols as any).visible = false;
     tcontrols.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
+      // 撤销：拖拽开始/结束各入栈一次
+      if (e.value) { pushHistory(); } else { pushHistory(); }
     });
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
@@ -554,11 +558,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     }
     // 若点击在 TransformControls 的 gizmo 上，不做射线选取，交给 gizmo 处理
     const tcontrols = tcontrolsRef.current;
-    if (tcontrols) {
-      const el = (renderer.domElement as any);
-      // 简易判断：若当前处于拖拽状态，或 gizmo 可见，则避免切换选中
-      if ((tcontrols as any).dragging) return;
-    }
+    if (tcontrols && (tcontrols as any).dragging) return;
     // 命中场景网格
     const meshes: THREE.Object3D[] = [];
     scene.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh) meshes.push(m); });
@@ -579,7 +579,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     setSelectedKey(obj.uuid);
     // attach transform controls
     const tcontrols = tcontrolsRef.current;
-    if (tcontrols) { tcontrols.attach(obj); tcontrols.setMode(gizmoMode); tcontrols.setSpace(gizmoSpace); (tcontrols as any).visible = true; }
+    if (tcontrols) {
+      (tcontrols as any).visible = rightTab === 'anim';
+      if (rightTab === 'anim') { tcontrols.attach(obj); tcontrols.setMode(gizmoMode); tcontrols.setSpace(gizmoSpace); }
+      else { tcontrols.detach(); }
+    }
     // outline highlight
     const outline = outlineRef.current;
     if (outline && highlightMode === 'outline') {
@@ -811,13 +815,28 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       return { ...prev, visTracks: { ...prev.visTracks, [selectedKey]: nextTrack } };
     });
   };
+  const setVisibilityAtCurrentForSelected = (visible: boolean) => {
+    if (!selectedKey) return;
+    const key = selectedKey;
+    setTimeline(prev => {
+      const list = (prev.visTracks[key] || []).slice();
+      const eps = 1e-3; const i = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
+      if (i < 0) {
+        if (!autoKey) return prev;
+        const next = [...list, { time: prev.current, value: visible }].sort((a,b)=>a.time-b.time);
+        return { ...prev, visTracks: { ...prev.visTracks, [key]: next } };
+      }
+      pushHistory();
+      list[i] = { ...list[i], value: visible };
+      return { ...prev, visTracks: { ...prev.visTracks, [key]: list } };
+    });
+  };
   const ensureTrsTrackForSelected = () => {
     if (!selectedKey) return;
     setTimeline(prev => ({ ...prev, trsTracks: { ...prev.trsTracks, [selectedKey]: prev.trsTracks[selectedKey] || [] } }));
   };
   const writeBackTRSFromObject = (obj: THREE.Object3D) => {
     const key = obj.uuid;
-    pushHistory();
     setTimeline(prev => {
       const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
       const list = (tracks[key] || []).slice();
@@ -828,7 +847,20 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         const i = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
         return i >= 0 ? i : -1;
       })();
-      if (updateIndex < 0 || !list[updateIndex]) return prev;
+      if (updateIndex < 0 || !list[updateIndex]) {
+        if (!autoKey) return prev;
+        // 自动关键帧：若无当前帧，新增一帧
+        const nextKey: TransformKeyframe = {
+          time: prev.current,
+          position: [obj.position.x, obj.position.y, obj.position.z],
+          rotationEuler: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+          scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+          easing: 'easeInOut'
+        };
+        const newList = [...list, nextKey].sort((a,b)=>a.time-b.time);
+        return { ...prev, trsTracks: { ...prev.trsTracks, [key]: newList } };
+      }
+      pushHistory();
       const next: TransformKeyframe = {
         ...list[updateIndex],
         position: [obj.position.x, obj.position.y, obj.position.z],
@@ -1025,7 +1057,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const isTimelineCollapsed = rightTab !== 'anim';
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease' }}>
-      <Card title="模型与结构树" bodyStyle={{ padding: 12 }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear' }}>
+      <Card title="模型与结构树" bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear' }}>
         <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
             <Input placeholder="https://.../model.glb" allowClear />
@@ -1037,7 +1069,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             <Button onClick={onShowAll}>显示全部</Button>
           </Space>
         </Form>
-        <div style={{ marginTop: 12, height: 'calc(100% - 150px)', overflow: 'auto' }}>
+        <div style={{ marginTop: 12, flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
           <Input.Search placeholder="搜索节点名" allowClear onChange={(e)=>setTreeFilter(e.target.value)} style={{ marginBottom: 8 }} />
           <Tree treeData={filterTree(treeData, treeFilter) as any} onSelect={onTreeSelect} selectedKeys={selectedKey ? [selectedKey] : []}
             titleRender={(node: any) => (
@@ -1067,6 +1099,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </Space>
             <Select size="small" value={highlightMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
               options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
+            <Button size="small" type={autoKey?'primary':'default'} onClick={()=>setAutoKey(v=>!v)}>{autoKey?'录制开':'录制关'}</Button>
           </Space>
         )}
       >
@@ -1078,7 +1111,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
               {selectedKey ? (
                 <Flex vertical gap={8}>
-                  <div>已选中：{selectedKey}</div>
+                  <div>已选中：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
                   <Button onClick={onFocusSelected}>相机对焦</Button>
                   <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
                 </Flex>
@@ -1111,6 +1144,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           { key: 'anim', label: '动画', children: (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
               <strong>关键帧属性</strong>
+              {selectedKey && (
+                <div style={{ marginTop: 6, color: '#94a3b8' }}>对象：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
+              )}
               <div style={{ marginTop: 8, display: selectedCamKeyIdx!=null ? 'block' : 'none' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>相机</div>
                 <Space wrap>
@@ -1224,6 +1260,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <span>时间(s)</span>
               <InputNumber min={0} max={timeline.duration} step={0.01} value={Number(timeline.current.toFixed(2))} onChange={(v)=> onScrub(Number(v||0))} />
             </Flex>
+            <div style={{ paddingLeft: 80 + trackLabelWidth }}>
             <Slider min={0} max={timeline.duration} step={0.01} value={timeline.current}
               marks={{
                 ...Object.fromEntries((timeline.cameraKeys||[]).map(k=>[Number(k.time.toFixed(2)), '•'])),
@@ -1231,6 +1268,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               }}
               onChange={(v)=> onScrub(Number(v))}
             />
+            </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
           <div style={{ marginTop: 8, flex: '1 1 0', minHeight: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
@@ -1244,7 +1282,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 <span style={{ color: '#94a3b8' }}>关键帧数：{timeline.cameraKeys.length}</span>
               </div>
               {/* MiniTrack for camera */}
-              <div style={{ paddingLeft: 80 }}>
+              <div style={{ paddingLeft: 80 + trackLabelWidth }}>
                 <DraggableMiniTrack
                   duration={timeline.duration}
                   keys={(timeline.cameraKeys||[]).map(k=>k.time)}
@@ -1262,7 +1300,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <div style={{ paddingLeft: 80 }}>
                 {Object.entries(timeline.visTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: 160, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
                     <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
@@ -1283,7 +1321,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <div style={{ paddingLeft: 80 }}>
                 {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: 160, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
                     <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
