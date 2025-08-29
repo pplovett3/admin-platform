@@ -287,6 +287,20 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controlsRef.current = controls;
+    // 自动相机关键帧：用户结束相机交互时落帧/写回
+    controls.addEventListener('end', () => {
+      if (!autoKeyRef.current) return;
+      setTimeline(prev => {
+        const keys = [...prev.cameraKeys];
+        const eps = 1e-3; const i = keys.findIndex(k => Math.abs(k.time - prev.current) < eps);
+        const camera = cameraRef.current!; const ctrl = controlsRef.current!;
+        const rec: CameraKeyframe = { time: prev.current, position: [camera.position.x, camera.position.y, camera.position.z], target: [ctrl.target.x, ctrl.target.y, ctrl.target.z], easing: cameraKeyEasing };
+        if (i < 0) keys.push(rec); else keys[i] = { ...keys[i], position: rec.position, target: rec.target };
+        keys.sort((a,b)=>a.time-b.time);
+        return { ...prev, cameraKeys: keys };
+      });
+      pushHistory();
+    });
 
     // Transform gizmo
     const tcontrols = new TransformControls(camera, renderer.domElement);
@@ -629,7 +643,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     // 动画编辑模式下，支持直接点选 3D 对象并出现 gizmo；标注模式下保持原逻辑
     if (rightTab === 'anim') {
       const meshesA: THREE.Object3D[] = [];
-      scene.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh) meshesA.push(m); });
+      const root = modelRootRef.current;
+      if (root) root.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh && (o as any).visible !== false) meshesA.push(m); });
       const hitsA = raycaster.intersectObjects(meshesA, true);
       if (hitsA.length > 0) {
         const obj = hitsA[0].object as THREE.Object3D;
@@ -639,7 +654,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     }
     // 命中场景网格（标注或兜底）
     const meshes: THREE.Object3D[] = [];
-    scene.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh) meshes.push(m); });
+    const root = modelRootRef.current;
+    if (root) root.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh && (o as any).visible !== false) meshes.push(m); });
     const hits = raycaster.intersectObjects(meshes, true);
     if (hits.length > 0) {
       const obj = hits[0].object as THREE.Object3D;
@@ -1312,7 +1328,16 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           )}
         ]} />
       </Card>
-      <Card title="时间线" bodyStyle={{ padding: 12, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -1px 0 #334155 inset', minHeight: 0 }}>
+      <Card title={
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <span>时间线</span>
+          <Button size="small" type={autoKey?'primary':'default'} onClick={()=>setAutoKey(v=>!v)}
+            style={{ animation: autoKey ? 'blink 0.9s linear infinite' : undefined }}>
+            {autoKey?'录制中':'录制关'}
+          </Button>
+          <style>{`@keyframes blink { 0%{opacity:1} 50%{opacity:.4} 100%{opacity:1} }`}</style>
+        </div>
+      } bodyStyle={{ padding: 12, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -1px 0 #334155 inset', minHeight: 0 }}>
           <div onMouseDown={(e)=>{
             const startY = e.clientY; const start = timelineHeight;
             const onMove = (ev: MouseEvent) => { setTimelineHeight(Math.max(160, Math.min(window.innerHeight-120, start + (startY - ev.clientY)))); };
@@ -1378,6 +1403,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>显隐(所选)</strong>
                 <Button size="small" disabled={!selectedKey} onClick={addVisibilityKeyframeForSelected}>添加关键帧</Button>
+                <Button size="small" disabled={!selectedKey} onClick={()=> setVisibilityAtCurrentForSelected(true)}>设为显示</Button>
+                <Button size="small" disabled={!selectedKey} onClick={()=> setVisibilityAtCurrentForSelected(false)}>设为隐藏</Button>
                 <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.visTracks).length}</span>
               </div>
               {/* 显示所有对象的显隐轨道 */}
