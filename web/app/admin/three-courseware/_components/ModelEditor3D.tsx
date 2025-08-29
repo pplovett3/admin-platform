@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
@@ -86,6 +87,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const outlineRef = useRef<OutlinePass | null>(null);
   const modelRootRef = useRef<THREE.Object3D | null>(null);
   const boxHelperRef = useRef<THREE.Box3Helper | null>(null);
+  const tcontrolsRef = useRef<TransformControls | null>(null);
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const pointer = useMemo(() => new THREE.Vector2(), []);
   const { message } = App.useApp();
@@ -210,6 +212,21 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controlsRef.current = controls;
+
+    // Transform gizmo
+    const tcontrols = new TransformControls(camera, renderer.domElement);
+    tcontrols.setSize(1);
+    (tcontrols as any).visible = false;
+    tcontrols.addEventListener('dragging-changed', (e: any) => {
+      controls.enabled = !e.value;
+    });
+    tcontrols.addEventListener('objectChange', () => {
+      const obj = tcontrols.object as THREE.Object3D | null;
+      if (!obj) return;
+      writeBackTRSFromObject(obj);
+    });
+    scene.add(tcontrols as any);
+    tcontrolsRef.current = tcontrols;
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
@@ -515,6 +532,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     scene.add(helper);
     boxHelperRef.current = helper;
     setSelectedKey(obj.uuid);
+    // attach transform controls
+    const tcontrols = tcontrolsRef.current;
+    if (tcontrols) { tcontrols.attach(obj); (tcontrols as any).visible = true; }
     // outline highlight
     const outline = outlineRef.current;
     if (outline && highlightMode === 'outline') {
@@ -730,6 +750,30 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const ensureTrsTrackForSelected = () => {
     if (!selectedKey) return;
     setTimeline(prev => ({ ...prev, trsTracks: { ...prev.trsTracks, [selectedKey]: prev.trsTracks[selectedKey] || [] } }));
+  };
+  const writeBackTRSFromObject = (obj: THREE.Object3D) => {
+    const key = obj.uuid;
+    setTimeline(prev => {
+      const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
+      const list = (tracks[key] || []).slice();
+      const updateIndex = (() => {
+        if (selectedTrs && selectedTrs.key === key) return selectedTrs.index;
+        // 否则尝试找到与当前时间重合的关键帧
+        const eps = 1e-3;
+        const i = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
+        return i >= 0 ? i : -1;
+      })();
+      if (updateIndex < 0 || !list[updateIndex]) return prev;
+      const next: TransformKeyframe = {
+        ...list[updateIndex],
+        position: [obj.position.x, obj.position.y, obj.position.z],
+        rotationEuler: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+        scale: [obj.scale.x, obj.scale.y, obj.scale.z]
+      };
+      list[updateIndex] = next;
+      tracks[key] = list;
+      return { ...prev, trsTracks: tracks };
+    });
   };
   const addTRSKeyForSelected = () => {
     if (!selectedKey) return;
@@ -971,7 +1015,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           { key: 'anim', label: '动画', children: (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
               <strong>关键帧属性</strong>
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 8, display: selectedCamKeyIdx!=null ? 'block' : 'none' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>相机</div>
                 <Space wrap>
                   <InputNumber addonBefore="时间(s)" min={0} max={timeline.duration} step={0.01} value={selectedCamKeyIdx!=null ? Number((timeline.cameraKeys[selectedCamKeyIdx]?.time||0).toFixed(2)) : undefined} onChange={(val)=>{
@@ -989,26 +1033,62 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   }}>设为当前位置</Button>
                 </Space>
               </div>
-              <div style={{ marginTop: 12 }}>
+              <div style={{ marginTop: 12, display: selectedTrs? 'block' : 'none' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>TRS(所选)</div>
                 <Space direction="vertical" size={6}>
                   <InputNumber addonBefore="t" min={0} max={timeline.duration} step={0.01} value={selectedTrs? Number((timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.time||0).toFixed(2)) : undefined} onChange={(val)=>{
                     if (!selectedTrs) return; setSelectedCamKeyIdx(null); updateTRSKeyTime(selectedTrs.index, Number(val||0));
                   }} disabled={!selectedTrs} />
                   <Space>
-                    <InputNumber addonBefore="Px" step={0.01} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Py" step={0.01} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Pz" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Px" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.position?.[0] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const nx = Number(v||0); obj.position.x = nx; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; list[selectedTrs.index]={...list[selectedTrs.index], position:[nx, obj.position.y, obj.position.z]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Py" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.position?.[1] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const ny = Number(v||0); obj.position.y = ny; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const p=list[selectedTrs.index].position||[obj.position.x, obj.position.y, obj.position.z]; list[selectedTrs.index]={...list[selectedTrs.index], position:[p[0], ny, p[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Pz" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.position?.[2] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const nz = Number(v||0); obj.position.z = nz; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const p=list[selectedTrs.index].position||[obj.position.x, obj.position.y, obj.position.z]; list[selectedTrs.index]={...list[selectedTrs.index], position:[p[0], p[1], nz]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
                   </Space>
                   <Space>
-                    <InputNumber addonBefore="Rx" step={0.01} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Ry" step={0.01} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Rz" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Rx" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.rotationEuler?.[0] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const rx = Number(v||0); obj.rotation.x = rx; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const r=list[selectedTrs.index].rotationEuler||[obj.rotation.x, obj.rotation.y, obj.rotation.z]; list[selectedTrs.index]={...list[selectedTrs.index], rotationEuler:[rx, r[1], r[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Ry" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.rotationEuler?.[1] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const ry = Number(v||0); obj.rotation.y = ry; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const r=list[selectedTrs.index].rotationEuler||[obj.rotation.x, obj.rotation.y, obj.rotation.z]; list[selectedTrs.index]={...list[selectedTrs.index], rotationEuler:[r[0], ry, r[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Rz" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.rotationEuler?.[2] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const rz = Number(v||0); obj.rotation.z = rz; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const r=list[selectedTrs.index].rotationEuler||[obj.rotation.x, obj.rotation.y, obj.rotation.z]; list[selectedTrs.index]={...list[selectedTrs.index], rotationEuler:[r[0], r[1], rz]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
                   </Space>
                   <Space>
-                    <InputNumber addonBefore="Sx" step={0.01} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Sy" step={0.01} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Sz" step={0.01} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Sx" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.scale?.[0] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const sx = Number(v||1); obj.scale.x = sx; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const s=list[selectedTrs.index].scale||[obj.scale.x, obj.scale.y, obj.scale.z]; list[selectedTrs.index]={...list[selectedTrs.index], scale:[sx, s[1], s[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Sy" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.scale?.[1] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const sy = Number(v||1); obj.scale.y = sy; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const s=list[selectedTrs.index].scale||[obj.scale.x, obj.scale.y, obj.scale.z]; list[selectedTrs.index]={...list[selectedTrs.index], scale:[s[0], sy, s[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
+                    <InputNumber addonBefore="Sz" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.scale?.[2] : undefined} onChange={(v)=>{
+                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
+                      const sz = Number(v||1); obj.scale.z = sz; obj.updateMatrixWorld();
+                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const s=list[selectedTrs.index].scale||[obj.scale.x, obj.scale.y, obj.scale.z]; list[selectedTrs.index]={...list[selectedTrs.index], scale:[s[0], s[1], sz]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
+                    }} disabled={!selectedTrs} />
                   </Space>
                 </Space>
               </div>

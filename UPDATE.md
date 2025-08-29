@@ -8,9 +8,11 @@ git status
 # 提交并推送（请改成你的提交说明）
 git add -A
 git commit -m "chore: update code"
-git pull --rebase origin main
 git push origin main
 
+
+
+git pull --rebase origin main
 > 适用于此前按指南在 Windows 上用 NSSM 注册了两个服务：`AdminPlatform-API` 和 `AdminPlatform-Web`。
 
 ## Git 推送（SSH 走 443，适用于 HTTPS 被限制的网络）
@@ -108,7 +110,7 @@ npm ci
 npm run build
 nssm start AdminPlatform-API
 ```
-
+/volume1/data/metaclassroom/users/689c46d6191b483b08e9c560/2025/08/68af080883f0e85a3dd4d11e/0_1.png
 ## 只改前端时
 ```powershell
 nssm stop AdminPlatform-Web
@@ -217,3 +219,24 @@ nssm set AdminPlatform-API AppRotateFiles 1
 # 确认状态并重启
 nssm stop AdminPlatform-API
 nssm start AdminPlatform-API
+
+
+
+
+
+
+
+# 设置可执行程序（指向你的 node.exe）
+nssm set AdminPlatform-API Application "C:\Program Files\nodejs\node.exe"
+
+# 确认工作目录与参数（你已有）
+nssm set AdminPlatform-API AppDirectory "C:\admin-platform\server"
+nssm set AdminPlatform-API AppParameters "dist/index.js"
+
+# 环境变量（你已有，确保包含 SEED_DEFAULT_ADMIN=false）
+nssm set AdminPlatform-API AppEnvironmentExtra "PORT=4000;MONGODB_URI=mongodb://127.0.0.1:27017/admin_platform;JWT_SECRET=dev_secret_change_me;SEED_DEFAULT_ADMIN=false"
+
+# 建议配置日志，便于排错
+nssm set AdminPlatform-API AppStdout C:\admin-platform\server\run-server.out.log
+nssm set AdminPlatform-API AppStderr C:\admin-platform\server\run-server.err.log
+nssm set AdminPlatform-API AppRotateFiles 1
