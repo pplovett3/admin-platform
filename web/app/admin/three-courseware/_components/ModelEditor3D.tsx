@@ -650,6 +650,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         const obj = hitsA[0].object as THREE.Object3D;
         selectObject(obj);
         return;
+      } else {
+        // 点击空区域：取消选中
+        setSelectedKey(undefined);
+        const t = tcontrolsRef.current; if (t) { t.detach(); (t as any).visible = false; }
+        const outline = outlineRef.current; if (outline) outline.selectedObjects = [];
+        clearEmissiveHighlight();
+        if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
       }
     }
     // 命中场景网格（标注或兜底）
@@ -915,14 +922,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       return { ...prev, visTracks: { ...prev.visTracks, [selectedKey]: nextTrack } };
     });
   };
-  const setVisibilityAtCurrentForSelected = (visible: boolean) => {
-    if (!selectedKey) return;
-    const key = selectedKey;
+  const setVisibilityAtCurrent = (key: string, visible: boolean) => {
     setTimeline(prev => {
       const list = (prev.visTracks[key] || []).slice();
       const eps = 1e-3; const i = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
       if (i < 0) {
-        if (!autoKey) return prev;
+        if (!autoKeyRef.current) return prev;
         const next = [...list, { time: prev.current, value: visible }].sort((a,b)=>a.time-b.time);
         return { ...prev, visTracks: { ...prev.visTracks, [key]: next } };
       }
@@ -931,6 +936,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       return { ...prev, visTracks: { ...prev.visTracks, [key]: list } };
     });
   };
+  const setVisibilityAtCurrentForSelected = (visible: boolean) => { if (!selectedKey) return; setVisibilityAtCurrent(selectedKey, visible); };
   const ensureTrsTrackForSelected = () => {
     if (!selectedKey) return;
     setTimeline(prev => ({ ...prev, trsTracks: { ...prev.trsTracks, [selectedKey]: prev.trsTracks[selectedKey] || [] } }));
@@ -1243,87 +1249,24 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           )},
           { key: 'anim', label: '动画', children: (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
-              <strong>关键帧属性</strong>
-              {selectedKey && (
-                <div style={{ marginTop: 6, color: '#94a3b8' }}>对象：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
+              {selectedKey ? (
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ color: '#94a3b8', marginBottom: 6 }}>对象：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    <div>Px：{keyToObject.current.get(selectedKey)?.position.x.toFixed(3)}</div>
+                    <div>Py：{keyToObject.current.get(selectedKey)?.position.y.toFixed(3)}</div>
+                    <div>Pz：{keyToObject.current.get(selectedKey)?.position.z.toFixed(3)}</div>
+                    <div>Rx：{keyToObject.current.get(selectedKey)?.rotation.x.toFixed(3)}</div>
+                    <div>Ry：{keyToObject.current.get(selectedKey)?.rotation.y.toFixed(3)}</div>
+                    <div>Rz：{keyToObject.current.get(selectedKey)?.rotation.z.toFixed(3)}</div>
+                    <div>Sx：{keyToObject.current.get(selectedKey)?.scale.x.toFixed(3)}</div>
+                    <div>Sy：{keyToObject.current.get(selectedKey)?.scale.y.toFixed(3)}</div>
+                    <div>Sz：{keyToObject.current.get(selectedKey)?.scale.z.toFixed(3)}</div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: 6, color: '#94a3b8' }}>未选中对象</div>
               )}
-              <div style={{ marginTop: 8, display: selectedCamKeyIdx!=null ? 'block' : 'none' }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>相机</div>
-                <Space wrap>
-                  <InputNumber addonBefore="时间(s)" min={0} max={timeline.duration} step={0.01} value={selectedCamKeyIdx!=null ? Number((timeline.cameraKeys[selectedCamKeyIdx]?.time||0).toFixed(2)) : undefined} onChange={(val)=>{
-                    if (selectedCamKeyIdx==null) return; updateCameraKeyTime(selectedCamKeyIdx, Number(val||0));
-                  }} disabled={selectedCamKeyIdx==null} />
-                  <Select value={selectedCamKeyIdx!=null ? (timeline.cameraKeys[selectedCamKeyIdx]?.easing||'easeInOut') : cameraKeyEasing} style={{ width: 140 }} onChange={v=>{
-                    if (selectedCamKeyIdx==null) { setCameraKeyEasing(v); return; }
-                    setTimeline(prev=>{ const keys = prev.cameraKeys.slice(); keys[selectedCamKeyIdx] = { ...keys[selectedCamKeyIdx], easing: v }; return { ...prev, cameraKeys: keys }; });
-                  }} options={[{label:'easeInOut', value:'easeInOut'},{label:'linear', value:'linear'}]} />
-                  <Button disabled={selectedCamKeyIdx==null} onClick={()=>{ if (selectedCamKeyIdx==null) return; deleteCameraKey(selectedCamKeyIdx); setSelectedCamKeyIdx(null); }}>删除</Button>
-                  <Button type="primary" disabled={selectedCamKeyIdx==null} onClick={()=>{
-                    if (selectedCamKeyIdx==null) return;
-                    const camera = cameraRef.current!; const controls = controlsRef.current!;
-                    setTimeline(prev=>{ const keys = prev.cameraKeys.slice(); keys[selectedCamKeyIdx] = { ...keys[selectedCamKeyIdx], position: [camera.position.x, camera.position.y, camera.position.z], target: [controls.target.x, controls.target.y, controls.target.z] }; return { ...prev, cameraKeys: keys }; });
-                  }}>设为当前位置</Button>
-                </Space>
-              </div>
-              <div style={{ marginTop: 12, display: selectedTrs? 'block' : 'none' }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>TRS(所选)</div>
-                <Space direction="vertical" size={6}>
-                  <InputNumber addonBefore="t" min={0} max={timeline.duration} step={0.01} value={selectedTrs? Number((timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.time||0).toFixed(2)) : undefined} onChange={(val)=>{
-                    if (!selectedTrs) return; setSelectedCamKeyIdx(null); updateTRSKeyTime(selectedTrs.index, Number(val||0));
-                  }} disabled={!selectedTrs} />
-                  <Space>
-                    <InputNumber addonBefore="Px" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.position?.[0] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const nx = Number(v||0); obj.position.x = nx; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; list[selectedTrs.index]={...list[selectedTrs.index], position:[nx, obj.position.y, obj.position.z]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Py" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.position?.[1] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const ny = Number(v||0); obj.position.y = ny; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const p=list[selectedTrs.index].position||[obj.position.x, obj.position.y, obj.position.z]; list[selectedTrs.index]={...list[selectedTrs.index], position:[p[0], ny, p[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Pz" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.position?.[2] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const nz = Number(v||0); obj.position.z = nz; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const p=list[selectedTrs.index].position||[obj.position.x, obj.position.y, obj.position.z]; list[selectedTrs.index]={...list[selectedTrs.index], position:[p[0], p[1], nz]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                  </Space>
-                  <Space>
-                    <InputNumber addonBefore="Rx" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.rotationEuler?.[0] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const rx = Number(v||0); obj.rotation.x = rx; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const r=list[selectedTrs.index].rotationEuler||[obj.rotation.x, obj.rotation.y, obj.rotation.z]; list[selectedTrs.index]={...list[selectedTrs.index], rotationEuler:[rx, r[1], r[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Ry" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.rotationEuler?.[1] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const ry = Number(v||0); obj.rotation.y = ry; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const r=list[selectedTrs.index].rotationEuler||[obj.rotation.x, obj.rotation.y, obj.rotation.z]; list[selectedTrs.index]={...list[selectedTrs.index], rotationEuler:[r[0], ry, r[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Rz" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.rotationEuler?.[2] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const rz = Number(v||0); obj.rotation.z = rz; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const r=list[selectedTrs.index].rotationEuler||[obj.rotation.x, obj.rotation.y, obj.rotation.z]; list[selectedTrs.index]={...list[selectedTrs.index], rotationEuler:[r[0], r[1], rz]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                  </Space>
-                  <Space>
-                    <InputNumber addonBefore="Sx" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.scale?.[0] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const sx = Number(v||1); obj.scale.x = sx; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const s=list[selectedTrs.index].scale||[obj.scale.x, obj.scale.y, obj.scale.z]; list[selectedTrs.index]={...list[selectedTrs.index], scale:[sx, s[1], s[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Sy" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.scale?.[1] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const sy = Number(v||1); obj.scale.y = sy; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const s=list[selectedTrs.index].scale||[obj.scale.x, obj.scale.y, obj.scale.z]; list[selectedTrs.index]={...list[selectedTrs.index], scale:[s[0], sy, s[2]]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                    <InputNumber addonBefore="Sz" step={0.01} value={selectedTrs? timeline.trsTracks[selectedTrs.key]?.[selectedTrs.index]?.scale?.[2] : undefined} onChange={(v)=>{
-                      if (!selectedTrs) return; const obj = keyToObject.current.get(selectedTrs.key); if (!obj) return;
-                      const sz = Number(v||1); obj.scale.z = sz; obj.updateMatrixWorld();
-                      setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[selectedTrs.key]||[]).slice(); if(!list[selectedTrs.index]) return prev; const s=list[selectedTrs.index].scale||[obj.scale.x, obj.scale.y, obj.scale.z]; list[selectedTrs.index]={...list[selectedTrs.index], scale:[s[0], s[1], sz]}; tracks[selectedTrs.key]=list; return {...prev, trsTracks:tracks}; });
-                    }} disabled={!selectedTrs} />
-                  </Space>
-                </Space>
-              </div>
             </div>
           )}
         ]} />
