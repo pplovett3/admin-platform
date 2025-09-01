@@ -1120,7 +1120,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   // 设置弹窗
   const SettingsModal = () => (
-    <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} destroyOnClose={false}>
+    <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} destroyOnClose={false} forceRender getContainer={false} transitionName="" maskTransitionName="">
       <Flex vertical gap={12}>
         <div style={{ fontWeight: 600 }}>背景</div>
         <Space>
