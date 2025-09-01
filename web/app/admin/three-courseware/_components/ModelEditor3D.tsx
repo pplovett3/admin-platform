@@ -1118,7 +1118,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   // 设置弹窗
   const SettingsModal = () => (
-    <Modal title="系统设置" open={settingsOpen} onCancel={()=>setSettingsOpen(false)} onOk={()=>setSettingsOpen(false)} destroyOnClose>
+    <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} destroyOnClose={false}>
       <Flex vertical gap={12}>
         <div style={{ fontWeight: 600 }}>背景</div>
         <Space>
@@ -1304,7 +1304,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             '--icon-w': '22px'
           } as any}>
             <Tree
+              className="three-tree"
               showLine={{ showLeafIcon: false }}
+              blockNode
               treeData={filterTree(treeData, treeFilter) as any}
               onSelect={onTreeSelect}
               selectedKeys={selectedKey ? [selectedKey] : []}
@@ -1315,6 +1317,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 </div>
               )}
             />
+            <style>{`
+              .three-tree .ant-tree-treenode { padding: 0 4px; }
+              .three-tree .ant-tree-node-content-wrapper { width: 100%; }
+              .three-tree .ant-tree-node-content-wrapper:hover { background: rgba(148,163,184,0.08); }
+              .three-tree .ant-tree-indent-unit { width: 10px; }
+              .three-tree .ant-tree-switcher, .three-tree .ant-tree-iconEle { width: 18px; }
+              .three-tree .ant-tree-switcher-line-icon { color: #64748b; }
+            `}</style>
           </div>
         </div>
       </Card>
