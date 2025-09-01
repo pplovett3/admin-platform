@@ -1295,26 +1295,37 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         </Form>
         <div style={{ marginTop: 12, flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
           <Input.Search placeholder="搜索节点名" allowClear onChange={(e)=>setTreeFilter(e.target.value)} style={{ marginBottom: 8 }} />
-          <Tree treeData={filterTree(treeData, treeFilter) as any} onSelect={onTreeSelect} selectedKeys={selectedKey ? [selectedKey] : []}
+          <Tree
+            showLine={{ showLeafIcon: false }}
+            treeData={filterTree(treeData, treeFilter) as any}
+            onSelect={onTreeSelect}
+            selectedKeys={selectedKey ? [selectedKey] : []}
             titleRender={(node: any) => (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>{node.title}</span>
-                <Button size="small" type="text" onClick={(e)=>{ e.stopPropagation(); onToggleHide(String(node.key), !hiddenKeys.has(String(node.key))); }}>
-                  {hiddenKeys.has(String(node.key)) ? '显示' : '隐藏'}
-                </Button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span title={node.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.title}</span>
+                <Button size="small" type="text" onClick={(e)=>{ e.stopPropagation(); onToggleHide(String(node.key), !hiddenKeys.has(String(node.key))); }} icon={hiddenKeys.has(String(node.key)) ? <EyeInvisibleOutlined /> : <EyeOutlined />} />
               </div>
             )}
           />
         </div>
       </Card>
-      <Card title={<Space><span>三维视窗</span><Segmented size="small" value={mode} onChange={(v)=>setMode(v as any)} options={[{label:'添加标注', value:'annot'},{label:'制作动画', value:'anim'}]} /></Space>} bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
+      <Card title={<div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12 }}>
+        <span>三维视窗</span>
+        <Segmented
+          size="large"
+          value={mode}
+          onChange={(v)=>setMode(v as any)}
+          options={[{label:'添加标注', value:'annot'},{label:'制作动画', value:'anim'}]}
+          style={{ background:'#0b1220', padding: 4, borderRadius: 999 }}
+        />
+      </div>} bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
         extra={(
           <Space>
             <Button size="small" icon={<SettingOutlined />} onClick={()=>setSettingsOpen(true)}>设置</Button>
           </Space>
         )}
       >
-        <div style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 8px', borderBottom:'1px solid #334155' }}>
+        <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)', top: 56, zIndex: 5, background:'rgba(15,23,42,0.7)', backdropFilter:'blur(6px)', padding:8, borderRadius:8, display:'flex', alignItems:'center', gap:8, boxShadow:'0 2px 8px rgba(0,0,0,0.25)' }}>
           <Tooltip title="平移"><Button size="small" type={gizmoMode==='translate'?'primary':'default'} icon={<DragOutlined />} onClick={()=>{ setGizmoMode('translate'); tcontrolsRef.current?.setMode('translate'); }} /></Tooltip>
           <Tooltip title="旋转"><Button size="small" type={gizmoMode==='rotate'?'primary':'default'} icon={<ReloadOutlined />} onClick={()=>{ setGizmoMode('rotate'); tcontrolsRef.current?.setMode('rotate'); }} /></Tooltip>
           <Tooltip title="缩放"><Button size="small" type={gizmoMode==='scale'?'primary':'default'} icon={<AppstoreOutlined />} onClick={()=>{ setGizmoMode('scale'); tcontrolsRef.current?.setMode('scale'); }} /></Tooltip>
@@ -1328,7 +1339,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           <Tooltip title="隔离所选"><Button size="small" icon={<ScissorOutlined />} onClick={onIsolateSelected} disabled={!selectedKey} /></Tooltip>
           <Tooltip title="显示全部"><Button size="small" icon={<ExpandOutlined />} onClick={onShowAll} /></Tooltip>
         </div>
-        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420 }} />
+        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }} />
       </Card>
       <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
         {mode==='annot' && (
