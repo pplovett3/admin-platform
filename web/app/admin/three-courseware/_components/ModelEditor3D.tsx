@@ -121,10 +121,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [rightTab, setRightTab] = useState<'annot'|'anim'>('annot');
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
+  const [selectedVis, setSelectedVis] = useState<{ key: string; index: number } | null>(null);
   const selectedCamKeyIdxRef = useRef<number | null>(null);
   const selectedTrsRef = useRef<{ key: string; index: number } | null>(null);
+  const selectedVisRef = useRef<{ key: string; index: number } | null>(null);
   useEffect(()=>{ selectedCamKeyIdxRef.current = selectedCamKeyIdx; }, [selectedCamKeyIdx]);
   useEffect(()=>{ selectedTrsRef.current = selectedTrs; }, [selectedTrs]);
+  useEffect(()=>{ selectedVisRef.current = selectedVis; }, [selectedVis]);
+  const [prsTick, setPrsTick] = useState(0);
   const [timelineHeight, setTimelineHeight] = useState<number>(()=>{
     try { return Number(localStorage.getItem('three_timeline_h')||'280') || 280; } catch { return 280; }
   });
@@ -208,10 +212,16 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         // 使用 refs 获取最新选中状态
         const camIdx = selectedCamKeyIdxRef.current;
         const trsSel = selectedTrsRef.current;
+        const visSel = selectedVisRef.current;
         if (camIdx!=null) { setTimeline(prev=>({ ...prev, cameraKeys: prev.cameraKeys.filter((_,i)=>i!==camIdx) })); setSelectedCamKeyIdx(null); return; }
         if (trsSel) {
           setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[trsSel.key]||[]).slice(); list.splice(trsSel.index,1); tracks[trsSel.key]=list; return { ...prev, trsTracks: tracks }; });
           setSelectedTrs(null);
+          return;
+        }
+        if (visSel) {
+          setTimeline(prev=>{ const tracks={...prev.visTracks}; const list=(tracks[visSel.key]||[]).slice(); list.splice(visSel.index,1); tracks[visSel.key]=list; return { ...prev, visTracks: tracks }; });
+          setSelectedVis(null);
           return;
         }
         if (selectedKey) {
@@ -314,6 +324,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
       if (!obj) return;
+      setPrsTick(v=>v+1);
       const key = obj.uuid;
       setTimeline(prev => {
         const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
@@ -640,25 +651,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     // 若点击在 TransformControls 的 gizmo 上，不做射线选取，交给 gizmo 处理
     const tcontrols = tcontrolsRef.current;
     if (tcontrols && (tcontrols as any).dragging) return;
-    // 动画编辑模式下，支持直接点选 3D 对象并出现 gizmo；标注模式下保持原逻辑
-    if (rightTab === 'anim') {
-      const meshesA: THREE.Object3D[] = [];
-      const root = modelRootRef.current;
-      if (root) root.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh && (o as any).visible !== false) meshesA.push(m); });
-      const hitsA = raycaster.intersectObjects(meshesA, true);
-      if (hitsA.length > 0) {
-        const obj = hitsA[0].object as THREE.Object3D;
-        selectObject(obj);
-        return;
-      } else {
-        // 点击空区域：取消选中
-        setSelectedKey(undefined);
-        const t = tcontrolsRef.current; if (t) { t.detach(); (t as any).visible = false; }
-        const outline = outlineRef.current; if (outline) outline.selectedObjects = [];
-        clearEmissiveHighlight();
-        if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
-      }
-    }
+    // 直接进行一次网格拾取
     // 命中场景网格（标注或兜底）
     const meshes: THREE.Object3D[] = [];
     const root = modelRootRef.current;
@@ -667,17 +660,26 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     if (hits.length > 0) {
       const obj = hits[0].object as THREE.Object3D;
       selectObject(obj);
+      return;
     }
+    // 点击空白：取消选中
+    setSelectedKey(undefined);
+    setSelectedCamKeyIdx(null);
+    setSelectedTrs(null);
+    setSelectedVis(null);
+    const t = tcontrolsRef.current; if (t) { t.detach(); (t as any).visible = false; }
+    const outline = outlineRef.current; if (outline) outline.selectedObjects = [];
+    clearEmissiveHighlight();
+    if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
   }
 
   function selectObject(obj: THREE.Object3D) {
     const scene = sceneRef.current!;
     if (boxHelperRef.current) { scene.remove(boxHelperRef.current); boxHelperRef.current = null; }
-    const box = new THREE.Box3().setFromObject(obj);
-    const helper = new THREE.Box3Helper(box, new THREE.Color(0x22d3ee));
-    scene.add(helper);
-    boxHelperRef.current = helper;
     setSelectedKey(obj.uuid);
+    setSelectedCamKeyIdx(null);
+    setSelectedTrs(null);
+    setSelectedVis(null);
     // attach transform controls
     const tcontrols = tcontrolsRef.current;
     if (tcontrols) {
@@ -700,6 +702,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       if (outline) outline.selectedObjects = [];
       applyEmissiveHighlight(obj);
     }
+    setPrsTick(v=>v+1);
   }
 
   function clearEmissiveHighlight() {
@@ -1193,7 +1196,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         extra={(
           <Space>
             <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
-            <Button size="small" onClick={()=>setShowRight(v=>!v)}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
+            <Button size="small" onClick={()=>{ setShowRight(v=>!v); setTimeout(()=>resize(), 250); }}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
             <Select size="small" value={gizmoMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setGizmoMode(v); tcontrolsRef.current?.setMode(v as any); }}
               options={[{label:'平移', value:'translate'},{label:'旋转', value:'rotate'},{label:'缩放', value:'scale'}]} />
             <Select size="small" value={gizmoSpace} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setGizmoSpace(v); tcontrolsRef.current?.setSpace(v as any); }}
@@ -1261,13 +1264,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         ]} />
       </Card>
       <Card title={
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <div style={{ display:'flex', alignItems:'center', gap: 12 }}>
           <span>时间线</span>
-          <Button size="small" type={autoKey?'primary':'default'} onClick={()=>setAutoKey(v=>!v)}
-            style={{ animation: autoKey ? 'blink 0.9s linear infinite' : undefined }}>
+          <Button size="small" onClick={()=>setAutoKey(v=>!v)}
+            style={{ background: autoKey ? '#22c55e' : '#1f2937', borderColor: autoKey ? '#22c55e' : '#334155', color: '#fff', boxShadow: 'none', padding: '2px 8px', animation: autoKey ? 'blink 0.9s linear infinite' : undefined }}>
             {autoKey?'录制中':'录制关'}
           </Button>
-          <style>{`@keyframes blink { 0%{opacity:1} 50%{opacity:.4} 100%{opacity:1} }`}</style>
+          <style>{`@keyframes blink { 0%{opacity:1} 50%{opacity:.6} 100%{opacity:1} }`}</style>
         </div>
       } bodyStyle={{ padding: 12, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }} style={{ gridArea: 'timeline', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -1px 0 #334155 inset', minHeight: 0 }}>
           <div onMouseDown={(e)=>{
@@ -1328,8 +1331,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   duration={timeline.duration}
                   keys={(timeline.cameraKeys||[]).map(k=>k.time)}
                   color="#60a5fa"
-                  onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyIdx = idx; setSelectedTrs(null); updateCameraKeyTime(idx, t); }}
-                  onSelectKey={(idx)=>{ (window as any).__selectedKeyIdx = idx; setRightTab('anim'); setSelectedTrs(null); setSelectedCamKeyIdx(idx); }}
+                  trackId={`cam`}
+                  onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
+                  onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setRightTab('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); }}
                 />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1349,7 +1353,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         duration={timeline.duration}
                         keys={(list||[]).map(k=>k.time)}
                         color="#34d399"
-                        onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyIdx = idx; setSelectedCamKeyIdx(null); setSelectedTrs(null); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
+                        trackId={`vis:${objKey}`}
+                        onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
                       />
                     </div>
                   </div>
@@ -1370,8 +1376,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         duration={timeline.duration}
                         keys={(list||[]).map(k=>k.time)}
                         color="#f59e0b"
-                        onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyIdx = idx; setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
-                        onSelectKey={(idx)=>{ (window as any).__selectedKeyIdx = idx; setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                        trackId={`trs:${objKey}`}
+                        onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
                       />
                     </div>
                   </div>
@@ -1438,13 +1445,14 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
     const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left));
     return (p / Math.max(1, rect.width)) * duration;
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
+    (window as any).__selectedKeyId = `${trackId}:${idx}`;
     onSelectKey?.(idx);
     const onMove = (ev: MouseEvent) => { onChangeKeyTime(idx, Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
@@ -1455,7 +1463,7 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4 }}>
       {keys.map((t, idx) => (
         <div key={idx} title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
-          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 10, height: 18, marginLeft: -5, borderRadius: 2, background: color, cursor: 'ew-resize', boxShadow: (typeof onSelectKey==='function' && (window as any).__selectedKeyIdx===idx) ? '0 0 0 2px #fff' : 'none' }} />
+          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 10, height: 18, marginLeft: -5, borderRadius: 2, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : 'none' }} />
       ))}
     </div>
   );
