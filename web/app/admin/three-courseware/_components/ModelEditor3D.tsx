@@ -278,7 +278,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const scene = sceneRef.current;
     if (!scene) return;
     scene.background = bgTransparent ? null : new THREE.Color(bgColor);
-    rendererRef.current?.render(scene, cameraRef.current!);
+    const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+      const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+    }
   }, [bgTransparent, bgColor]);
 
   useEffect(() => {
@@ -287,14 +289,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     l.intensity = dirLight.intensity;
     l.position.set(dirLight.position.x, dirLight.position.y, dirLight.position.z);
     l.updateMatrixWorld();
-    rendererRef.current?.render(sceneRef.current!, cameraRef.current!);
+    const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
   }, [dirLight]);
 
   useEffect(() => {
     const l = ambLightRef.current; if (!l) return;
     l.color = new THREE.Color(ambLight.color);
     l.intensity = ambLight.intensity;
-    rendererRef.current?.render(sceneRef.current!, cameraRef.current!);
+    const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
   }, [ambLight]);
 
   useEffect(() => {
@@ -302,7 +304,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     l.color = new THREE.Color(hemiLight.skyColor);
     (l as any).groundColor = new THREE.Color(hemiLight.groundColor);
     l.intensity = hemiLight.intensity;
-    rendererRef.current?.render(sceneRef.current!, cameraRef.current!);
+    const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
   }, [hemiLight]);
 
   useEffect(() => {
@@ -1328,15 +1330,19 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           </div>
         </div>
       </Card>
-      <Card title={<div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12 }}>
-        <span>三维视窗</span>
-        <Segmented
-          size="large"
-          value={mode}
-          onChange={(v)=>setMode(v as any)}
-          options={[{label:'添加标注', value:'annot'},{label:'制作动画', value:'anim'}]}
-          style={{ background:'#0b1220', padding: 4, borderRadius: 999 }}
-        />
+      <Card title={<div style={{ position:'relative', display:'flex', alignItems:'center', minHeight: 36 }}>
+        <span style={{ fontWeight: 600 }}>三维视窗</span>
+        <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)' }}>
+          <Segmented
+            size="large"
+            value={mode}
+            onChange={(v)=>setMode(v as any)}
+            options={[{label:'添加标注', value:'annot'},{label:'制作动画', value:'anim'}]}
+            className="mode-seg"
+            style={{ padding: 4, borderRadius: 999 }}
+          />
+        </div>
+        <style>{`.mode-seg .ant-segmented-item-selected{background:#06b6d4;color:#fff}`}</style>
       </div>} bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
         extra={(
           <Space>
@@ -1348,6 +1354,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           <Tooltip title="平移"><Button size="small" type={gizmoMode==='translate'?'primary':'default'} icon={<DragOutlined />} onClick={()=>{ setGizmoMode('translate'); tcontrolsRef.current?.setMode('translate'); }} /></Tooltip>
           <Tooltip title="旋转"><Button size="small" type={gizmoMode==='rotate'?'primary':'default'} icon={<ReloadOutlined />} onClick={()=>{ setGizmoMode('rotate'); tcontrolsRef.current?.setMode('rotate'); }} /></Tooltip>
           <Tooltip title="缩放"><Button size="small" type={gizmoMode==='scale'?'primary':'default'} icon={<AppstoreOutlined />} onClick={()=>{ setGizmoMode('scale'); tcontrolsRef.current?.setMode('scale'); }} /></Tooltip>
+          <Segmented size="small" value={gizmoSpace} onChange={(v)=>{ const s=v as 'local'|'world'; setGizmoSpace(s); tcontrolsRef.current?.setSpace(s as any); }} options={[{label:'局部', value:'local'},{label:'世界', value:'world'}]} />
           <Divider type="vertical" />
           <Tooltip title="正视"><Button size="small" icon={<ArrowUpOutlined rotate={-90} />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y, t.z+3); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
           <Tooltip title="俯视"><Button size="small" icon={<ArrowUpOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y+3, t.z); c.up.set(0,0,-1); c.lookAt(t); ctl.update(); }} /></Tooltip>
