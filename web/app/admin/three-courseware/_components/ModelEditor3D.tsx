@@ -328,6 +328,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [stretchFactor, setStretchFactor] = useState<number>(1);
   const [pxPerSec, setPxPerSec] = useState<number>(80);
   const tracksScrollRef = useRef<HTMLDivElement | null>(null);
+  const innerScrollRef = useRef<HTMLDivElement | null>(null);
   const rulerScrollRef = useRef<HTMLDivElement | null>(null);
   const selectionRef = useRef<{ start: number; end: number } | null>(null);
   const activeTrackIdRef = useRef<string | null>(null);
