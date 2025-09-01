@@ -2,9 +2,20 @@
 
 function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void }) {
   const width = Math.max(0, duration * pxPerSec);
-  const major = 1; // 1s 主刻度
+  // 根据缩放动态调整刻度间隔：粒度越大，间隔越小
+  const rawStep = 80; // 目标像素间隔
+  const step = (() => {
+    const s = rawStep / Math.max(1, pxPerSec); // 秒
+    if (s <= 0.1) return 0.1;
+    if (s <= 0.2) return 0.2;
+    if (s <= 0.5) return 0.5;
+    if (s <= 1) return 1;
+    if (s <= 2) return 2;
+    if (s <= 5) return 5;
+    return 10;
+  })();
   const ticks: number[] = [];
-  for (let t = 0; t <= duration; t += major) ticks.push(Number(t.toFixed(6)));
+  for (let t = 0; t <= duration + 1e-6; t += step) ticks.push(Number(t.toFixed(6)));
   const onDown = (e: React.MouseEvent) => {
     const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const startX = e.clientX; const startScroll = el.parentElement?.scrollLeft || 0; const toTime = (clientX:number) => { const x = Math.max(0, clientX - rect.left + (el.parentElement?.scrollLeft || 0)); return x / Math.max(1, pxPerSec); };
     onScrub(Math.max(0, Math.min(duration, toTime(e.clientX))));
@@ -16,9 +27,9 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
   return (
     <div style={{ position:'relative', height: 28, minWidth: `${width}px`, background:'#0f172a', border:'1px solid #334155', borderRadius: 4 }} onMouseDown={onDown}>
       {ticks.map((t, i) => (
-        <div key={i} style={{ position:'absolute', left: `${t*pxPerSec}px`, top: 0, bottom: 0, width: 1, background: i%5===0? '#475569' : '#334155' }} />
+        <div key={i} style={{ position:'absolute', left: `${t*pxPerSec}px`, top: 0, bottom: 0, width: 1, background: (Math.abs((t/step)%5)<1e-6) ? '#475569' : '#334155' }} />
       ))}
-      {ticks.map((t, i) => (i%5===0 ? <div key={`lbl-${i}`} style={{ position:'absolute', left: `${t*pxPerSec+4}px`, top: 4, fontSize: 10, color:'#94a3b8' }}>{t.toFixed(0)}s</div> : null))}
+      {ticks.map((t, i) => ((Math.abs((t/step)%5)<1e-6) ? <div key={`lbl-${i}`} style={{ position:'absolute', left: `${t*pxPerSec+4}px`, top: 4, fontSize: 10, color:'#94a3b8' }}>{t.toFixed(step<1?1:0)}s</div> : null))}
       <div title={`当前: ${current.toFixed(2)}s`} style={{ position:'absolute', left: `${current*pxPerSec}px`, top: 0, bottom: 0, width: 2, background:'#ef4444' }} />
     </div>
   );
@@ -1647,6 +1658,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <Button size="small" onClick={applyStretch} disabled={!selection || !activeTrackId}>拉伸</Button>
               <Button size="small" onClick={copySelection} disabled={!selection || !activeTrackId}>复制</Button>
               <Button size="small" onClick={pasteAtCurrent} disabled={!activeTrackId || !clipboard}>粘贴</Button>
+              <Button size="small" danger onClick={()=>{ if (bulkDeleteSelected()) { setSelection(null); } }} disabled={!selection || !activeTrackId}>删除</Button>
               <Button size="small" onClick={()=>setSelection(null)} disabled={!selection}>清选</Button>
             </Space>
           </Flex>
@@ -1797,10 +1809,10 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80 }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement> }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
-    const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left + (el.parentElement?.scrollLeft||0)));
+    const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const scrollLeft = scrollerRef?.current?.scrollLeft || el.parentElement?.scrollLeft || 0; const p = Math.max(0, Math.min(rect.width + scrollLeft, clientX - rect.left + scrollLeft));
     return (p / Math.max(1, pxPerSec));
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
