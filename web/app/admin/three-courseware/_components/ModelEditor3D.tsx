@@ -88,6 +88,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const modelRootRef = useRef<THREE.Object3D | null>(null);
   const boxHelperRef = useRef<THREE.Box3Helper | null>(null);
   const tcontrolsRef = useRef<TransformControls | null>(null);
+  const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const ambLightRef = useRef<THREE.AmbientLight | null>(null);
+  const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const pointer = useMemo(() => new THREE.Vector2(), []);
   const { message } = App.useApp();
@@ -110,6 +113,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [gizmoMode, setGizmoMode] = useState<'translate'|'rotate'|'scale'>('translate');
   const [gizmoSpace, setGizmoSpace] = useState<'local'|'world'>('local');
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
+  const [bgTransparent, setBgTransparent] = useState<boolean>(false);
+  const [bgColor, setBgColor] = useState<string>('#0B1220');
+  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } });
+  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
+  const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 });
   const [autoKey, setAutoKey] = useState<boolean>(false);
   const autoKeyRef = useRef<boolean>(false);
   useEffect(()=>{ autoKeyRef.current = autoKey; }, [autoKey]);
@@ -118,7 +126,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const highlightedMats = useRef<Set<any>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
-  const [rightTab, setRightTab] = useState<'annot'|'anim'>('annot');
+  const [rightTab, setRightTab] = useState<'annot'|'anim'|'view'>('annot');
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
   const [selectedVis, setSelectedVis] = useState<{ key: string; index: number } | null>(null);
@@ -257,6 +265,34 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     return () => { clearTimeout(id); clearTimeout(id2); };
   }, [showLeft, showRight, timelineHeight, rightTab]);
 
+  // 背景与灯光设置实时应用
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    scene.background = bgTransparent ? null : new THREE.Color(bgColor);
+  }, [bgTransparent, bgColor]);
+
+  useEffect(() => {
+    const l = dirLightRef.current; if (!l) return;
+    l.color = new THREE.Color(dirLight.color);
+    l.intensity = dirLight.intensity;
+    l.position.set(dirLight.position.x, dirLight.position.y, dirLight.position.z);
+    l.updateMatrixWorld();
+  }, [dirLight]);
+
+  useEffect(() => {
+    const l = ambLightRef.current; if (!l) return;
+    l.color = new THREE.Color(ambLight.color);
+    l.intensity = ambLight.intensity;
+  }, [ambLight]);
+
+  useEffect(() => {
+    const l = hemiLightRef.current; if (!l) return;
+    l.color = new THREE.Color(hemiLight.skyColor);
+    (l as any).groundColor = new THREE.Color(hemiLight.groundColor);
+    l.intensity = hemiLight.intensity;
+  }, [hemiLight]);
+
   useEffect(() => {
     if (initialUrl) {
       urlForm.setFieldsValue({ url: initialUrl });
@@ -280,20 +316,24 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     rendererRef.current = renderer;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b1220);
+    scene.background = bgTransparent ? null : new THREE.Color(bgColor);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000);
     camera.position.set(2.6, 1.8, 2.6);
     cameraRef.current = camera;
 
-    const light = new THREE.DirectionalLight(0xffffff, 1.2);
-    light.position.set(3, 5, 2);
+    const light = new THREE.DirectionalLight(new THREE.Color(dirLight.color), dirLight.intensity);
+    light.position.set(dirLight.position.x, dirLight.position.y, dirLight.position.z);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x404040, 0.6);
+    dirLightRef.current = light;
+    const amb = new THREE.AmbientLight(new THREE.Color(ambLight.color), ambLight.intensity);
+    scene.add(amb);
+    ambLightRef.current = amb;
+    const hemi = new THREE.HemisphereLight(new THREE.Color(hemiLight.skyColor), new THREE.Color(hemiLight.groundColor), hemiLight.intensity);
     hemi.position.set(0, 1, 0);
     scene.add(hemi);
+    hemiLightRef.current = hemi;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -1264,6 +1304,50 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               ) : (
                 <div style={{ marginTop: 6, color: '#94a3b8' }}>未选中对象</div>
               )}
+            </div>
+          )}
+          ,
+          { key: 'view', label: '视图', children: (
+            <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
+              <Flex vertical gap={8}>
+                <div style={{ fontWeight: 600 }}>背景</div>
+                <Space>
+                  <Switch checkedChildren="透明" unCheckedChildren="不透明" checked={bgTransparent} onChange={(v)=>setBgTransparent(v)} />
+                  <Input size="small" type="color" value={bgColor} onChange={(e)=>setBgColor(e.target.value)} disabled={bgTransparent} />
+                </Space>
+                <div style={{ height: 1, background: '#334155', margin: '8px 0' }} />
+                <div style={{ fontWeight: 600 }}>平行光</div>
+                <Space wrap>
+                  <span>颜色</span>
+                  <Input size="small" type="color" value={dirLight.color} onChange={(e)=>setDirLight(v=>({ ...v, color: e.target.value }))} />
+                  <span>强度</span>
+                  <InputNumber size="small" step={0.1} min={0} max={10} value={dirLight.intensity} onChange={(v)=>setDirLight(val=>({ ...val, intensity: Number(v||0) }))} />
+                  <span>Px</span>
+                  <InputNumber size="small" step={0.1} value={dirLight.position.x} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, x: Number(v||0) } }))} />
+                  <span>Py</span>
+                  <InputNumber size="small" step={0.1} value={dirLight.position.y} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, y: Number(v||0) } }))} />
+                  <span>Pz</span>
+                  <InputNumber size="small" step={0.1} value={dirLight.position.z} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, z: Number(v||0) } }))} />
+                </Space>
+                <div style={{ height: 1, background: '#334155', margin: '8px 0' }} />
+                <div style={{ fontWeight: 600 }}>环境光</div>
+                <Space wrap>
+                  <span>颜色</span>
+                  <Input size="small" type="color" value={ambLight.color} onChange={(e)=>setAmbLight(v=>({ ...v, color: e.target.value }))} />
+                  <span>强度</span>
+                  <InputNumber size="small" step={0.1} min={0} max={10} value={ambLight.intensity} onChange={(v)=>setAmbLight(val=>({ ...val, intensity: Number(v||0) }))} />
+                </Space>
+                <div style={{ height: 1, background: '#334155', margin: '8px 0' }} />
+                <div style={{ fontWeight: 600 }}>半球光</div>
+                <Space wrap>
+                  <span>天空色</span>
+                  <Input size="small" type="color" value={hemiLight.skyColor} onChange={(e)=>setHemiLight(v=>({ ...v, skyColor: e.target.value }))} />
+                  <span>地面色</span>
+                  <Input size="small" type="color" value={hemiLight.groundColor} onChange={(e)=>setHemiLight(v=>({ ...v, groundColor: e.target.value }))} />
+                  <span>强度</span>
+                  <InputNumber size="small" step={0.1} min={0} max={10} value={hemiLight.intensity} onChange={(v)=>setHemiLight(val=>({ ...val, intensity: Number(v||0) }))} />
+                </Space>
+              </Flex>
             </div>
           )}
         ]} />
