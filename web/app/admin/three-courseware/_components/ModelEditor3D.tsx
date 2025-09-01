@@ -17,7 +17,14 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
   const ticks: number[] = [];
   for (let t = 0; t <= duration + 1e-6; t += step) ticks.push(Number(t.toFixed(6)));
   const onDown = (e: React.MouseEvent) => {
-    const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const toTime = (clientX:number) => { const sl = (el.parentElement as HTMLDivElement | null)?.scrollLeft || 0; const x = Math.max(0, clientX - rect.left + sl); return x / Math.max(1, pxPerSec); };
+    const el = e.currentTarget as HTMLDivElement; 
+    const toTime = (clientX:number) => { 
+      const rect = el.getBoundingClientRect(); // 每次重新获取rect，确保准确
+      const scrollContainer = el.parentElement as HTMLDivElement | null;
+      const sl = scrollContainer?.scrollLeft || 0; 
+      const x = Math.max(0, clientX - rect.left + sl); 
+      return x / Math.max(1, pxPerSec); 
+    };
     onScrub(Math.max(0, Math.min(duration, toTime(e.clientX))));
     const onMove = (ev: MouseEvent) => { onScrub(Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
