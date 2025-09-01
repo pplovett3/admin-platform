@@ -1,3 +1,5 @@
+"use client";
+
 function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void }) {
   const width = Math.max(0, duration * pxPerSec);
   const major = 1; // 1s 主刻度
@@ -21,7 +23,6 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
     </div>
   );
 }
-"use client";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
