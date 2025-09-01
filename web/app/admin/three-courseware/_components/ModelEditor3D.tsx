@@ -1449,7 +1449,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   color="#60a5fa"
                   trackId={`cam`}
                   onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
-                  onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setRightTab('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); }}
+                  onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); }}
                 />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1471,7 +1471,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         color="#34d399"
                         trackId={`vis:${objKey}`}
                         onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
-                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
                       />
                     </div>
                   </div>
@@ -1494,7 +1494,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         color="#f59e0b"
                         trackId={`trs:${objKey}`}
                         onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
-                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setRightTab('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
                       />
                     </div>
                   </div>
