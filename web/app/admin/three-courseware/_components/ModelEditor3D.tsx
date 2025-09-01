@@ -1812,8 +1812,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
-            <div className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px` }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }} onScroll={(e)=>{ const sl=(e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft=sl; }}>
+            <div className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px` }}>
             <Flex vertical gap={8}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>相机</strong>
@@ -1850,7 +1850,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <div style={{ paddingLeft: 80 + trackLabelWidth }}>
                 {Object.entries(timeline.visTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', position:'absolute', left: 80, transform:'translateX(-100%)' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <span style={{ position:'sticky', left: 80, width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', zIndex: 1 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
                     <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
@@ -1878,7 +1878,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <div style={{ paddingLeft: 80 + trackLabelWidth }}>
                 {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', position:'absolute', left: 80, transform:'translateX(-100%)' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <span style={{ position:'sticky', left: 80, width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', zIndex:1 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
                     <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
