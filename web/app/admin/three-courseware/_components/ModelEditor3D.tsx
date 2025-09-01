@@ -1812,7 +1812,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
+            <div className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px` }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
             <Flex vertical gap={8}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>相机</strong>
@@ -1830,6 +1831,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   color="#60a5fa"
                   trackId={`cam`}
                   pxPerSec={pxPerSec}
+                  scrollerRef={tracksScrollRef}
                   selection={activeTrackId==='cam'?selection:null}
                   onSelectionChange={(sel)=>{ setActiveTrackId('cam'); setSelection(sel); }}
                   onActivate={()=> setActiveTrackId('cam') }
@@ -1856,6 +1858,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         color="#34d399"
                         trackId={`vis:${objKey}`}
                         pxPerSec={pxPerSec}
+                        scrollerRef={tracksScrollRef}
                         selection={activeTrackId===`vis:${objKey}`?selection:null}
                         onSelectionChange={(sel)=>{ setActiveTrackId(`vis:${objKey}`); setSelection(sel); }}
                         onActivate={()=> setActiveTrackId(`vis:${objKey}`)}
@@ -1883,6 +1886,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         color="#f59e0b"
                         trackId={`trs:${objKey}`}
                         pxPerSec={pxPerSec}
+                        scrollerRef={tracksScrollRef}
                         selection={activeTrackId===`trs:${objKey}`?selection:null}
                         onSelectionChange={(sel)=>{ setActiveTrackId(`trs:${objKey}`); setSelection(sel); }}
                         onActivate={()=> setActiveTrackId(`trs:${objKey}`)}
@@ -1895,6 +1899,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               </div>
               {/* 标注全局轨道已移除，不在动画编辑中显示 */}
             </Flex>
+            </div>
           </div>
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
@@ -1945,10 +1950,10 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80 }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement> }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
-    const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left + (el.parentElement?.scrollLeft||0)));
+    const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const scrollLeft = scrollerRef?.current?.scrollLeft || 0; const p = Math.max(0, Math.min(rect.width + scrollLeft, clientX - rect.left + scrollLeft));
     return (p / Math.max(1, pxPerSec));
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
