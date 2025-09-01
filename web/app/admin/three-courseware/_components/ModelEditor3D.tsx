@@ -453,7 +453,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           scene.add(grid);
           gridRef.current = grid as any;
         }
-        gridRef.current.visible = true;
+        if (gridRef.current) gridRef.current.visible = true;
       }
     } else {
       if (gridRef.current) gridRef.current.visible = false;
