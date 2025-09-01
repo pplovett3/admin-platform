@@ -1805,15 +1805,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </Flex>
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
               <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
-                onScroll={(e)=>{ if (innerScrollRef.current) innerScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
-                onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (innerScrollRef.current) innerScrollRef.current.scrollLeft = scrollLeft; }); }}
+                onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
+                onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
                 <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
               </div>
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
+          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }} onScroll={(e)=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}>
             {/* 固定不滚动的操作按钮区域 */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
@@ -1869,8 +1869,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               </div>
               
               {/* 右侧可滚动轨道列 */}
-              <div style={{ flex: 1 }}>
-                <div ref={innerScrollRef} className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px`, overflowX: 'auto', overflowY: 'hidden' }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+              <div style={{ flex: 1, minWidth: `${pxPerSec*timeline.duration}px` }}>
                   <Flex vertical gap={8}>
                     {/* 相机轨道 */}
                     <div style={{ position:'relative' }} onClick={()=>{ setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(null); setActiveTrackId('cam'); }}>
@@ -1880,7 +1879,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         color="#60a5fa"
                         trackId={`cam`}
                         pxPerSec={pxPerSec}
-                        scrollerRef={innerScrollRef}
+                        scrollerRef={tracksScrollRef}
                         selection={activeTrackId==='cam'?selection:null}
                         onSelectionChange={(sel)=>{ setActiveTrackId('cam'); setSelection(sel); }}
                         onActivate={()=> setActiveTrackId('cam') }
@@ -1898,7 +1897,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                           color="#34d399"
                           trackId={`vis:${objKey}`}
                           pxPerSec={pxPerSec}
-                          scrollerRef={innerScrollRef}
+                          scrollerRef={tracksScrollRef}
                           selection={activeTrackId===`vis:${objKey}`?selection:null}
                           onSelectionChange={(sel)=>{ setActiveTrackId(`vis:${objKey}`); setSelection(sel); }}
                           onActivate={()=> setActiveTrackId(`vis:${objKey}`)}
@@ -1917,7 +1916,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                           color="#f59e0b"
                           trackId={`trs:${objKey}`}
                           pxPerSec={pxPerSec}
-                          scrollerRef={innerScrollRef}
+                          scrollerRef={tracksScrollRef}
                           selection={activeTrackId===`trs:${objKey}`?selection:null}
                           onSelectionChange={(sel)=>{ setActiveTrackId(`trs:${objKey}`); setSelection(sel); }}
                           onActivate={()=> setActiveTrackId(`trs:${objKey}`)}
@@ -1928,7 +1927,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     ))}
                     {/* 标注全局轨道已移除，不在动画编辑中显示 */}
                   </Flex>
-                </div>
               </div>
             </div>
           </div>
