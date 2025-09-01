@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D视图和操作图标 - iOS扁平风格</title>
+    <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 50%, #0f1419 100%);
+            color: white;
+            overflow-x: hidden;
+            padding: 40px;
+        }
+
+        .showcase-container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .main-title {
+            font-size: 48px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #ffffff 0%, #e2e8f0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 20px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 60px;
+        }
+
+        .category-section {
+            margin-bottom: 80px;
+        }
+
+        .category-title {
+            font-size: 32px;
+            font-weight: 600;
+            margin-bottom: 32px;
+            padding-left: 20px;
+            border-left: 4px solid rgba(99, 102, 241, 0.8);
+            background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .icons-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+
+        .icon-card {
+            background: linear-gradient(145deg, 
+                rgba(255, 255, 255, 0.08) 0%, 
+                rgba(255, 255, 255, 0.04) 100%);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            padding: 24px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .icon-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(99, 102, 241, 0.4);
+            box-shadow: 0 12px 40px rgba(99, 102, 241, 0.15);
+        }
+
+        .icon-display {
+            width: 72px;
+            height: 72px;
+            margin: 0 auto 16px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .icon-card:hover .icon-display {
+            background: rgba(99, 102, 241, 0.2);
+            transform: scale(1.1);
+        }
+
+        .icon-name {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: white;
+        }
+
+        .icon-description {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.6);
+            line-height: 1.4;
+        }
+
+        /* iOS扁平风格SVG图标 */
+        .ios-icon {
+            width: 36px;
+            height: 36px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            color: rgba(255, 255, 255, 0.8);
+            transition: all 0.3s ease;
+        }
+
+        .icon-card:hover .ios-icon {
+            color: white;
+            transform: scale(1.1);
+        }
+
+        /* 视图类图标 - 蓝色主题 */
+        .view-icons .icon-card:hover .icon-display {
+            background: rgba(59, 130, 246, 0.3);
+        }
+        .view-icons .icon-card:hover .ios-icon {
+            color: #3b82f6;
+        }
+
+        /* 变换操作 - 绿色主题 */
+        .transform-icons .icon-card:hover .icon-display {
+            background: rgba(34, 197, 94, 0.3);
+        }
+        .transform-icons .icon-card:hover .ios-icon {
+            color: #22c55e;
+        }
+
+        /* 对象控制 - 紫色主题 */
+        .object-control-icons .icon-card:hover .icon-display {
+            background: rgba(168, 85, 247, 0.3);
+        }
+        .object-control-icons .icon-card:hover .ios-icon {
+            color: #a855f7;
+        }
+
+        /* 工具栏预览 */
+        .toolbar-preview {
+            background: linear-gradient(145deg, 
+                rgba(255, 255, 255, 0.08) 0%, 
+                rgba(255, 255, 255, 0.04) 100%);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 30px;
+            padding: 20px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin: 40px auto;
+            width: fit-content;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        .toolbar-btn {
+            width: 56px;
+            height: 56px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .toolbar-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .toolbar-btn.active {
+            background: rgba(99, 102, 241, 0.3);
+            border-color: rgba(99, 102, 241, 0.5);
+        }
+
+        .toolbar-separator {
+            width: 1px;
+            height: 32px;
+            background: linear-gradient(180deg, 
+                transparent 0%, 
+                rgba(255, 255, 255, 0.2) 50%, 
+                transparent 100%);
+            margin: 0 8px;
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 24px;
+            margin: 40px 0;
+        }
+
+        .stat-card {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #a5b4fc;
+            margin-bottom: 8px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        /* 对比展示 */
+        .comparison-section {
+            background: linear-gradient(145deg, 
+                rgba(255, 255, 255, 0.06) 0%, 
+                rgba(255, 255, 255, 0.02) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 40px;
+            margin: 60px 0;
+        }
+
+        .comparison-title {
+            font-size: 24px;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 32px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="showcase-container">
+        <h1 class="main-title">3D视图和操作图标</h1>
+        <p class="subtitle">iOS扁平风格 - 专业3D建模软件图标设计</p>
+
+        <!-- 统计概览 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number">10</div>
+                <div class="stat-label">新增图标</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">4</div>
+                <div class="stat-label">视图类型</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">3</div>
+                <div class="stat-label">变换操作</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">3</div>
+                <div class="stat-label">对象控制</div>
+            </div>
+        </div>
+
+        <!-- 1. 视图切换图标 -->
+        <div class="category-section view-icons">
+            <h2 class="category-title">📐 视图切换图标 (4个)</h2>
+            <div class="icons-grid">
+                <!-- 左视图 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <!-- 左视图 - 从左侧看立方体，更宽的比例 -->
+                            <g transform="translate(12,12)">
+                                <!-- 立方体轮廓 - 更宽的比例 -->
+                                <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9"/>
+                                <path d="M8,-4 L0,-1"/>
+                                <!-- 左侧面用蓝色透明显示 -->
+                                <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                            </g>
+                        </svg>
+                    </div>
+                    <div class="icon-name">左视图</div>
+                    <div class="icon-description">从左侧观察3D场景</div>
+                </div>
+
+                <!-- 正视图 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <!-- 正视图 - 从正面看立方体 -->
+                            <g transform="translate(12,12)">
+                                <!-- 立方体轮廓 - 正面观察，调整尺寸 -->
+                                <path d="M-6,-6 L6,-6 L6,6 L-6,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M6,-6 L9,-3 L9,9 L6,6"/>
+                                <path d="M6,6 L9,9"/>
+                                <path d="M-6,6 L-3,9 L9,9"/>
+                                <!-- 正面用蓝色透明显示 -->
+                                <rect x="-6" y="-6" width="12" height="12" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                            </g>
+                        </svg>
+                    </div>
+                    <div class="icon-name">正视图</div>
+                    <div class="icon-description">从正面观察3D场景</div>
+                </div>
+
+                <!-- 俯视图 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <!-- 俯视图 - 从上方看立方体，更宽的比例 -->
+                            <g transform="translate(12,12)">
+                                <!-- 立方体轮廓 - 更宽的比例 -->
+                                <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9"/>
+                                <path d="M8,-4 L0,-1"/>
+                                <!-- 顶面用蓝色透明显示 -->
+                                <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                            </g>
+                        </svg>
+                    </div>
+                    <div class="icon-name">俯视图</div>
+                    <div class="icon-description">从上方观察3D场景</div>
+                </div>
+
+                <!-- 正等测图 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <!-- 正等测图 - 等轴测投影，更宽的比例 -->
+                            <g transform="translate(12,12)">
+                                <!-- 立方体轮廓 - 更宽的比例 -->
+                                <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9"/>
+                                <path d="M8,-4 L0,-1"/>
+                                <!-- 三个面用不同透明度的蓝色显示 -->
+                                <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.25" stroke="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.3" stroke="none"/>
+                                <path d="M0,-1 L8,-4 L8,6 L0,9 Z" fill="#3b82f6" opacity="0.2" stroke="none"/>
+                                <!-- 内部结构线 -->
+                                <path d="M-4,-2.5 L4,-5.5"/>
+                                <path d="M-4,7.5 L4,4.5"/>
+                                <path d="M0,-3.5 L0,5.5"/>
+                            </g>
+                        </svg>
+                    </div>
+                    <div class="icon-name">正等测图</div>
+                    <div class="icon-description">3D等轴测投影视图</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. 变换操作图标 -->
+        <div class="category-section transform-icons">
+            <h2 class="category-title">🔄 变换操作图标 (3个)</h2>
+            <div class="icons-grid">
+                <!-- 平移 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <path d="M5 9l-3 3 3 3"/>
+                            <path d="M9 5l3-3 3 3"/>
+                            <path d="M15 19l-3 3-3-3"/>
+                            <path d="M19 9l3 3-3 3"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <div class="icon-name">平移</div>
+                    <div class="icon-description">移动对象位置</div>
+                </div>
+
+                <!-- 旋转 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                            <path d="M3 3v5h5"/>
+                            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                            <path d="M16 16h5v5"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <div class="icon-name">旋转</div>
+                    <div class="icon-description">旋转对象角度</div>
+                </div>
+
+                <!-- 缩放 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+                            <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+                            <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+                            <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                            <rect x="9" y="9" width="6" height="6" rx="1"/>
+                            <path d="M9 12h6"/>
+                            <path d="M12 9v6"/>
+                        </svg>
+                    </div>
+                    <div class="icon-name">缩放</div>
+                    <div class="icon-description">缩放对象大小</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 对象控制图标 -->
+        <div class="category-section object-control-icons">
+            <h2 class="category-title">🎯 对象控制图标 (3个)</h2>
+            <div class="icons-grid">
+                <!-- 聚焦对象 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="12" r="6"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                            <path d="M12 1v2"/>
+                            <path d="M12 21v2"/>
+                            <path d="M1 12h2"/>
+                            <path d="M21 12h2"/>
+                        </svg>
+                    </div>
+                    <div class="icon-name">聚焦对象</div>
+                    <div class="icon-description">聚焦到选中对象</div>
+                </div>
+
+                <!-- 隔离对象 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3,3"/>
+                            <rect x="8" y="8" width="8" height="8" rx="1" fill="currentColor" opacity="0.3"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                            <path d="M1 1l22 22" opacity="0.5"/>
+                        </svg>
+                    </div>
+                    <div class="icon-name">隔离对象</div>
+                    <div class="icon-description">隐藏其他对象</div>
+                </div>
+
+                <!-- 显示全部 -->
+                <div class="icon-card">
+                    <div class="icon-display">
+                        <svg class="ios-icon" viewBox="0 0 24 24">
+                            <rect x="3" y="3" width="7" height="7" rx="1"/>
+                            <rect x="14" y="3" width="7" height="7" rx="1"/>
+                            <rect x="3" y="14" width="7" height="7" rx="1"/>
+                            <rect x="14" y="14" width="7" height="7" rx="1"/>
+                            <circle cx="6.5" cy="6.5" r="1" fill="currentColor"/>
+                            <circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>
+                            <circle cx="6.5" cy="17.5" r="1" fill="currentColor"/>
+                            <circle cx="17.5" cy="17.5" r="1" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <div class="icon-name">显示全部</div>
+                    <div class="icon-description">显示所有对象</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 完整3D工具栏预览 -->
+        <div class="comparison-section">
+            <h2 class="comparison-title">完整3D工具栏预览</h2>
+            
+            <!-- 视图切换工具栏 -->
+            <div style="text-align: center; margin-bottom: 40px;">
+                <h3 style="font-size: 20px; margin-bottom: 20px; color: rgba(255, 255, 255, 0.8);">视图切换工具栏</h3>
+                <div class="toolbar-preview">
+                    <!-- 左视图 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 28px; height: 28px;">
+                            <g transform="translate(12,12)">
+                                <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9"/>
+                                <path d="M8,-4 L0,-1"/>
+                                <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                            </g>
+                        </svg>
+                    </button>
+                    <!-- 正视图 (激活) -->
+                    <button class="toolbar-btn active">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 28px; height: 28px; color: white;">
+                            <g transform="translate(12,12)">
+                                <path d="M-6,-6 L6,-6 L6,6 L-6,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M6,-6 L9,-3 L9,9 L6,6"/>
+                                <path d="M6,6 L9,9"/>
+                                <path d="M-6,6 L-3,9 L9,9"/>
+                                <rect x="-6" y="-6" width="12" height="12" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                            </g>
+                        </svg>
+                    </button>
+                    <!-- 俯视图 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 28px; height: 28px;">
+                            <g transform="translate(12,12)">
+                                <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9"/>
+                                <path d="M8,-4 L0,-1"/>
+                                <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                            </g>
+                        </svg>
+                    </button>
+                    <!-- 正等测图 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 28px; height: 28px;">
+                            <g transform="translate(12,12)">
+                                <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9"/>
+                                <path d="M8,-4 L0,-1"/>
+                                <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.25" stroke="none"/>
+                                <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.3" stroke="none"/>
+                                <path d="M0,-1 L8,-4 L8,6 L0,9 Z" fill="#3b82f6" opacity="0.2" stroke="none"/>
+                                <path d="M-4,-2.5 L4,-5.5"/>
+                                <path d="M-4,7.5 L4,4.5"/>
+                                <path d="M0,-3.5 L0,5.5"/>
+                            </g>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 变换操作工具栏 -->
+            <div style="text-align: center; margin-bottom: 40px;">
+                <h3 style="font-size: 20px; margin-bottom: 20px; color: rgba(255, 255, 255, 0.8);">变换操作工具栏</h3>
+                <div class="toolbar-preview">
+                    <!-- 平移 (激活) -->
+                    <button class="toolbar-btn active">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 20px; height: 20px; color: white;">
+                            <path d="M5 9l-3 3 3 3"/>
+                            <path d="M9 5l3-3 3 3"/>
+                            <path d="M15 19l-3 3-3-3"/>
+                            <path d="M19 9l3 3-3 3"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <!-- 旋转 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 20px; height: 20px;">
+                            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                            <path d="M3 3v5h5"/>
+                            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                            <path d="M16 16h5v5"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <!-- 缩放 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 20px; height: 20px;">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+                            <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+                            <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+                            <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                            <rect x="9" y="9" width="6" height="6" rx="1"/>
+                            <path d="M9 12h6"/>
+                            <path d="M12 9v6"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 对象控制工具栏 -->
+            <div style="text-align: center;">
+                <h3 style="font-size: 20px; margin-bottom: 20px; color: rgba(255, 255, 255, 0.8);">对象控制工具栏</h3>
+                <div class="toolbar-preview">
+                    <!-- 聚焦对象 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 20px; height: 20px;">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="12" r="6"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                            <path d="M12 1v2"/>
+                            <path d="M12 21v2"/>
+                            <path d="M1 12h2"/>
+                            <path d="M21 12h2"/>
+                        </svg>
+                    </button>
+                    <!-- 隔离对象 (激活) -->
+                    <button class="toolbar-btn active">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 20px; height: 20px; color: white;">
+                            <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3,3"/>
+                            <rect x="8" y="8" width="8" height="8" rx="1" fill="currentColor" opacity="0.3"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                            <path d="M1 1l22 22" opacity="0.5"/>
+                        </svg>
+                    </button>
+                    <!-- 显示全部 -->
+                    <button class="toolbar-btn">
+                        <svg class="ios-icon" viewBox="0 0 24 24" style="width: 20px; height: 20px;">
+                            <rect x="3" y="3" width="7" height="7" rx="1"/>
+                            <rect x="14" y="3" width="7" height="7" rx="1"/>
+                            <rect x="3" y="14" width="7" height="7" rx="1"/>
+                            <rect x="14" y="14" width="7" height="7" rx="1"/>
+                            <circle cx="6.5" cy="6.5" r="1" fill="currentColor"/>
+                            <circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>
+                            <circle cx="6.5" cy="17.5" r="1" fill="currentColor"/>
+                            <circle cx="17.5" cy="17.5" r="1" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 单个图标详细展示 -->
+        <div class="comparison-section">
+            <h2 class="comparison-title">图标设计细节展示</h2>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 32px; margin-top: 32px;">
+                
+                <!-- 视图切换组 -->
+                <div style="text-align: center;">
+                    <h4 style="font-size: 18px; margin-bottom: 20px; color: #3b82f6;">视图切换组</h4>
+                    <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 16px;">
+                        <!-- 左视图 -->
+                        <div style="width: 80px; height: 80px; background: rgba(59, 130, 246, 0.2); border-radius: 20px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 56px; height: 56px; color: #3b82f6;">
+                                <g transform="translate(12,12)">
+                                    <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                    <path d="M-8,-4 L0,-1 L0,9"/>
+                                    <path d="M8,-4 L0,-1"/>
+                                    <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                                </g>
+                            </svg>
+                        </div>
+                        <!-- 正视图 -->
+                        <div style="width: 80px; height: 80px; background: rgba(59, 130, 246, 0.2); border-radius: 20px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 56px; height: 56px; color: #3b82f6;">
+                                <g transform="translate(12,12)">
+                                    <path d="M-6,-6 L6,-6 L6,6 L-6,6 Z" stroke-width="1.8" fill="none"/>
+                                    <path d="M6,-6 L9,-3 L9,9 L6,6"/>
+                                    <path d="M6,6 L9,9"/>
+                                    <path d="M-6,6 L-3,9 L9,9"/>
+                                    <rect x="-6" y="-6" width="12" height="12" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                                </g>
+                            </svg>
+                        </div>
+                        <!-- 俯视图 -->
+                        <div style="width: 80px; height: 80px; background: rgba(59, 130, 246, 0.2); border-radius: 20px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 56px; height: 56px; color: #3b82f6;">
+                                <g transform="translate(12,12)">
+                                    <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                    <path d="M-8,-4 L0,-1 L0,9"/>
+                                    <path d="M8,-4 L0,-1"/>
+                                    <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.35" stroke="none"/>
+                                </g>
+                            </svg>
+                        </div>
+                        <!-- 正等测图 -->
+                        <div style="width: 80px; height: 80px; background: rgba(59, 130, 246, 0.2); border-radius: 20px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 56px; height: 56px; color: #3b82f6;">
+                                <g transform="translate(12,12)">
+                                    <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" stroke-width="1.8" fill="none"/>
+                                    <path d="M-8,-4 L0,-1 L0,9"/>
+                                    <path d="M8,-4 L0,-1"/>
+                                    <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.25" stroke="none"/>
+                                    <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.3" stroke="none"/>
+                                    <path d="M0,-1 L8,-4 L8,6 L0,9 Z" fill="#3b82f6" opacity="0.2" stroke="none"/>
+                                    <path d="M-4,-2.5 L4,-5.5"/>
+                                    <path d="M-4,7.5 L4,4.5"/>
+                                    <path d="M0,-3.5 L0,5.5"/>
+                                </g>
+                            </svg>
+                        </div>
+                    </div>
+                    <p style="color: rgba(255, 255, 255, 0.6); font-size: 14px;">蓝色主题，立体空间感的3D视图设计</p>
+                </div>
+
+                <!-- 变换操作组 -->
+                <div style="text-align: center;">
+                    <h4 style="font-size: 18px; margin-bottom: 20px; color: #22c55e;">变换操作组</h4>
+                    <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 16px;">
+                        <!-- 平移 -->
+                        <div style="width: 64px; height: 64px; background: rgba(34, 197, 94, 0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 32px; height: 32px; color: #22c55e;">
+                                <path d="M5 9l-3 3 3 3"/>
+                                <path d="M9 5l3-3 3 3"/>
+                                <path d="M15 19l-3 3-3-3"/>
+                                <path d="M19 9l3 3-3 3"/>
+                                <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                            </svg>
+                        </div>
+                        <!-- 旋转 -->
+                        <div style="width: 64px; height: 64px; background: rgba(34, 197, 94, 0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 32px; height: 32px; color: #22c55e;">
+                                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                                <path d="M3 3v5h5"/>
+                                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                                <path d="M16 16h5v5"/>
+                                <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                            </svg>
+                        </div>
+                        <!-- 缩放 -->
+                        <div style="width: 64px; height: 64px; background: rgba(34, 197, 94, 0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 32px; height: 32px; color: #22c55e;">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+                                <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+                                <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+                                <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                                <rect x="9" y="9" width="6" height="6" rx="1"/>
+                                <path d="M9 12h6"/>
+                                <path d="M12 9v6"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <p style="color: rgba(255, 255, 255, 0.6); font-size: 14px;">绿色主题，变换操作的通用设计</p>
+                </div>
+
+                <!-- 对象控制组 -->
+                <div style="text-align: center;">
+                    <h4 style="font-size: 18px; margin-bottom: 20px; color: #a855f7;">对象控制组</h4>
+                    <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 16px;">
+                        <!-- 聚焦对象 -->
+                        <div style="width: 64px; height: 64px; background: rgba(168, 85, 247, 0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 32px; height: 32px; color: #a855f7;">
+                                <circle cx="12" cy="12" r="10"/>
+                                <circle cx="12" cy="12" r="6"/>
+                                <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                                <path d="M12 1v2"/>
+                                <path d="M12 21v2"/>
+                                <path d="M1 12h2"/>
+                                <path d="M21 12h2"/>
+                            </svg>
+                        </div>
+                        <!-- 隔离对象 -->
+                        <div style="width: 64px; height: 64px; background: rgba(168, 85, 247, 0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 32px; height: 32px; color: #a855f7;">
+                                <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3,3"/>
+                                <rect x="8" y="8" width="8" height="8" rx="1" fill="currentColor" opacity="0.3"/>
+                                <circle cx="12" cy="12" r="2" fill="currentColor"/>
+                                <path d="M1 1l22 22" opacity="0.5"/>
+                            </svg>
+                        </div>
+                        <!-- 显示全部 -->
+                        <div style="width: 64px; height: 64px; background: rgba(168, 85, 247, 0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                            <svg class="ios-icon" viewBox="0 0 24 24" style="width: 32px; height: 32px; color: #a855f7;">
+                                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                                <rect x="14" y="14" width="7" height="7" rx="1"/>
+                                <circle cx="6.5" cy="6.5" r="1" fill="currentColor"/>
+                                <circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>
+                                <circle cx="6.5" cy="17.5" r="1" fill="currentColor"/>
+                                <circle cx="17.5" cy="17.5" r="1" fill="currentColor"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <p style="color: rgba(255, 255, 255, 0.6); font-size: 14px;">紫色主题，对象管理的专业设计</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设计说明 -->
+        <div style="background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 20px; padding: 40px; margin-top: 60px;">
+            <h2 style="font-size: 24px; font-weight: 600; text-align: center; margin-bottom: 32px; color: white;">设计说明</h2>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px;">
+                <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; padding: 20px;">
+                    <h4 style="color: #3b82f6; margin-bottom: 12px; font-size: 16px;">📐 视图切换</h4>
+                    <p style="color: rgba(255, 255, 255, 0.7); font-size: 14px; line-height: 1.5;">
+                        基于3D立方体透视设计，每个视图都突出显示对应观察面，带有视角指示器，营造真实的空间感。
+                    </p>
+                </div>
+
+                <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 12px; padding: 20px;">
+                    <h4 style="color: #22c55e; margin-bottom: 12px; font-size: 16px;">🔄 变换操作</h4>
+                    <p style="color: rgba(255, 255, 255, 0.7); font-size: 14px; line-height: 1.5;">
+                        平移用四向箭头表示，旋转用循环箭头，缩放用角点框架，每个都有中心点标识当前操作对象。
+                    </p>
+                </div>
+
+                <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 12px; padding: 20px;">
+                    <h4 style="color: #a855f7; margin-bottom: 12px; font-size: 16px;">🎯 对象控制</h4>
+                    <p style="color: rgba(255, 255, 255, 0.7); font-size: 14px; line-height: 1.5;">
+                        聚焦用同心圆表示，隔离用虚线框架和对角线，显示全部用四象限网格，直观表达功能含义。
+                    </p>
+                </div>
+
+                <div style="background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; padding: 20px;">
+                    <h4 style="color: white; margin-bottom: 12px; font-size: 16px;">✨ 设计原则</h4>
+                    <p style="color: rgba(255, 255, 255, 0.7); font-size: 14px; line-height: 1.5;">
+                        遵循iOS Human Interface Guidelines，保持简洁明了，功能直观，支持多种主题色彩和交互状态。
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 更新后的图标总数 -->
+        <div style="text-align: center; margin-top: 60px; padding: 32px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 16px;">
+            <h3 style="font-size: 24px; font-weight: 600; color: #22c55e; margin-bottom: 16px;">图标库更新</h3>
+            <div style="display: flex; gap: 40px; justify-content: center; align-items: center;">
+                <div>
+                    <div style="font-size: 32px; font-weight: 700; color: #a5b4fc;">67</div>
+                    <div style="font-size: 14px; color: rgba(255, 255, 255, 0.7);">原有图标</div>
+                </div>
+                <div style="font-size: 24px; color: rgba(255, 255, 255, 0.5);">+</div>
+                <div>
+                    <div style="font-size: 32px; font-weight: 700; color: #22c55e;">10</div>
+                    <div style="font-size: 14px; color: rgba(255, 255, 255, 0.7);">新增图标</div>
+                </div>
+                <div style="font-size: 24px; color: rgba(255, 255, 255, 0.5);">=</div>
+                <div>
+                    <div style="font-size: 36px; font-weight: 700; color: #fbbf24;">77</div>
+                    <div style="font-size: 14px; color: rgba(255, 255, 255, 0.7);">总计图标</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 公司标识 -->
+    <div style="position: fixed; bottom: 20px; right: 20px; font-size: 12px; color: rgba(255, 255, 255, 0.3); z-index: 100;">
+        祎风科技
+    </div>
+
+    <script>
+        // 添加交互效果
+        document.querySelectorAll('.icon-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const iconName = card.querySelector('.icon-name').textContent;
+                console.log(`点击图标: ${iconName}`);
+                
+                // 临时高亮效果
+                card.style.borderColor = 'rgba(99, 102, 241, 0.8)';
+                card.style.boxShadow = '0 12px 40px rgba(99, 102, 241, 0.3)';
+                
+                setTimeout(() => {
+                    card.style.borderColor = '';
+                    card.style.boxShadow = '';
+                }, 1000);
+            });
+        });
+
+        // 工具栏按钮交互
+        document.querySelectorAll('.toolbar-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                // 获取当前工具栏
+                const toolbar = btn.closest('.toolbar-preview');
+                // 移除同一工具栏内其他active状态
+                toolbar.querySelectorAll('.toolbar-btn').forEach(b => b.classList.remove('active'));
+                // 添加当前active状态
+                btn.classList.add('active');
+            });
+        });
+
+        console.log('3D视图和操作图标展示页面已加载');
+        console.log('新增10个专业3D操作图标');
+        console.log('图标总数更新为77个');
+    </script>
+</body>
+</html> 

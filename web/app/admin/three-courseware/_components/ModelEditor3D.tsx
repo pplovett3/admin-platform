@@ -34,6 +34,131 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
     </div>
   );
 }
+
+// --- iOS 扁平风格图标（替换默认图标，交互不变） ---
+function IconViewLeft(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={18} height={18} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <g transform="translate(12,12)">
+        <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" />
+        <path d="M-8,-4 L0,-1 L0,9" />
+        <path d="M8,-4 L0,-1" />
+        <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.35" stroke="none" />
+      </g>
+    </svg>
+  );
+}
+function IconViewFront(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={18} height={18} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <g transform="translate(12,12)">
+        <path d="M-6,-6 L6,-6 L6,6 L-6,6 Z" />
+        <path d="M6,-6 L9,-3 L9,9 L6,6" />
+        <path d="M6,6 L9,9" />
+        <path d="M-6,6 L-3,9 L9,9" />
+        <rect x="-6" y="-6" width="12" height="12" fill="#3b82f6" opacity="0.35" stroke="none" />
+      </g>
+    </svg>
+  );
+}
+function IconViewTop(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={18} height={18} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <g transform="translate(12,12)">
+        <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" />
+        <path d="M-8,-4 L0,-1 L0,9" />
+        <path d="M8,-4 L0,-1" />
+        <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.35" stroke="none" />
+      </g>
+    </svg>
+  );
+}
+function IconViewIso(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={18} height={18} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <g transform="translate(12,12)">
+        <path d="M-8,-4 L0,-7 L8,-4 L8,6 L0,9 L-8,6 Z" />
+        <path d="M-8,-4 L0,-1 L0,9" />
+        <path d="M8,-4 L0,-1" />
+        <path d="M-8,-4 L0,-7 L8,-4 L0,-1 Z" fill="#3b82f6" opacity="0.25" stroke="none" />
+        <path d="M-8,-4 L0,-1 L0,9 L-8,6 Z" fill="#3b82f6" opacity="0.3" stroke="none" />
+        <path d="M0,-1 L8,-4 L8,6 L0,9 Z" fill="#3b82f6" opacity="0.2" stroke="none" />
+      </g>
+    </svg>
+  );
+}
+function IconTranslate(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M5 9l-3 3 3 3" />
+      <path d="M9 5l3-3 3 3" />
+      <path d="M15 19l-3 3-3-3" />
+      <path d="M19 9l3 3-3 3" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+function IconRotate(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 16h5v5" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+function IconScale(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+      <rect x="9" y="9" width="6" height="6" rx="1" />
+      <path d="M9 12h6" />
+      <path d="M12 9v6" />
+    </svg>
+  );
+}
+function IconFocus(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+      <path d="M12 1v2" />
+      <path d="M12 21v2" />
+      <path d="M1 12h2" />
+      <path d="M21 12h2" />
+    </svg>
+  );
+}
+function IconIsolate(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="3,3" />
+      <rect x="8" y="8" width="8" height="8" rx="1" fill="currentColor" opacity="0.3" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+      <path d="M1 1l22 22" opacity="0.5" />
+    </svg>
+  );
+}
+function IconShowAll(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} stroke="currentColor" fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+      <circle cx="6.5" cy="6.5" r="1" fill="currentColor" />
+      <circle cx="17.5" cy="6.5" r="1" fill="currentColor" />
+      <circle cx="6.5" cy="17.5" r="1" fill="currentColor" />
+      <circle cx="17.5" cy="17.5" r="1" fill="currentColor" />
+    </svg>
+  );
+}
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -268,6 +393,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     window.addEventListener('resize', handleResize);
     // 热键：1/2/3 切换 gizmo 模式；L 切换局部/世界；Ctrl/Shift+Z 撤销/重做；Delete 删除选中关键帧
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable = target?.isContentEditable;
+      if (tag === 'input' || tag === 'textarea' || isEditable) return;
       const t = tcontrolsRef.current;
       if (e.key === '1') { setGizmoMode('translate'); t?.setMode('translate'); }
       else if (e.key === '2') { setGizmoMode('rotate'); t?.setMode('rotate'); }
@@ -275,7 +404,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       else if (e.key.toLowerCase() === 'l') { const next = gizmoSpace === 'local' ? 'world' : 'local'; setGizmoSpace(next); t?.setSpace(next as any); }
       else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey) { undo(); }
       else if (((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && e.shiftKey) || ((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey))) { redo(); }
-      else if (e.key === 'Delete') {
+      else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        // 选区批量删除优先
+        if (selectionRef.current && activeTrackIdRef.current) {
+          const changed = bulkDeleteSelected();
+          if (changed) { setSelection(null); return; }
+        }
         // 使用 refs 获取最新选中状态
         const camIdx = selectedCamKeyIdxRef.current;
         const trsSel = selectedTrsRef.current;
@@ -1031,10 +1166,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const inRange = (t:number)=> t>=start && t<=end;
     pushHistory();
     if (trackId === 'cam') {
-      const before = timelineRef.current.cameraKeys.length;
       setTimeline(prev=>({ ...prev, cameraKeys: (prev.cameraKeys||[]).filter(k=>!inRange(k.time)) }));
-      const after = (timelineRef.current.cameraKeys||[]).length;
-      return before !== after;
+      return true;
     }
     if (trackId.startsWith('vis:')) {
       const k = trackId.slice(4);
@@ -1553,19 +1686,19 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         )}
       >
         <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)', top: 56, zIndex: 5, background:'rgba(15,23,42,0.7)', backdropFilter:'blur(6px)', padding:8, borderRadius:8, display:'flex', alignItems:'center', gap:8, boxShadow:'0 2px 8px rgba(0,0,0,0.25)' }}>
-          <Tooltip title="平移"><Button size="small" type={gizmoMode==='translate'?'primary':'default'} icon={<DragOutlined />} onClick={()=>{ setGizmoMode('translate'); tcontrolsRef.current?.setMode('translate'); }} /></Tooltip>
-          <Tooltip title="旋转"><Button size="small" type={gizmoMode==='rotate'?'primary':'default'} icon={<ReloadOutlined />} onClick={()=>{ setGizmoMode('rotate'); tcontrolsRef.current?.setMode('rotate'); }} /></Tooltip>
-          <Tooltip title="缩放"><Button size="small" type={gizmoMode==='scale'?'primary':'default'} icon={<AppstoreOutlined />} onClick={()=>{ setGizmoMode('scale'); tcontrolsRef.current?.setMode('scale'); }} /></Tooltip>
+          <Tooltip title="平移"><Button size="small" type={gizmoMode==='translate'?'primary':'default'} icon={<IconTranslate />} onClick={()=>{ setGizmoMode('translate'); tcontrolsRef.current?.setMode('translate'); }} /></Tooltip>
+          <Tooltip title="旋转"><Button size="small" type={gizmoMode==='rotate'?'primary':'default'} icon={<IconRotate />} onClick={()=>{ setGizmoMode('rotate'); tcontrolsRef.current?.setMode('rotate'); }} /></Tooltip>
+          <Tooltip title="缩放"><Button size="small" type={gizmoMode==='scale'?'primary':'default'} icon={<IconScale />} onClick={()=>{ setGizmoMode('scale'); tcontrolsRef.current?.setMode('scale'); }} /></Tooltip>
           <Segmented size="small" value={gizmoSpace} onChange={(v)=>{ const s=v as 'local'|'world'; setGizmoSpace(s); tcontrolsRef.current?.setSpace(s as any); }} options={[{label:'局部', value:'local'},{label:'世界', value:'world'}]} />
           <Divider type="vertical" />
-          <Tooltip title="正视"><Button size="small" icon={<ArrowUpOutlined rotate={-90} />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y, t.z+3); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
-          <Tooltip title="俯视"><Button size="small" icon={<ArrowUpOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y+3, t.z); c.up.set(0,0,-1); c.lookAt(t); ctl.update(); }} /></Tooltip>
-          <Tooltip title="左视"><Button size="small" icon={<ArrowLeftOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x-3, t.y, t.z); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
-          <Tooltip title="等轴测"><Button size="small" icon={<AppstoreOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.copy(t.clone().add(new THREE.Vector3(2,2,2))); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="正视"><Button size="small" icon={<IconViewFront />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y, t.z+3); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="俯视"><Button size="small" icon={<IconViewTop />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y+3, t.z); c.up.set(0,0,-1); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="左视"><Button size="small" icon={<IconViewLeft />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x-3, t.y, t.z); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="等轴测"><Button size="small" icon={<IconViewIso />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.copy(t.clone().add(new THREE.Vector3(2,2,2))); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
           <Divider type="vertical" />
-          <Tooltip title="对焦所选"><Button size="small" icon={<AimOutlined />} onClick={onFocusSelected} disabled={!selectedKey} /></Tooltip>
-          <Tooltip title="隔离所选"><Button size="small" icon={<ScissorOutlined />} onClick={onIsolateSelected} disabled={!selectedKey} /></Tooltip>
-          <Tooltip title="显示全部"><Button size="small" icon={<ExpandOutlined />} onClick={onShowAll} /></Tooltip>
+          <Tooltip title="对焦所选"><Button size="small" icon={<IconFocus />} onClick={onFocusSelected} disabled={!selectedKey} /></Tooltip>
+          <Tooltip title="隔离所选"><Button size="small" icon={<IconIsolate />} onClick={onIsolateSelected} disabled={!selectedKey} /></Tooltip>
+          <Tooltip title="显示全部"><Button size="small" icon={<IconShowAll />} onClick={onShowAll} /></Tooltip>
         </div>
         <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }} />
       </Card>
@@ -1672,14 +1805,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
               <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
                 onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
-                onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ el.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
+                onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
                 <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
               </div>
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }} onScroll={(e)=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}>
+          <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
             <Flex vertical gap={8}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>相机</strong>
