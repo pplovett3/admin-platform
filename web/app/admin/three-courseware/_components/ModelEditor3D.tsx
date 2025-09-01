@@ -115,7 +115,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [gizmoSpace, setGizmoSpace] = useState<'local'|'world'>('local');
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [bgTransparent, setBgTransparent] = useState<boolean>(false);
-  const [bgColor, setBgColor] = useState<string>('#0B1220');
+  const [bgColor, setBgColor] = useState<string>('#1f2937');
   const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } });
   const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
   const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 });
@@ -133,7 +133,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [urlImportOpen, setUrlImportOpen] = useState(false);
   const localFileInputRef = useRef<HTMLInputElement | null>(null);
   const [localFileInputKey, setLocalFileInputKey] = useState<number>(0);
-  const [showGrid, setShowGrid] = useState<boolean>(false);
+  const [showGrid, setShowGrid] = useState<boolean>(true);
   const gridRef = useRef<THREE.GridHelper | null>(null);
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
@@ -273,11 +273,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     return () => { clearTimeout(id); clearTimeout(id2); };
   }, [showLeft, showRight, timelineHeight, mode]);
 
-  // 背景与灯光设置实时应用
+  // 背景与灯光设置实时应用（不关闭弹窗，不销毁组件）
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
     scene.background = bgTransparent ? null : new THREE.Color(bgColor);
+    rendererRef.current?.render(scene, cameraRef.current!);
   }, [bgTransparent, bgColor]);
 
   useEffect(() => {
@@ -286,12 +287,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     l.intensity = dirLight.intensity;
     l.position.set(dirLight.position.x, dirLight.position.y, dirLight.position.z);
     l.updateMatrixWorld();
+    rendererRef.current?.render(sceneRef.current!, cameraRef.current!);
   }, [dirLight]);
 
   useEffect(() => {
     const l = ambLightRef.current; if (!l) return;
     l.color = new THREE.Color(ambLight.color);
     l.intensity = ambLight.intensity;
+    rendererRef.current?.render(sceneRef.current!, cameraRef.current!);
   }, [ambLight]);
 
   useEffect(() => {
@@ -299,6 +302,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     l.color = new THREE.Color(hemiLight.skyColor);
     (l as any).groundColor = new THREE.Color(hemiLight.groundColor);
     l.intensity = hemiLight.intensity;
+    rendererRef.current?.render(sceneRef.current!, cameraRef.current!);
   }, [hemiLight]);
 
   useEffect(() => {
@@ -1295,18 +1299,23 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         </Form>
         <div style={{ marginTop: 12, flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
           <Input.Search placeholder="搜索节点名" allowClear onChange={(e)=>setTreeFilter(e.target.value)} style={{ marginBottom: 8 }} />
-          <Tree
-            showLine={{ showLeafIcon: false }}
-            treeData={filterTree(treeData, treeFilter) as any}
-            onSelect={onTreeSelect}
-            selectedKeys={selectedKey ? [selectedKey] : []}
-            titleRender={(node: any) => (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span title={node.title} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.title}</span>
-                <Button size="small" type="text" onClick={(e)=>{ e.stopPropagation(); onToggleHide(String(node.key), !hiddenKeys.has(String(node.key))); }} icon={hiddenKeys.has(String(node.key)) ? <EyeInvisibleOutlined /> : <EyeOutlined />} />
-              </div>
-            )}
-          />
+          <div style={{
+            '--tree-row-h': '28px',
+            '--icon-w': '22px'
+          } as any}>
+            <Tree
+              showLine={{ showLeafIcon: false }}
+              treeData={filterTree(treeData, treeFilter) as any}
+              onSelect={onTreeSelect}
+              selectedKeys={selectedKey ? [selectedKey] : []}
+              titleRender={(node: any) => (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr var(--icon-w)', alignItems: 'center', height: 'var(--tree-row-h)' }}>
+                  <span title={node.title} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.title}</span>
+                  <Button size="small" type="text" style={{ width: 'var(--icon-w)', textAlign: 'center' }} onClick={(e)=>{ e.stopPropagation(); onToggleHide(String(node.key), !hiddenKeys.has(String(node.key))); }} icon={hiddenKeys.has(String(node.key)) ? <EyeInvisibleOutlined /> : <EyeOutlined />} />
+                </div>
+              )}
+            />
+          </div>
         </div>
       </Card>
       <Card title={<div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12 }}>
