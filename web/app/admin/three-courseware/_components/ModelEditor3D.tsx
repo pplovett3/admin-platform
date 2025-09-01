@@ -1214,7 +1214,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       >
         <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 480 }} />
       </Card>
-      <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear' }}>
+      <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
         <Tabs activeKey={rightTab} onChange={(k)=>setRightTab(k as any)} items={[
           { key: 'annot', label: '标注', children: (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
@@ -1266,9 +1266,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       <Card title={
         <div style={{ display:'flex', alignItems:'center', gap: 12 }}>
           <span>时间线</span>
-          <Button size="small" onClick={()=>setAutoKey(v=>!v)}
-            style={{ background: autoKey ? '#22c55e' : '#1f2937', borderColor: autoKey ? '#22c55e' : '#334155', color: '#fff', boxShadow: 'none', padding: '2px 8px', animation: autoKey ? 'blink 0.9s linear infinite' : undefined }}>
-            {autoKey?'录制中':'录制关'}
+          <Button size="middle" onClick={()=>setAutoKey(v=>!v)}
+            style={{ background: autoKey ? '#ef4444' : '#22c55e', borderColor: autoKey ? '#ef4444' : '#22c55e', color: '#fff', boxShadow: 'none', padding: '4px 12px', fontWeight: 600, animation: autoKey ? 'blink 0.9s linear infinite' : undefined }}>
+            {autoKey?'录制中':'开始录制'}
           </Button>
           <style>{`@keyframes blink { 0%{opacity:1} 50%{opacity:.6} 100%{opacity:1} }`}</style>
         </div>
@@ -1283,7 +1283,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             title="拖拽调整时间线高度"
             style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 12, cursor: 'row-resize', zIndex: 10, background: 'rgba(148,163,184,0.15)' }}
           />
-          <Flex justify="space-between" align="center" wrap style={{ flex: '0 0 auto' }}>
+          <Flex justify="space-between" align="center" wrap style={{ flex: '0 0 auto' }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('.track-area')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
             <Space>
               <Button onClick={onTogglePlay}>{timeline.playing ? '暂停' : '播放'}</Button>
               <Upload {...importTimeline}><Button>导入</Button></Upload>
@@ -1315,7 +1315,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
-          <div style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
+          <div className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
             <Flex vertical gap={8}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <strong style={{ width: 80 }}>相机</strong>
@@ -1452,6 +1452,7 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
     return (p / Math.max(1, rect.width)) * duration;
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
+    e.stopPropagation();
     (window as any).__selectedKeyId = `${trackId}:${idx}`;
     onSelectKey?.(idx);
     const onMove = (ev: MouseEvent) => { onChangeKeyTime(idx, Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
@@ -1462,8 +1463,8 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
   return (
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4 }}>
       {keys.map((t, idx) => (
-        <div key={idx} title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
-          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 10, height: 18, marginLeft: -5, borderRadius: 2, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : 'none' }} />
+        <div key={idx} data-keyframe title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
+          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 12, height: 18, marginLeft: -6, borderRadius: 3, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : 'none' }} />
       ))}
     </div>
   );
