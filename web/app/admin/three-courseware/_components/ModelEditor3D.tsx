@@ -1,26 +1,3 @@
-function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void }) {
-  const width = Math.max(0, duration * pxPerSec);
-  const major = 1; // 1s 主刻度
-  const ticks: number[] = [];
-  for (let t = 0; t <= duration; t += major) ticks.push(Number(t.toFixed(6)));
-  const onDown = (e: React.MouseEvent) => {
-    const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const startX = e.clientX; const startScroll = el.parentElement?.scrollLeft || 0; const toTime = (clientX:number) => { const x = Math.max(0, clientX - rect.left + (el.parentElement?.scrollLeft || 0)); return x / Math.max(1, pxPerSec); };
-    onScrub(Math.max(0, Math.min(duration, toTime(e.clientX))));
-    const onMove = (ev: MouseEvent) => { onScrub(Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
-    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
-  return (
-    <div style={{ position:'relative', height: 28, minWidth: `${width}px`, background:'#0f172a', border:'1px solid #334155', borderRadius: 4 }} onMouseDown={onDown}>
-      {ticks.map((t, i) => (
-        <div key={i} style={{ position:'absolute', left: `${t*pxPerSec}px`, top: 0, bottom: 0, width: 1, background: i%5===0? '#475569' : '#334155' }} />
-      ))}
-      {ticks.map((t, i) => (i%5===0 ? <div key={`lbl-${i}`} style={{ position:'absolute', left: `${t*pxPerSec+4}px`, top: 4, fontSize: 10, color:'#94a3b8' }}>{t.toFixed(0)}s</div> : null))}
-      <div title={`当前: ${current.toFixed(2)}s`} style={{ position:'absolute', left: `${current*pxPerSec}px`, top: 0, bottom: 0, width: 2, background:'#ef4444' }} />
-    </div>
-  );
-}
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -138,7 +115,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [gizmoSpace, setGizmoSpace] = useState<'local'|'world'>('local');
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [bgTransparent, setBgTransparent] = useState<boolean>(false);
-  const [bgColor, setBgColor] = useState<string>('#919191');
+  const [bgColor, setBgColor] = useState<string>('#1f2937');
   const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } });
   const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
   const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 });
@@ -189,13 +166,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     keys: CameraKeyframe[] | VisibilityKeyframe[] | TransformKeyframe[];
   } | null>(null);
   const [stretchFactor, setStretchFactor] = useState<number>(1);
-  const [pxPerSec, setPxPerSec] = useState<number>(80);
-  const tracksScrollRef = useRef<HTMLDivElement | null>(null);
-  const rulerScrollRef = useRef<HTMLDivElement | null>(null);
-  const selectionRef = useRef<{ start: number; end: number } | null>(null);
-  const activeTrackIdRef = useRef<string | null>(null);
-  useEffect(()=>{ selectionRef.current = selection; }, [selection]);
-  useEffect(()=>{ activeTrackIdRef.current = activeTrackId; }, [activeTrackId]);
 
   useEffect(() => {
     try {
@@ -1011,31 +981,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       setSelectedTrs(null);
     }
   };
-  const bulkDeleteSelected = (): boolean => {
-    const sel = selectionRef.current; const trackId = activeTrackIdRef.current;
-    if (!sel || !trackId) return false;
-    const start = Math.min(sel.start, sel.end);
-    const end = Math.max(sel.start, sel.end);
-    const inRange = (t:number)=> t>=start && t<=end;
-    pushHistory();
-    if (trackId === 'cam') {
-      const before = timelineRef.current.cameraKeys.length;
-      setTimeline(prev=>({ ...prev, cameraKeys: (prev.cameraKeys||[]).filter(k=>!inRange(k.time)) }));
-      const after = (timelineRef.current.cameraKeys||[]).length;
-      return before !== after;
-    }
-    if (trackId.startsWith('vis:')) {
-      const k = trackId.slice(4);
-      setTimeline(prev=>{ const map={...prev.visTracks}; map[k]=(map[k]||[]).filter(v=>!inRange(v.time)); return { ...prev, visTracks: map }; });
-      return true;
-    }
-    if (trackId.startsWith('trs:')) {
-      const k = trackId.slice(4);
-      setTimeline(prev=>{ const map={...prev.trsTracks}; map[k]=(map[k]||[]).filter(v=>!inRange(v.time)); return { ...prev, trsTracks: map }; });
-      return true;
-    }
-    return false;
-  };
   // --- 选择 / 复制粘贴 / 区间拉伸 ---
   const parseActiveTrack = (id: string | null): { kind: 'cam'|'vis'|'trs'; objKey?: string } | null => {
     if (!id) return null;
@@ -1657,12 +1602,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <InputNumber min={0} max={timeline.duration} step={0.01} value={Number(timeline.current.toFixed(2))} onChange={(v)=> onScrub(Number(v||0))} />
             </Flex>
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
-              <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
-                onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
-                onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ el.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
-              >
-                <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
-              </div>
+            <Slider min={0} max={timeline.duration} step={0.01} value={timeline.current}
+              marks={{
+                ...Object.fromEntries((timeline.cameraKeys||[]).map(k=>[Number(k.time.toFixed(2)), '•'])),
+                ...(selectedKey ? Object.fromEntries(((timeline.visTracks[selectedKey]||[]) as VisibilityKeyframe[]).map(k=>[Number(k.time.toFixed(2)), '•'])) : {})
+              }}
+              onChange={(v)=> onScrub(Number(v))}
+            />
             </div>
             {/* spacer reserved for future timeline zoom bar */}
           </div>
@@ -1744,7 +1690,25 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   </div>
                 ))}
               </div>
-              {/* 标注全局轨道已移除，不在动画编辑中显示 */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <strong style={{ width: 80 }}>标注(全局)</strong>
+                <Button size="small" disabled={annotations.length===0} onClick={()=>{
+                  // 为全部标注当前状态添加关键帧（可视/不可视由当前 markers 可见决定）
+                  const group = markersGroupRef.current; if (!group) return;
+                  setTimeline(prev => {
+                    const next = { ...prev.annotationTracks } as Record<string, VisibilityKeyframe[]>;
+                    for (const child of group.children) {
+                      const id = (child as any).userData?.annotationId as string | undefined; if (!id) continue;
+                      const vis = (child as any).visible !== false;
+                      const list = next[id] || [];
+                      next[id] = [...list, { time: prev.current, value: vis }].sort((a,b)=>a.time-b.time);
+                    }
+                    return { ...prev, annotationTracks: next };
+                  });
+                }}>添加关键帧(全部)</Button>
+                <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.annotationTracks).length}</span>
+              </div>
+              {/* 简化：暂不在此处列出逐帧删除入口（按需求移除） */}
             </Flex>
           </div>
       </Card>
@@ -1796,11 +1760,11 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80 }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
-    const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left + (el.parentElement?.scrollLeft||0)));
-    return (p / Math.max(1, pxPerSec));
+    const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    return (p / Math.max(1, rect.width)) * duration;
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
     e.stopPropagation();
@@ -1813,16 +1777,16 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
     window.addEventListener('mouseup', onUp);
   };
   return (
-    <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4, minWidth: `${duration*pxPerSec}px` }}
+    <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4 }}
       onMouseDown={(e)=>{ if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; e.stopPropagation(); onActivate?.(); const start = toTime(e.clientX); onSelectionChange?.({ start, end: start }); const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); }}
     >
       {selection && (
         <div title={`选择: ${Math.min(selection.start, selection.end).toFixed(2)}s - ${Math.max(selection.start, selection.end).toFixed(2)}s`}
-          style={{ position: 'absolute', top: 2, bottom: 2, left: `${Math.min(selection.start, selection.end)*pxPerSec}px`, width: `${Math.abs(selection.end - selection.start)*pxPerSec}px`, background: 'rgba(96,165,250,0.25)', border: '1px solid rgba(59,130,246,0.8)', pointerEvents: 'none' }} />
+          style={{ position: 'absolute', top: 2, bottom: 2, left: `${(Math.min(selection.start, selection.end)/Math.max(0.0001, duration))*100}%`, width: `${(Math.abs(selection.end - selection.start)/Math.max(0.0001, duration))*100}%`, background: 'rgba(96,165,250,0.25)', border: '1px solid rgba(59,130,246,0.8)', pointerEvents: 'none' }} />
       )}
       {keys.map((t, idx) => (
         <div key={idx} data-keyframe title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
-          style={{ position: 'absolute', left: `${t*pxPerSec}px`, top: 2, width: 12, height: 18, marginLeft: -6, borderRadius: 3, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : (selection && t>=Math.min(selection.start, selection.end) && t<=Math.max(selection.start, selection.end) ? '0 0 0 2px rgba(147,197,253,0.9)' : 'none') }} />
+          style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 12, height: 18, marginLeft: -6, borderRadius: 3, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : 'none' }} />
       ))}
     </div>
   );
