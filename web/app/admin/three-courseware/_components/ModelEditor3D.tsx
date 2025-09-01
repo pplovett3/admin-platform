@@ -1838,14 +1838,42 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               </div>
             </div>
             
-            {/* 仅轨道区域参与横向滚动，与时间尺同步 */}
-            <div style={{ paddingLeft: 80 + trackLabelWidth }}>
-              <div ref={innerScrollRef} className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px`, overflowX: 'auto', overflowY: 'hidden' }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+            {/* 轨道区域：左侧固定标签列 + 右侧可滚动轨道列 */}
+            <div style={{ display: 'flex' }}>
+              {/* 左侧固定标签列 */}
+              <div style={{ width: 80 + trackLabelWidth, flexShrink: 0 }}>
                 <Flex vertical gap={8}>
-                  {/* MiniTrack for camera */}
-                  <div style={{ position:'relative', display:'flex', alignItems:'center', gap: 8 }}>
-                    <span style={{ position:'absolute', left: -(80 + trackLabelWidth), width: 80 + trackLabelWidth - 8, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, zIndex: 2 }} title="相机">相机</span>
-                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(null); setActiveTrackId('cam'); }}>
+                  {/* 相机轨道标签 */}
+                  <div style={{ height: 22, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 8, color: '#94a3b8' }}>
+                    <span title="相机">相机</span>
+                  </div>
+                  
+                  {/* 显隐轨道标签 */}
+                  {Object.entries(timeline.visTracks).map(([objKey]) => (
+                    <div key={`vis-label-${objKey}`} style={{ height: 22, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 8, color: '#94a3b8', marginBottom: 8 }}>
+                      <span title={keyToObject.current.get(objKey)?.name || objKey.slice(0,8)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}
+                      </span>
+                    </div>
+                  ))}
+                  
+                  {/* TRS轨道标签 */}
+                  {Object.entries(timeline.trsTracks).map(([objKey]) => (
+                    <div key={`trs-label-${objKey}`} style={{ height: 22, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 8, color: '#94a3b8', marginBottom: 8 }}>
+                      <span title={keyToObject.current.get(objKey)?.name || objKey.slice(0,8)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}
+                      </span>
+                    </div>
+                  ))}
+                </Flex>
+              </div>
+              
+              {/* 右侧可滚动轨道列 */}
+              <div style={{ flex: 1 }}>
+                <div ref={innerScrollRef} className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px`, overflowX: 'auto', overflowY: 'hidden' }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+                  <Flex vertical gap={8}>
+                    {/* 相机轨道 */}
+                    <div style={{ position:'relative' }} onClick={()=>{ setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(null); setActiveTrackId('cam'); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
                         keys={(timeline.cameraKeys||[]).map(k=>k.time)}
@@ -1860,57 +1888,47 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); setActiveTrackId('cam'); }}
                       />
                     </div>
-                  </div>
-                  
-                  {/* 显示所有对象的显隐轨道 */}
-                  <div style={{ paddingLeft: 0 }}>
+                    
+                    {/* 显示所有对象的显隐轨道 */}
                     {Object.entries(timeline.visTracks).map(([objKey, list]) => (
-                      <div key={objKey} style={{ position:'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                        <span style={{ position:'absolute', left: -(80 + trackLabelWidth), width: 80 + trackLabelWidth - 8, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, zIndex: 2 }} title={keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                        <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
-                          <DraggableMiniTrack
-                            duration={timeline.duration}
-                            keys={(list||[]).map(k=>k.time)}
-                            color="#34d399"
-                            trackId={`vis:${objKey}`}
-                            pxPerSec={pxPerSec}
-                            scrollerRef={innerScrollRef}
-                            selection={activeTrackId===`vis:${objKey}`?selection:null}
-                            onSelectionChange={(sel)=>{ setActiveTrackId(`vis:${objKey}`); setSelection(sel); }}
-                            onActivate={()=> setActiveTrackId(`vis:${objKey}`)}
-                            onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
-                            onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`vis:${objKey}`); }}
-                          />
-                        </div>
+                      <div key={objKey} style={{ position:'relative', marginBottom: 8 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
+                        <DraggableMiniTrack
+                          duration={timeline.duration}
+                          keys={(list||[]).map(k=>k.time)}
+                          color="#34d399"
+                          trackId={`vis:${objKey}`}
+                          pxPerSec={pxPerSec}
+                          scrollerRef={innerScrollRef}
+                          selection={activeTrackId===`vis:${objKey}`?selection:null}
+                          onSelectionChange={(sel)=>{ setActiveTrackId(`vis:${objKey}`); setSelection(sel); }}
+                          onActivate={()=> setActiveTrackId(`vis:${objKey}`)}
+                          onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
+                          onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`vis:${objKey}`); }}
+                        />
                       </div>
                     ))}
-                  </div>
-                  
-                  {/* 显示所有对象的 TRS 轨道 */}
-                  <div style={{ paddingLeft: 0 }}>
+                    
+                    {/* 显示所有对象的 TRS 轨道 */}
                     {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
-                      <div key={objKey} style={{ position:'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                        <span style={{ position:'absolute', left: -(80 + trackLabelWidth), width: 80 + trackLabelWidth - 8, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, zIndex:1 }} title={keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                        <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
-                          <DraggableMiniTrack
-                            duration={timeline.duration}
-                            keys={(list||[]).map(k=>k.time)}
-                            color="#f59e0b"
-                            trackId={`trs:${objKey}`}
-                            pxPerSec={pxPerSec}
-                            scrollerRef={innerScrollRef}
-                            selection={activeTrackId===`trs:${objKey}`?selection:null}
-                            onSelectionChange={(sel)=>{ setActiveTrackId(`trs:${objKey}`); setSelection(sel); }}
-                            onActivate={()=> setActiveTrackId(`trs:${objKey}`)}
-                            onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
-                            onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}
-                          />
-                        </div>
+                      <div key={objKey} style={{ position:'relative', marginBottom: 8 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
+                        <DraggableMiniTrack
+                          duration={timeline.duration}
+                          keys={(list||[]).map(k=>k.time)}
+                          color="#f59e0b"
+                          trackId={`trs:${objKey}`}
+                          pxPerSec={pxPerSec}
+                          scrollerRef={innerScrollRef}
+                          selection={activeTrackId===`trs:${objKey}`?selection:null}
+                          onSelectionChange={(sel)=>{ setActiveTrackId(`trs:${objKey}`); setSelection(sel); }}
+                          onActivate={()=> setActiveTrackId(`trs:${objKey}`)}
+                          onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
+                          onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}
+                        />
                       </div>
                     ))}
-                  </div>
-                  {/* 标注全局轨道已移除，不在动画编辑中显示 */}
-                </Flex>
+                    {/* 标注全局轨道已移除，不在动画编辑中显示 */}
+                  </Flex>
+                </div>
               </div>
             </div>
           </div>
