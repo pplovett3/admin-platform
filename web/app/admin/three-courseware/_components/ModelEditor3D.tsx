@@ -157,6 +157,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   type Clip = { id: string; name: string; description?: string; timeline: TimelineState };
   const [clips, setClips] = useState<Clip[]>([]);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
+  // 时间线区间选择、激活轨道与剪贴板
+  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
+  const [activeTrackId, setActiveTrackId] = useState<string | null>(null); // 'cam' | 'vis:<uuid>' | 'trs:<uuid>'
+  const [clipboard, setClipboard] = useState<{
+    anchor: number;
+    trackType: 'cam' | 'vis' | 'trs';
+    keys: CameraKeyframe[] | VisibilityKeyframe[] | TransformKeyframe[];
+  } | null>(null);
+  const [stretchFactor, setStretchFactor] = useState<number>(1);
 
   useEffect(() => {
     try {
@@ -972,6 +981,132 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       setSelectedTrs(null);
     }
   };
+  // --- 选择 / 复制粘贴 / 区间拉伸 ---
+  const parseActiveTrack = (id: string | null): { kind: 'cam'|'vis'|'trs'; objKey?: string } | null => {
+    if (!id) return null;
+    if (id === 'cam') return { kind: 'cam' };
+    if (id.startsWith('vis:')) return { kind: 'vis', objKey: id.slice(4) };
+    if (id.startsWith('trs:')) return { kind: 'trs', objKey: id.slice(4) };
+    return null;
+  };
+  const clearSelection = () => setSelection(null);
+  const copySelection = () => {
+    if (!selection) return message.warning('请先框选区间');
+    const track = parseActiveTrack(activeTrackId);
+    if (!track) return message.warning('请先点击一个轨道使其激活');
+    const { start, end } = selection;
+    const inRange = (t: number) => t >= Math.min(start, end) && t <= Math.max(start, end);
+    if (track.kind === 'cam') {
+      const list = (timeline.cameraKeys||[]).filter(k => inRange(k.time)).map(k => ({ ...k, time: k.time - Math.min(start,end) }));
+      if (list.length === 0) return message.info('所选区间内没有相机关键帧');
+      setClipboard({ anchor: 0, trackType: 'cam', keys: list });
+      message.success(`已复制 ${list.length} 个相机关键帧`);
+      return;
+    }
+    if (track.kind === 'vis' && track.objKey) {
+      const src = timeline.visTracks[track.objKey] || [];
+      const list = src.filter(k => inRange(k.time)).map(k => ({ ...k, time: k.time - Math.min(start,end) }));
+      if (list.length === 0) return message.info('所选区间内没有显隐关键帧');
+      setClipboard({ anchor: 0, trackType: 'vis', keys: list });
+      message.success(`已复制 ${list.length} 个显隐关键帧`);
+      return;
+    }
+    if (track.kind === 'trs' && track.objKey) {
+      const src = timeline.trsTracks[track.objKey] || [];
+      const list = src.filter(k => inRange(k.time)).map(k => ({ ...k, time: k.time - Math.min(start,end) }));
+      if (list.length === 0) return message.info('所选区间内没有TRS关键帧');
+      setClipboard({ anchor: 0, trackType: 'trs', keys: list });
+      message.success(`已复制 ${list.length} 个TRS关键帧`);
+      return;
+    }
+  };
+  const pasteAtCurrent = () => {
+    if (!clipboard) return message.warning('剪贴板为空');
+    const track = parseActiveTrack(activeTrackId);
+    if (!track) return message.warning('请先点击一个轨道使其激活');
+    const current = timeline.current;
+    const eps = 1e-3;
+    const within = (t: number) => Math.max(0, Math.min(timeline.duration, t));
+    pushHistory();
+    if (clipboard.trackType === 'cam' && track.kind === 'cam') {
+      const added = (clipboard.keys as CameraKeyframe[]).map(k => ({ ...k, time: within(current + k.time) }));
+      setTimeline(prev => {
+        const next = [...prev.cameraKeys];
+        for (const k of added) {
+          const i = next.findIndex(x => Math.abs(x.time - k.time) < eps);
+          if (i >= 0) next[i] = { ...next[i], ...k } as CameraKeyframe; else next.push(k);
+        }
+        next.sort((a,b)=>a.time-b.time);
+        return { ...prev, cameraKeys: next };
+      });
+      message.success(`已粘贴 ${added.length} 个相机关键帧`);
+      return;
+    }
+    if (clipboard.trackType === 'vis' && track.kind === 'vis' && track.objKey) {
+      const added = (clipboard.keys as VisibilityKeyframe[]).map(k => ({ ...k, time: within(current + k.time) }));
+      setTimeline(prev => {
+        const map = { ...prev.visTracks } as Record<string, VisibilityKeyframe[]>;
+        const list = (map[track.objKey!] || []).slice();
+        for (const k of added) {
+          const i = list.findIndex(x => Math.abs(x.time - k.time) < eps);
+          if (i >= 0) list[i] = { ...list[i], ...k }; else list.push(k);
+        }
+        map[track.objKey!] = list.sort((a,b)=>a.time-b.time);
+        return { ...prev, visTracks: map };
+      });
+      message.success(`已粘贴 ${added.length} 个显隐关键帧`);
+      return;
+    }
+    if (clipboard.trackType === 'trs' && track.kind === 'trs' && track.objKey) {
+      const added = (clipboard.keys as TransformKeyframe[]).map(k => ({ ...k, time: within(current + k.time) }));
+      setTimeline(prev => {
+        const map = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
+        const list = (map[track.objKey!] || []).slice();
+        for (const k of added) {
+          const i = list.findIndex(x => Math.abs(x.time - k.time) < eps);
+          if (i >= 0) list[i] = { ...list[i], ...k }; else list.push(k);
+        }
+        map[track.objKey!] = list.sort((a,b)=>a.time-b.time);
+        return { ...prev, trsTracks: map };
+      });
+      message.success(`已粘贴 ${added.length} 个TRS关键帧`);
+      return;
+    }
+    message.warning('轨道类型与剪贴板不匹配，无法粘贴');
+  };
+  const applyStretch = () => {
+    if (!selection) return message.warning('请先框选区间');
+    const track = parseActiveTrack(activeTrackId);
+    if (!track) return message.warning('请先点击一个轨道使其激活');
+    const factor = Number(stretchFactor||1);
+    if (!(factor > 0)) return message.warning('倍率需大于 0');
+    const start = Math.min(selection.start, selection.end);
+    const end = Math.max(selection.start, selection.end);
+    const scale = (t: number) => start + (t - start) * factor;
+    pushHistory();
+    if (track.kind === 'cam') {
+      setTimeline(prev => {
+        const next = prev.cameraKeys.map(k => (k.time >= start && k.time <= end) ? { ...k, time: scale(k.time) } : k).sort((a,b)=>a.time-b.time);
+        return { ...prev, cameraKeys: next };
+      });
+    } else if (track.kind === 'vis' && track.objKey) {
+      setTimeline(prev => {
+        const map = { ...prev.visTracks } as Record<string, VisibilityKeyframe[]>;
+        const list = (map[track.objKey!] || []).map(k => (k.time >= start && k.time <= end) ? { ...k, time: scale(k.time) } : k).sort((a,b)=>a.time-b.time);
+        map[track.objKey!] = list;
+        return { ...prev, visTracks: map };
+      });
+    } else if (track.kind === 'trs' && track.objKey) {
+      setTimeline(prev => {
+        const map = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
+        const list = (map[track.objKey!] || []).map(k => (k.time >= start && k.time <= end) ? { ...k, time: scale(k.time) } : k).sort((a,b)=>a.time-b.time);
+        map[track.objKey!] = list;
+        return { ...prev, trsTracks: map };
+      });
+    }
+    setSelection({ start, end: start + (end - start) * factor });
+    message.success('已应用区间拉伸');
+  };
   const updateCameraKeyTime = (idx: number, time: number) => setTimeline(prev => {
     pushHistory();
     const keys = prev.cameraKeys.slice();
@@ -1448,6 +1583,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 options={(clips||[]).map(c=>({ label: c.name, value: c.id }))} />
               <Button size="small" onClick={createClip}>新建</Button>
               <Button size="small" type="primary" onClick={saveClip}>保存</Button>
+              <Divider type="vertical" />
+              <span style={{ color: '#94a3b8' }}>激活轨道：</span>
+              <span style={{ minWidth: 120, color: activeTrackId ? '#e2e8f0' : '#94a3b8' }}>{(()=>{ const t = activeTrackId; if(!t) return '未选择'; if(t==='cam') return '相机'; if(t.startsWith('vis:')){ const k=t.slice(4); return `显隐: ${keyToObject.current.get(k)?.name||k.slice(0,8)}`;} if(t.startsWith('trs:')){ const k=t.slice(4); return `TRS: ${keyToObject.current.get(k)?.name||k.slice(0,8)}`;} return t; })()}</span>
+              <Divider type="vertical" />
+              <InputNumber size="small" min={0.01} step={0.01} value={stretchFactor} onChange={(v)=>setStretchFactor(Number(v||1))} addonBefore="倍率" />
+              <Button size="small" onClick={applyStretch} disabled={!selection || !activeTrackId}>拉伸</Button>
+              <Button size="small" onClick={copySelection} disabled={!selection || !activeTrackId}>复制</Button>
+              <Button size="small" onClick={pasteAtCurrent} disabled={!activeTrackId || !clipboard}>粘贴</Button>
+              <Button size="small" onClick={()=>setSelection(null)} disabled={!selection}>清选</Button>
             </Space>
           </Flex>
           <div style={{ marginTop: 8, flex: '0 0 auto', display: 'flex', flexDirection: 'column' }}>
@@ -1485,8 +1629,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   keys={(timeline.cameraKeys||[]).map(k=>k.time)}
                   color="#60a5fa"
                   trackId={`cam`}
+                  selection={activeTrackId==='cam'?selection:null}
+                  onSelectionChange={(sel)=>{ setActiveTrackId('cam'); setSelection(sel); }}
+                  onActivate={()=> setActiveTrackId('cam') }
                   onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
-                  onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); }}
+                  onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); setActiveTrackId('cam'); }}
                 />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1501,14 +1648,17 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 {Object.entries(timeline.visTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); }}>
+                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
                         keys={(list||[]).map(k=>k.time)}
                         color="#34d399"
                         trackId={`vis:${objKey}`}
+                        selection={activeTrackId===`vis:${objKey}`?selection:null}
+                        onSelectionChange={(sel)=>{ setActiveTrackId(`vis:${objKey}`); setSelection(sel); }}
+                        onActivate={()=> setActiveTrackId(`vis:${objKey}`)}
                         onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
-                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`vis:${objKey}`); }}
                       />
                     </div>
                   </div>
@@ -1524,14 +1674,17 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); }}>
+                    <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
                         keys={(list||[]).map(k=>k.time)}
                         color="#f59e0b"
                         trackId={`trs:${objKey}`}
+                        selection={activeTrackId===`trs:${objKey}`?selection:null}
+                        onSelectionChange={(sel)=>{ setActiveTrackId(`trs:${objKey}`); setSelection(sel); }}
+                        onActivate={()=> setActiveTrackId(`trs:${objKey}`)}
                         onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
-                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); }}
+                        onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}
                       />
                     </div>
                   </div>
@@ -1607,7 +1760,7 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
     const el = ref.current; if (!el) return 0; const rect = el.getBoundingClientRect(); const p = Math.max(0, Math.min(rect.width, clientX - rect.left));
@@ -1616,6 +1769,7 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
   const onDown = (e: React.MouseEvent, idx: number) => {
     e.stopPropagation();
     (window as any).__selectedKeyId = `${trackId}:${idx}`;
+    onActivate?.();
     onSelectKey?.(idx);
     const onMove = (ev: MouseEvent) => { onChangeKeyTime(idx, Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
@@ -1623,7 +1777,13 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
     window.addEventListener('mouseup', onUp);
   };
   return (
-    <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4 }}>
+    <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4 }}
+      onMouseDown={(e)=>{ if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; e.stopPropagation(); onActivate?.(); const start = toTime(e.clientX); onSelectionChange?.({ start, end: start }); const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); }}
+    >
+      {selection && (
+        <div title={`选择: ${Math.min(selection.start, selection.end).toFixed(2)}s - ${Math.max(selection.start, selection.end).toFixed(2)}s`}
+          style={{ position: 'absolute', top: 2, bottom: 2, left: `${(Math.min(selection.start, selection.end)/Math.max(0.0001, duration))*100}%`, width: `${(Math.abs(selection.end - selection.start)/Math.max(0.0001, duration))*100}%`, background: 'rgba(96,165,250,0.25)', border: '1px solid rgba(59,130,246,0.8)', pointerEvents: 'none' }} />
+      )}
       {keys.map((t, idx) => (
         <div key={idx} data-keyframe title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
           style={{ position: 'absolute', left: `${(t/Math.max(0.0001, duration))*100}%`, top: 2, width: 12, height: 18, marginLeft: -6, borderRadius: 3, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : 'none' }} />
