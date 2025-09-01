@@ -1814,7 +1814,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             {/* spacer reserved for future timeline zoom bar */}
           </div>
           <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
-            <div className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px` }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+            <div className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px`, paddingLeft: 80 + trackLabelWidth }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
               <Flex vertical gap={8}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <strong style={{ width: 80 }}>相机</strong>
@@ -1824,21 +1824,24 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     options={[{label:'easeInOut', value:'easeInOut'},{label:'linear', value:'linear'}]} />
                   <span style={{ color: '#94a3b8' }}>关键帧数：{timeline.cameraKeys.length}</span>
                 </div>
-                {/* MiniTrack for camera */}
-                <div style={{ paddingLeft: 80 + trackLabelWidth, position:'relative' }}>
-                  <DraggableMiniTrack
-                    duration={timeline.duration}
-                    keys={(timeline.cameraKeys||[]).map(k=>k.time)}
-                    color="#60a5fa"
-                    trackId={`cam`}
-                    pxPerSec={pxPerSec}
-                    scrollerRef={tracksScrollRef}
-                    selection={activeTrackId==='cam'?selection:null}
-                    onSelectionChange={(sel)=>{ setActiveTrackId('cam'); setSelection(sel); }}
-                    onActivate={()=> setActiveTrackId('cam') }
-                    onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
-                    onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); setActiveTrackId('cam'); }}
-                  />
+                {/* MiniTrack for camera (align with other tracks using sticky label area) */}
+                <div style={{ position:'relative', display:'flex', alignItems:'center', gap: 8 }}>
+                  <span style={{ position:'sticky', left: 0, width: 80 + trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, background: 'rgba(15,23,42,0.7)', zIndex: 2 }}>相机</span>
+                  <div style={{ flex: 1 }} onClick={()=>{ setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(null); setActiveTrackId('cam'); }}>
+                    <DraggableMiniTrack
+                      duration={timeline.duration}
+                      keys={(timeline.cameraKeys||[]).map(k=>k.time)}
+                      color="#60a5fa"
+                      trackId={`cam`}
+                      pxPerSec={pxPerSec}
+                      scrollerRef={tracksScrollRef}
+                      selection={activeTrackId==='cam'?selection:null}
+                      onSelectionChange={(sel)=>{ setActiveTrackId('cam'); setSelection(sel); }}
+                      onActivate={()=> setActiveTrackId('cam') }
+                      onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
+                      onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); setActiveTrackId('cam'); }}
+                    />
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <strong style={{ width: 80 }}>显隐(所选)</strong>
@@ -1852,7 +1855,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   {Object.entries(timeline.visTracks).map(([objKey, list]) => (
                     <div key={objKey} style={{ position:'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <span style={{ position:'sticky', left: 0, width: 80 + trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, background: 'rgba(15,23,42,0.7)', zIndex: 2 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                      <div style={{ flex: 1, marginLeft: 80 + trackLabelWidth }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
+                      <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
                         <DraggableMiniTrack
                           duration={timeline.duration}
                           keys={(list||[]).map(k=>k.time)}
@@ -1880,7 +1883,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
                     <div key={objKey} style={{ position:'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <span style={{ position:'sticky', left: 0, width: 80 + trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, background: 'rgba(15,23,42,0.7)', zIndex:1 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                      <div style={{ flex: 1, marginLeft: 80 + trackLabelWidth }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
+                      <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
                         <DraggableMiniTrack
                           duration={timeline.duration}
                           keys={(list||[]).map(k=>k.time)}
