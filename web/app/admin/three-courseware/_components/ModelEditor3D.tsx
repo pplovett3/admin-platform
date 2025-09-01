@@ -253,7 +253,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   useEffect(() => {
     resize();
     const id = setTimeout(() => resize(), 240);
-    return () => clearTimeout(id);
+    const id2 = setTimeout(() => resize(), 480);
+    return () => { clearTimeout(id); clearTimeout(id2); };
   }, [showLeft, showRight, timelineHeight, rightTab]);
 
   useEffect(() => {
@@ -776,6 +777,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const next = new Set(hiddenKeys);
     if (hide) next.add(key); else next.delete(key);
     setHiddenKeys(next);
+    // 强制刷新右侧显示开关的有效可见性
+    setPrsTick(v=>v+1);
   };
 
   const onIsolateSelected = () => {
@@ -1166,7 +1169,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const isTimelineCollapsed = rightTab !== 'anim';
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease' }}>
-      <Card title="模型与结构树" bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear' }}>
+      <Card title="模型与结构树" bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
         <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
             <Input placeholder="https://.../model.glb" allowClear />
@@ -1192,7 +1195,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           />
         </div>
       </Card>
-      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column' }}
+      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
         extra={(
           <Space>
             <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
@@ -1251,8 +1254,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     </Space>
                     <div>
                       <span style={{ marginRight: 8 }}>显示</span>
-                      <Switch checked={!!keyToObject.current.get(selectedKey)?.visible} onChange={(checked)=>{
-                        const obj = keyToObject.current.get(selectedKey!); if(!obj) return; obj.visible = checked; if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, checked); }} />
+                      <Switch checked={(()=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return false; // 计算有效可见性：自身和祖先都可见
+                        let p: THREE.Object3D | null = obj; while (p) { if ((p as any).visible === false) return false; p = p.parent as any; } return true; })()}
+                        onChange={(checked)=>{
+                          const obj = keyToObject.current.get(selectedKey!); if(!obj) return; obj.visible = checked; setPrsTick(v=>v+1); if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, checked); }} />
                     </div>
                   </Space>
                 </div>
