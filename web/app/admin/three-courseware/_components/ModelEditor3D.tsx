@@ -1,6 +1,6 @@
 "use client";
 
-function TimeRuler({ duration, pxPerSec, current, onScrub, scrollLeft=0 }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void; scrollLeft?: number }) {
+function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void }) {
   const width = Math.max(0, duration * pxPerSec);
   // 动态步长：尽量接近 80px 一格
   const rawStep = 80; // 目标像素间隔
@@ -17,7 +17,7 @@ function TimeRuler({ duration, pxPerSec, current, onScrub, scrollLeft=0 }: { dur
   const ticks: number[] = [];
   for (let t = 0; t <= duration + 1e-6; t += step) ticks.push(Number(t.toFixed(6)));
   const onDown = (e: React.MouseEvent) => {
-    const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const toTime = (clientX:number) => { const x = Math.max(0, clientX - rect.left + scrollLeft); return x / Math.max(1, pxPerSec); };
+    const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const toTime = (clientX:number) => { const sl = (el.parentElement as HTMLDivElement | null)?.scrollLeft || 0; const x = Math.max(0, clientX - rect.left + sl); return x / Math.max(1, pxPerSec); };
     onScrub(Math.max(0, Math.min(duration, toTime(e.clientX))));
     const onMove = (ev: MouseEvent) => { onScrub(Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
@@ -1807,7 +1807,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
                 onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
-                <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} scrollLeft={rulerScrollRef.current?.scrollLeft||0} />
+                <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
               </div>
             </div>
             {/* spacer reserved for future timeline zoom bar */}
