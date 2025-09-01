@@ -1805,7 +1805,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             </Flex>
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
               <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
-                onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
+                onScroll={(e)=>{ if (innerScrollRef.current) innerScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
                 onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
                 <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
@@ -1814,16 +1814,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             {/* spacer reserved for future timeline zoom bar */}
           </div>
           <div ref={tracksScrollRef} className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8, paddingLeft: 80 + trackLabelWidth }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
-            <div className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px` }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
+            {/* 仅轨道区滚动，用于与时间尺同步 */}
+            <div ref={innerScrollRef} className="tracks-scroll" style={{ position:'relative', minWidth: `${pxPerSec*timeline.duration}px`, overflowX: 'auto', overflowY: 'hidden' }} onScroll={(e)=>{ const sl = (e.target as HTMLDivElement).scrollLeft; if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl; }}>
               <Flex vertical gap={8}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <strong style={{ width: 80 }}>相机</strong>
-                  <Button size="small" onClick={addCameraKeyframe}>添加关键帧</Button>
-                  <span style={{ color: '#94a3b8' }}>缓动</span>
-                  <Select size="small" value={cameraKeyEasing} style={{ width: 110 }} onChange={(v)=>setCameraKeyEasing(v)}
-                    options={[{label:'easeInOut', value:'easeInOut'},{label:'linear', value:'linear'}]} />
-                  <span style={{ color: '#94a3b8' }}>关键帧数：{timeline.cameraKeys.length}</span>
-                </div>
                 {/* MiniTrack for camera (align with other tracks using sticky label area) */}
                 <div style={{ position:'relative', display:'flex', alignItems:'center', gap: 8 }}>
                   <span style={{ position:'sticky', left: 0, width: 80 + trackLabelWidth, marginLeft: -(80 + trackLabelWidth), color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, background: 'rgba(15,23,42,0.7)', zIndex: 2 }}>相机</span>
@@ -1843,13 +1836,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     />
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <strong style={{ width: 80 }}>显隐(所选)</strong>
-                  <Button size="small" disabled={!selectedKey} onClick={addVisibilityKeyframeForSelected}>添加关键帧</Button>
-                  <Button size="small" disabled={!selectedKey} onClick={()=> setVisibilityAtCurrentForSelected(true)}>设为显示</Button>
-                  <Button size="small" disabled={!selectedKey} onClick={()=> setVisibilityAtCurrentForSelected(false)}>设为隐藏</Button>
-                  <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.visTracks).length}</span>
-                </div>
+                
                 {/* 显示所有对象的显隐轨道 */}
                 <div style={{ paddingLeft: 0 }}>
                   {Object.entries(timeline.visTracks).map(([objKey, list]) => (
@@ -1873,11 +1860,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                     </div>
                   ))}
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <strong style={{ width: 80 }}>TRS(所选)</strong>
-                  <Button size="small" disabled={!selectedKey} onClick={addTRSKeyForSelected}>添加关键帧</Button>
-                  <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.trsTracks).length}</span>
-                </div>
+                
                 {/* 显示所有对象的 TRS 轨道 */}
                 <div style={{ paddingLeft: 0 }}>
                   {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
