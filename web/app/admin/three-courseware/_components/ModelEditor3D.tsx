@@ -19,11 +19,26 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
   const onDown = (e: React.MouseEvent) => {
     const el = e.currentTarget as HTMLDivElement; 
     const toTime = (clientX:number) => { 
-      const rect = el.getBoundingClientRect(); // 每次重新获取rect，确保准确
       const scrollContainer = el.parentElement as HTMLDivElement | null;
-      const sl = scrollContainer?.scrollLeft || 0; 
-      const x = Math.max(0, clientX - rect.left + sl); 
-      return x / Math.max(1, pxPerSec); 
+      if (!scrollContainer) return 0;
+      
+      // 获取滚动容器相对于屏幕的位置，这已经包含了paddingLeft的偏移
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const sl = scrollContainer.scrollLeft || 0; 
+      
+      // 计算相对于滚动容器内容区域起始位置的x坐标
+      const x = Math.max(0, clientX - containerRect.left + sl); 
+      const time = x / Math.max(1, pxPerSec);
+      
+      console.log('TimeRuler toTime debug:', { 
+        clientX, 
+        containerLeft: containerRect.left, 
+        scrollLeft: sl, 
+        x, 
+        time 
+      });
+      
+      return time; 
     };
     onScrub(Math.max(0, Math.min(duration, toTime(e.clientX))));
     const onMove = (ev: MouseEvent) => { onScrub(Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
