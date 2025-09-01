@@ -1,6 +1,6 @@
 "use client";
 
-function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void }) {
+function TimeRuler({ duration, pxPerSec, current, onScrub, scrollLeft=0 }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void; scrollLeft?: number }) {
   const width = Math.max(0, duration * pxPerSec);
   // 动态步长：尽量接近 80px 一格
   const rawStep = 80; // 目标像素间隔
@@ -17,7 +17,7 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
   const ticks: number[] = [];
   for (let t = 0; t <= duration + 1e-6; t += step) ticks.push(Number(t.toFixed(6)));
   const onDown = (e: React.MouseEvent) => {
-    const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const startX = e.clientX; const startScroll = el.parentElement?.scrollLeft || 0; const toTime = (clientX:number) => { const x = Math.max(0, clientX - rect.left + (el.parentElement?.scrollLeft || 0)); return x / Math.max(1, pxPerSec); };
+    const el = e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const toTime = (clientX:number) => { const x = Math.max(0, clientX - rect.left + scrollLeft); return x / Math.max(1, pxPerSec); };
     onScrub(Math.max(0, Math.min(duration, toTime(e.clientX))));
     const onMove = (ev: MouseEvent) => { onScrub(Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
     const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
@@ -1807,7 +1807,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
                 onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
-                <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
+                <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} scrollLeft={rulerScrollRef.current?.scrollLeft||0} />
               </div>
             </div>
             {/* spacer reserved for future timeline zoom bar */}
@@ -1823,7 +1823,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 <span style={{ color: '#94a3b8' }}>关键帧数：{timeline.cameraKeys.length}</span>
               </div>
               {/* MiniTrack for camera */}
-              <div style={{ paddingLeft: 80 + trackLabelWidth }}>
+              <div style={{ paddingLeft: 80 + trackLabelWidth, position:'relative' }}>
                 <DraggableMiniTrack
                   duration={timeline.duration}
                   keys={(timeline.cameraKeys||[]).map(k=>k.time)}
@@ -1845,10 +1845,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.visTracks).length}</span>
               </div>
               {/* 显示所有对象的显隐轨道 */}
-              <div style={{ paddingLeft: 80 }}>
+              <div style={{ paddingLeft: 80 + trackLabelWidth }}>
                 {Object.entries(timeline.visTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', position:'absolute', left: 80, transform:'translateX(-100%)' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
                     <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
@@ -1872,10 +1872,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.trsTracks).length}</span>
               </div>
               {/* 显示所有对象的 TRS 轨道 */}
-              <div style={{ paddingLeft: 80 }}>
+              <div style={{ paddingLeft: 80 + trackLabelWidth }}>
                 {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
                   <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                    <span style={{ width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', position:'absolute', left: 80, transform:'translateX(-100%)' }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
                     <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
                       <DraggableMiniTrack
                         duration={timeline.duration}
