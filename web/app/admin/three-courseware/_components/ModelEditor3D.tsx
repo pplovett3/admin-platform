@@ -9,7 +9,8 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
-import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch } from 'antd';
+import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch, Dropdown, Segmented, Tooltip, Divider } from 'antd';
+import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
 import { getToken } from '@/app/_lib/api';
 import type { UploadProps } from 'antd';
 
@@ -126,7 +127,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const highlightedMats = useRef<Set<any>>(new Set());
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
-  const [rightTab, setRightTab] = useState<'annot'|'anim'|'view'>('annot');
+  const [mode, setMode] = useState<'annot'|'anim'>('annot');
+  const [modelName, setModelName] = useState<string>('未加载模型');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [urlImportOpen, setUrlImportOpen] = useState(false);
+  const localFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [localFileInputKey, setLocalFileInputKey] = useState<number>(0);
+  const [showGrid, setShowGrid] = useState<boolean>(false);
+  const gridRef = useRef<THREE.GridHelper | null>(null);
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
   const [selectedVis, setSelectedVis] = useState<{ key: string; index: number } | null>(null);
@@ -164,12 +172,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     try { localStorage.setItem('three_courseware_clips', JSON.stringify(clips)); } catch {}
   }, [clips]);
 
-  // 依据 Tab/选中对象/模式与坐标系，统一管理 TransformControls 的挂载与可见
+  // 依据模式/选中对象/坐标系，统一管理 TransformControls 的挂载与可见
   useEffect(() => {
     const t = tcontrolsRef.current;
     if (!t) return;
     const obj = selectedKey ? keyToObject.current.get(selectedKey) : undefined;
-    if (rightTab === 'anim' && obj) {
+    if (mode === 'anim' && obj) {
       t.attach(obj);
       t.setMode(gizmoMode);
       t.setSpace(gizmoSpace as any);
@@ -178,7 +186,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       t.detach();
       (t as any).visible = false;
     }
-  }, [rightTab, selectedKey, gizmoMode, gizmoSpace]);
+  }, [mode, selectedKey, gizmoMode, gizmoSpace]);
 
   const createClip = () => {
     const name = window.prompt('新建动画名称', `动画${clips.length + 1}`) || '';
@@ -263,7 +271,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const id = setTimeout(() => resize(), 240);
     const id2 = setTimeout(() => resize(), 480);
     return () => { clearTimeout(id); clearTimeout(id2); };
-  }, [showLeft, showRight, timelineHeight, rightTab]);
+  }, [showLeft, showRight, timelineHeight, mode]);
 
   // 背景与灯光设置实时应用
   useEffect(() => {
@@ -437,6 +445,19 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     composerRef.current?.setSize(w, h);
+    // 地面网格自适应：放置在原点
+    if (showGrid) {
+      const scene = sceneRef.current; if (scene) {
+        if (!gridRef.current) {
+          const grid = new THREE.GridHelper(10, 20, 0x888888, 0x444444);
+          scene.add(grid);
+          gridRef.current = grid as any;
+        }
+        gridRef.current.visible = true;
+      }
+    } else {
+      if (gridRef.current) gridRef.current.visible = false;
+    }
   }
 
   function animate() {
@@ -610,6 +631,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       const root = gltf.scene || gltf.scenes[0];
       modelRootRef.current = root;
       scene.add(root);
+      setModelName(root.name || '模型');
 
       // 生成结构树
       const nodes: TreeNode[] = [];
@@ -724,7 +746,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     // attach transform controls
     const tcontrols = tcontrolsRef.current;
     if (tcontrols) {
-      if (rightTab === 'anim') {
+      if (mode === 'anim') {
         tcontrols.attach(obj);
         tcontrols.setMode(gizmoMode);
         tcontrols.setSpace(gizmoSpace as any);
@@ -1090,6 +1112,56 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     beforeUpload: async (file) => { try { const text = await file.text(); const json = JSON.parse(text); setTimeline(prev => ({ ...prev, duration: Number(json?.duration||prev.duration), cameraKeys: Array.isArray(json?.cameraKeys)? (json.cameraKeys as CameraKeyframe[]) : prev.cameraKeys, visTracks: (json?.visTracks||prev.visTracks) as Record<string, VisibilityKeyframe[]>, trsTracks: (json?.trsTracks||prev.trsTracks) as Record<string, TransformKeyframe[]> })); message.success('时间线已导入'); } catch (e:any) { message.error(e?.message||'导入失败'); } return false; }
   };
 
+  // 设置弹窗
+  const SettingsModal = () => (
+    <Modal title="系统设置" open={settingsOpen} onCancel={()=>setSettingsOpen(false)} onOk={()=>setSettingsOpen(false)} destroyOnClose>
+      <Flex vertical gap={12}>
+        <div style={{ fontWeight: 600 }}>背景</div>
+        <Space>
+          <Switch checkedChildren="透明" unCheckedChildren="不透明" checked={bgTransparent} onChange={(v)=>setBgTransparent(v)} />
+          <Input size="small" type="color" value={bgColor} onChange={(e)=>setBgColor(e.target.value)} disabled={bgTransparent} />
+        </Space>
+        <Divider style={{ margin: '8px 0' }} />
+        <div style={{ fontWeight: 600 }}>灯光</div>
+        <Space wrap>
+          <span>平行光</span>
+          <Input size="small" type="color" value={dirLight.color} onChange={(e)=>setDirLight(v=>({ ...v, color: e.target.value }))} />
+          <InputNumber size="small" step={0.1} min={0} max={10} value={dirLight.intensity} onChange={(v)=>setDirLight(val=>({ ...val, intensity: Number(v||0) }))} />
+          <span>Px</span><InputNumber size="small" step={0.1} value={dirLight.position.x} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, x: Number(v||0) } }))} />
+          <span>Py</span><InputNumber size="small" step={0.1} value={dirLight.position.y} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, y: Number(v||0) } }))} />
+          <span>Pz</span><InputNumber size="small" step={0.1} value={dirLight.position.z} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, z: Number(v||0) } }))} />
+        </Space>
+        <Space wrap>
+          <span>环境光</span>
+          <Input size="small" type="color" value={ambLight.color} onChange={(e)=>setAmbLight(v=>({ ...v, color: e.target.value }))} />
+          <InputNumber size="small" step={0.1} min={0} max={10} value={ambLight.intensity} onChange={(v)=>setAmbLight(val=>({ ...val, intensity: Number(v||0) }))} />
+        </Space>
+        <Space wrap>
+          <span>半球光</span>
+          <Input size="small" type="color" value={hemiLight.skyColor} onChange={(e)=>setHemiLight(v=>({ ...v, skyColor: e.target.value }))} />
+          <Input size="small" type="color" value={hemiLight.groundColor} onChange={(e)=>setHemiLight(v=>({ ...v, groundColor: e.target.value }))} />
+          <InputNumber size="small" step={0.1} min={0} max={10} value={hemiLight.intensity} onChange={(v)=>setHemiLight(val=>({ ...val, intensity: Number(v||0) }))} />
+        </Space>
+        <Divider style={{ margin: '8px 0' }} />
+        <div style={{ fontWeight: 600 }}>显示</div>
+        <Space>
+          <Switch checkedChildren="地面开" unCheckedChildren="地面关" checked={showGrid} onChange={(v)=>{ setShowGrid(v); resize(); }} />
+        </Space>
+        <Divider style={{ margin: '8px 0' }} />
+        <div style={{ fontWeight: 600 }}>高亮模式</div>
+        <Select size="small" value={highlightMode} style={{ width: 160 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
+          options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
+        <Divider style={{ margin: '8px 0' }} />
+        <div style={{ fontWeight: 600 }}>操作设置</div>
+        <Space wrap>
+          <InputNumber size="small" placeholder="平移吸附" value={gizmoSnap.t} min={0} step={0.01} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, t: n })); tcontrolsRef.current?.setTranslationSnap((n as any) ?? null); }} />
+          <InputNumber size="small" placeholder="旋转吸附°" value={gizmoSnap.r} min={0} step={1} onChange={(v)=>{ const n = (v==null? undefined: Number(v)*Math.PI/180); setGizmoSnap(s=>({ ...s, r: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setRotationSnap((n as any) ?? null); }} />
+          <InputNumber size="small" placeholder="缩放吸附" value={gizmoSnap.s} min={0} step={0.01} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, s: n })); tcontrolsRef.current?.setScaleSnap((n as any) ?? null); }} />
+          <Select size="small" value={gizmoSpace} style={{ width: 120 }} onChange={(v)=>{ setGizmoSpace(v); tcontrolsRef.current?.setSpace(v as any); }} options={[{label:'局部', value:'local'},{label:'世界', value:'world'}]} />
+        </Space>
+      </Flex>
+    </Modal>
+  );
   // --- 撤销 / 重做 ---
   type Snapshot = { timeline: TimelineState };
   const undoStack = useRef<Snapshot[]>([]);
@@ -1206,7 +1278,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   const colLeft = showLeft ? '340px' : '0px';
   const colRight = showRight ? '320px' : '0px';
-  const isTimelineCollapsed = rightTab !== 'anim';
+  const isTimelineCollapsed = mode !== 'anim';
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease' }}>
       <Card title="模型与结构树" bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
@@ -1235,31 +1307,31 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           />
         </div>
       </Card>
-      <Card title="三维视窗" bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
+      <Card title={<Space><span>三维视窗</span><Segmented size="small" value={mode} onChange={(v)=>setMode(v as any)} options={[{label:'添加标注', value:'annot'},{label:'制作动画', value:'anim'}]} /></Space>} bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
         extra={(
           <Space>
-            <Button size="small" onClick={()=>setShowLeft(v=>!v)}>{showLeft?'隐藏结构树':'显示结构树'}</Button>
-            <Button size="small" onClick={()=>{ setShowRight(v=>!v); setTimeout(()=>resize(), 250); }}>{showRight?'隐藏属性面板':'显示属性面板'}</Button>
-            <Select size="small" value={gizmoMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setGizmoMode(v); tcontrolsRef.current?.setMode(v as any); }}
-              options={[{label:'平移', value:'translate'},{label:'旋转', value:'rotate'},{label:'缩放', value:'scale'}]} />
-            <Select size="small" value={gizmoSpace} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setGizmoSpace(v); tcontrolsRef.current?.setSpace(v as any); }}
-              options={[{label:'局部', value:'local'},{label:'世界', value:'world'}]} />
-            <Space size={4}>
-              <InputNumber size="small" placeholder="平移吸附" value={gizmoSnap.t} min={0} step={0.01} style={{ width: 100 }} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, t: n })); tcontrolsRef.current?.setTranslationSnap((n as any) ?? null); }} />
-              <InputNumber size="small" placeholder="旋转吸附°" value={gizmoSnap.r} min={0} step={1} style={{ width: 100 }} onChange={(v)=>{ const n = (v==null? undefined: Number(v)*Math.PI/180); setGizmoSnap(s=>({ ...s, r: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setRotationSnap((n as any) ?? null); }} />
-              <InputNumber size="small" placeholder="缩放吸附" value={gizmoSnap.s} min={0} step={0.01} style={{ width: 100 }} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, s: n })); tcontrolsRef.current?.setScaleSnap((n as any) ?? null); }} />
-            </Space>
-            <Select size="small" value={highlightMode} dropdownMatchSelectWidth={false} style={{ width: 110 }} onChange={(v)=>{ setHighlightMode(v); const sel = selectedKey ? keyToObject.current.get(selectedKey) : null; if (sel) selectObject(sel); }}
-              options={[{label:'轮廓', value:'outline'},{label:'自发光', value:'emissive'}]} />
-            <Button size="small" type={autoKey?'primary':'default'} onClick={()=>setAutoKey(v=>!v)}>{autoKey?'录制开':'录制关'}</Button>
+            <Button size="small" icon={<SettingOutlined />} onClick={()=>setSettingsOpen(true)}>设置</Button>
           </Space>
         )}
       >
-        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 480 }} />
+        <div style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 8px', borderBottom:'1px solid #334155' }}>
+          <Tooltip title="平移"><Button size="small" type={gizmoMode==='translate'?'primary':'default'} icon={<DragOutlined />} onClick={()=>{ setGizmoMode('translate'); tcontrolsRef.current?.setMode('translate'); }} /></Tooltip>
+          <Tooltip title="旋转"><Button size="small" type={gizmoMode==='rotate'?'primary':'default'} icon={<ReloadOutlined />} onClick={()=>{ setGizmoMode('rotate'); tcontrolsRef.current?.setMode('rotate'); }} /></Tooltip>
+          <Tooltip title="缩放"><Button size="small" type={gizmoMode==='scale'?'primary':'default'} icon={<AppstoreOutlined />} onClick={()=>{ setGizmoMode('scale'); tcontrolsRef.current?.setMode('scale'); }} /></Tooltip>
+          <Divider type="vertical" />
+          <Tooltip title="正视"><Button size="small" icon={<ArrowUpOutlined rotate={-90} />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y, t.z+3); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="俯视"><Button size="small" icon={<ArrowUpOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x, t.y+3, t.z); c.up.set(0,0,-1); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="左视"><Button size="small" icon={<ArrowLeftOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.set(t.x-3, t.y, t.z); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Tooltip title="等轴测"><Button size="small" icon={<AppstoreOutlined />} onClick={()=>{ const c=cameraRef.current!, ctl=controlsRef.current!; const t=ctl.target.clone(); c.position.copy(t.clone().add(new THREE.Vector3(2,2,2))); c.up.set(0,1,0); c.lookAt(t); ctl.update(); }} /></Tooltip>
+          <Divider type="vertical" />
+          <Tooltip title="对焦所选"><Button size="small" icon={<AimOutlined />} onClick={onFocusSelected} disabled={!selectedKey} /></Tooltip>
+          <Tooltip title="隔离所选"><Button size="small" icon={<ScissorOutlined />} onClick={onIsolateSelected} disabled={!selectedKey} /></Tooltip>
+          <Tooltip title="显示全部"><Button size="small" icon={<ExpandOutlined />} onClick={onShowAll} /></Tooltip>
+        </div>
+        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420 }} />
       </Card>
       <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
-        <Tabs activeKey={rightTab} onChange={(k)=>setRightTab(k as any)} items={[
-          { key: 'annot', label: '标注', children: (
+        {mode==='annot' && (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
               {selectedKey ? (
                 <Flex vertical gap={8}>
@@ -1270,8 +1342,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               ) : <div>点击结构树或视窗选择对象</div>}
               {/* 全局标注列表暂时隐藏 */}
             </div>
-          )},
-          { key: 'anim', label: '动画', children: (
+        )}
+        {mode==='anim' && (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
               {selectedKey ? (
                 <div style={{ marginTop: 6 }}>
@@ -1305,52 +1377,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 <div style={{ marginTop: 6, color: '#94a3b8' }}>未选中对象</div>
               )}
             </div>
-          )}
-          ,
-          { key: 'view', label: '视图', children: (
-            <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
-              <Flex vertical gap={8}>
-                <div style={{ fontWeight: 600 }}>背景</div>
-                <Space>
-                  <Switch checkedChildren="透明" unCheckedChildren="不透明" checked={bgTransparent} onChange={(v)=>setBgTransparent(v)} />
-                  <Input size="small" type="color" value={bgColor} onChange={(e)=>setBgColor(e.target.value)} disabled={bgTransparent} />
-                </Space>
-                <div style={{ height: 1, background: '#334155', margin: '8px 0' }} />
-                <div style={{ fontWeight: 600 }}>平行光</div>
-                <Space wrap>
-                  <span>颜色</span>
-                  <Input size="small" type="color" value={dirLight.color} onChange={(e)=>setDirLight(v=>({ ...v, color: e.target.value }))} />
-                  <span>强度</span>
-                  <InputNumber size="small" step={0.1} min={0} max={10} value={dirLight.intensity} onChange={(v)=>setDirLight(val=>({ ...val, intensity: Number(v||0) }))} />
-                  <span>Px</span>
-                  <InputNumber size="small" step={0.1} value={dirLight.position.x} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, x: Number(v||0) } }))} />
-                  <span>Py</span>
-                  <InputNumber size="small" step={0.1} value={dirLight.position.y} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, y: Number(v||0) } }))} />
-                  <span>Pz</span>
-                  <InputNumber size="small" step={0.1} value={dirLight.position.z} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, z: Number(v||0) } }))} />
-                </Space>
-                <div style={{ height: 1, background: '#334155', margin: '8px 0' }} />
-                <div style={{ fontWeight: 600 }}>环境光</div>
-                <Space wrap>
-                  <span>颜色</span>
-                  <Input size="small" type="color" value={ambLight.color} onChange={(e)=>setAmbLight(v=>({ ...v, color: e.target.value }))} />
-                  <span>强度</span>
-                  <InputNumber size="small" step={0.1} min={0} max={10} value={ambLight.intensity} onChange={(v)=>setAmbLight(val=>({ ...val, intensity: Number(v||0) }))} />
-                </Space>
-                <div style={{ height: 1, background: '#334155', margin: '8px 0' }} />
-                <div style={{ fontWeight: 600 }}>半球光</div>
-                <Space wrap>
-                  <span>天空色</span>
-                  <Input size="small" type="color" value={hemiLight.skyColor} onChange={(e)=>setHemiLight(v=>({ ...v, skyColor: e.target.value }))} />
-                  <span>地面色</span>
-                  <Input size="small" type="color" value={hemiLight.groundColor} onChange={(e)=>setHemiLight(v=>({ ...v, groundColor: e.target.value }))} />
-                  <span>强度</span>
-                  <InputNumber size="small" step={0.1} min={0} max={10} value={hemiLight.intensity} onChange={(v)=>setHemiLight(val=>({ ...val, intensity: Number(v||0) }))} />
-                </Space>
-              </Flex>
-            </div>
-          )}
-        ]} />
+        )}
       </Card>
       <Card title={
         <div style={{ display:'flex', alignItems:'center', gap: 12 }}>
@@ -1496,6 +1523,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           </div>
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
+      <SettingsModal />
+      <Modal title="从 URL 导入模型" open={urlImportOpen} onCancel={()=>setUrlImportOpen(false)} onOk={()=>{ urlForm.validateFields().then(v=>{ setUrlImportOpen(false); loadModel(v.url); }); }} destroyOnClose>
+        <Form layout="vertical" form={urlForm}>
+          <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
+            <Input placeholder="https://.../model.glb" allowClear />
+          </Form.Item>
+          <div style={{ color:'#94a3b8' }}>支持后端代理域名以解决 CORS（已适配）</div>
+        </Form>
+      </Modal>
     </div>
   );
 }
