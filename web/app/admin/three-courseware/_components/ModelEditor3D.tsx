@@ -1848,11 +1848,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.visTracks).length}</span>
                 </div>
                 {/* 显示所有对象的显隐轨道 */}
-                <div style={{ paddingLeft: 80 + trackLabelWidth }}>
+                <div style={{ paddingLeft: 0 }}>
                   {Object.entries(timeline.visTracks).map(([objKey, list]) => (
-                    <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ position:'sticky', left: 80, width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', zIndex: 1 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                      <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
+                    <div key={objKey} style={{ position:'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{ position:'sticky', left: 0, width: 80 + trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, background: 'rgba(15,23,42,0.7)', zIndex: 2 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                      <div style={{ flex: 1, marginLeft: 80 + trackLabelWidth }} onClick={()=>{ setSelectedKey(objKey); setSelectedTrs(null); setSelectedCamKeyIdx(null); setActiveTrackId(`vis:${objKey}`); }}>
                         <DraggableMiniTrack
                           duration={timeline.duration}
                           keys={(list||[]).map(k=>k.time)}
@@ -1876,11 +1876,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                   <span style={{ color: '#94a3b8' }}>轨道数：{Object.keys(timeline.trsTracks).length}</span>
                 </div>
                 {/* 显示所有对象的 TRS 轨道 */}
-                <div style={{ paddingLeft: 80 + trackLabelWidth }}>
+                <div style={{ paddingLeft: 0 }}>
                   {Object.entries(timeline.trsTracks).map(([objKey, list]) => (
-                    <div key={objKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ position:'sticky', left: 80, width: trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', zIndex:1 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
-                      <div style={{ flex: 1 }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
+                    <div key={objKey} style={{ position:'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{ position:'sticky', left: 0, width: 80 + trackLabelWidth, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign:'right', paddingRight: 8, background: 'rgba(15,23,42,0.7)', zIndex:1 }}>{keyToObject.current.get(objKey)?.name || objKey.slice(0,8)}</span>
+                      <div style={{ flex: 1, marginLeft: 80 + trackLabelWidth }} onClick={()=>{ setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}>
                         <DraggableMiniTrack
                           duration={timeline.duration}
                           keys={(list||[]).map(k=>k.time)}
