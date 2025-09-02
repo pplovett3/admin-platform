@@ -373,6 +373,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   } | null>(null);
   const [stretchFactor, setStretchFactor] = useState<number>(1);
   const [pxPerSec, setPxPerSec] = useState<number>(80);
+  const [globalSel, setGlobalSel] = useState<{ start:number; end:number }|null>(null);
+  const globalSelRef = useRef<{ start:number; end:number }|null>(null);
+  useEffect(()=>{ globalSelRef.current = globalSel; }, [globalSel]);
   type StepMarker = { id: string; time: number; name: string };
   const [steps, setSteps] = useState<StepMarker[]>([]);
   const stepsRef = useRef<StepMarker[]>([]);
@@ -384,6 +387,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   // 重命名弹窗
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameForm] = Form.useForm();
+  // 多选框选（3D）
+  const [boxSel, setBoxSel] = useState<{ x0:number,y0:number,x1:number,y1:number }|null>(null);
+  const boxSelRef = useRef<{ x0:number,y0:number,x1:number,y1:number }|null>(null);
+  useEffect(()=>{ boxSelRef.current = boxSel; }, [boxSel]);
+  const boxLayerRef = useRef<HTMLDivElement|null>(null);
+  // 时间线跨轨道选择
+  const [multiSel, setMultiSel] = useState<{ cam:number[]; vis:Record<string, number[]>; trs:Record<string, number[]>; range?:{start:number,end:number}|null }>({ cam:[], vis:{}, trs:{}, range:null });
   const tracksScrollRef = useRef<HTMLDivElement | null>(null);
   const innerScrollRef = useRef<HTMLDivElement | null>(null);
   const rulerScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1000,6 +1010,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       objs.forEach(o=> applyEmissiveHighlight(o));
     }
   }
+  useEffect(()=>{ syncHighlight(); }, [selectedSet, highlightMode]);
 
   function selectObject(obj: THREE.Object3D, addToSelection: boolean = false) {
     const scene = sceneRef.current!;
@@ -1871,7 +1882,39 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             <span style={{ color:'#94a3b8' }}>当前步骤：{(()=>{ if (steps.length===0) return '无'; const t=timeline.current; let idx=-1; for(let i=0;i<steps.length;i++){ if (steps[i].time<=t) idx=i; } return idx>=0 ? `${idx+1}. ${steps[idx].name}` : '未到步骤'; })()}</span>
           </Space>
         </div>
-        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }} />
+        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }}
+          onMouseDown={(e)=>{
+            if (!(e.ctrlKey||e.metaKey)) return;
+            const host = e.currentTarget as HTMLDivElement;
+            const rect = host.getBoundingClientRect();
+            const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+            setBoxSel({ x0:sx, y0:sy, x1:sx, y1:sy });
+            const onMove=(ev:MouseEvent)=>{ setBoxSel(prev=> prev? { ...prev, x1: ev.clientX - rect.left, y1: ev.clientY - rect.top } : null); };
+            const onUp=(ev:MouseEvent)=>{
+              window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+              const sel = boxSelRef.current; if (!sel) { setBoxSel(null); return; }
+              // 计算与选择框相交的网格对象
+              const r = rendererRef.current!, c = cameraRef.current!; const scene = sceneRef.current!;
+              const meshes: THREE.Object3D[] = []; (modelRootRef.current)?.traverse(o=>{ const m=o as any; if (m.isMesh && (o as any).visible!==false) meshes.push(o); });
+              const xMin=Math.min(sel.x0,sel.x1), xMax=Math.max(sel.x0,sel.x1); const yMin=Math.min(sel.y0,sel.y1), yMax=Math.max(sel.y0,sel.y1);
+              const added: string[] = [];
+              const proj = new THREE.Vector3();
+              meshes.forEach(o=>{
+                const box = new THREE.Box3().setFromObject(o);
+                const pts=[new THREE.Vector3(box.min.x,box.min.y,box.min.z), new THREE.Vector3(box.max.x,box.min.y,box.min.z), new THREE.Vector3(box.min.x,box.max.y,box.min.z), new THREE.Vector3(box.max.x,box.max.y,box.max.z)];
+                let inside=false; for (const p of pts){ proj.copy(p).project(c); const sxp=(proj.x*0.5+0.5)*r.domElement.clientWidth; const syp=(-proj.y*0.5+0.5)*r.domElement.clientHeight; if (sxp>=xMin&&sxp<=xMax&&syp>=yMin&&syp<=yMax){ inside=true; break; } }
+                if (inside) added.push(o.uuid);
+              });
+              setSelectedSet(prev=>{ const next=new Set(prev); added.forEach(id=> next.add(id)); return next; });
+              setBoxSel(null); syncHighlight(); setPrsTick(v=>v+1);
+            };
+            window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+          }}
+        >
+          {boxSel && (
+            <div ref={boxLayerRef} style={{ position:'absolute', left: Math.min(boxSel.x0, boxSel.x1), top: Math.min(boxSel.y0, boxSel.y1), width: Math.abs(boxSel.x1-boxSel.x0), height: Math.abs(boxSel.y1-boxSel.y0), border:'1px dashed #60a5fa', background:'rgba(96,165,250,0.15)', pointerEvents:'none' }} />
+          )}
+        </div>
       </Card>
       <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
         {mode==='annot' && (
@@ -1915,6 +1958,26 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                           const obj = keyToObject.current.get(selectedKey!); if(!obj) return; obj.visible = checked; setPrsTick(v=>v+1); if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, checked); }} />
                     </div>
                   </Space>
+                  {selectedSet.size>1 && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ color:'#94a3b8', marginBottom: 4 }}>批量操作</div>
+                      <Space wrap>
+                        <Input placeholder="前缀" style={{ width:120 }} onChange={(e)=>{ (window as any).__rn_prefix = e.target.value; }} />
+                        <Input placeholder="后缀" style={{ width:120 }} onChange={(e)=>{ (window as any).__rn_suffix = e.target.value; }} />
+                        <Button size="small" onClick={()=>{
+                          const prefix=String((window as any).__rn_prefix||''); const suffix=String((window as any).__rn_suffix||'');
+                          Array.from(selectedSet).forEach(k=>{ const o=keyToObject.current.get(k); if (o) o.name = `${prefix}${o.name||k.slice(0,8)}${suffix}`;});
+                          setPrsTick(v=>v+1); rebuildTree();
+                        }}>批量重命名</Button>
+                        <Divider type="vertical" />
+                        <InputNumber size="small" placeholder="平移吸附" step={0.01} onChange={(v)=>{ setGizmoSnap(s=>({ ...s, t: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setTranslationSnap(((v==null)? null: Number(v)) as any); }} />
+                        <InputNumber size="small" placeholder="旋转吸附°" step={1} onChange={(v)=>{ setGizmoSnap(s=>({ ...s, r: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setRotationSnap(((v==null)? null: Number(v)*Math.PI/180) as any); }} />
+                        <InputNumber size="small" placeholder="缩放吸附" step={0.01} onChange={(v)=>{ setGizmoSnap(s=>({ ...s, s: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setScaleSnap(((v==null)? null: Number(v)) as any); }} />
+                        <Divider type="vertical" />
+                        <Button size="small" onClick={()=>{ const ids=Array.from(selectedSet); if (ids.length<2) return; const base=keyToObject.current.get(ids[0])!; const bx=base.position.clone(), br=base.rotation.clone(), bs=base.scale.clone(); ids.slice(1).forEach(id=>{ const o=keyToObject.current.get(id)!; o.position.copy(bx); o.rotation.copy(br); o.scale.copy(bs); o.updateMatrixWorld(); }); setPrsTick(v=>v+1); }}>对齐到首个</Button>
+                      </Space>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ marginTop: 6, color: '#94a3b8' }}>未选中对象</div>
