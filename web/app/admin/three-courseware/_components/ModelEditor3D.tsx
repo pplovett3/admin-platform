@@ -378,9 +378,135 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [globalSel, setGlobalSel] = useState<{ start:number; end:number }|null>(null);
   const globalSelRef = useRef<{ start:number; end:number }|null>(null);
   useEffect(()=>{ globalSelRef.current = globalSel; }, [globalSel]);
-  // const [multiSel, setMultiSel] = useState<{ cam:number[]; vis:Record<string, number[]>; trs:Record<string, number[]> }>({ cam:[], vis:{}, trs:{} });
-  // const multiSelRef = useRef(multiSel);
-  // useEffect(()=>{ multiSelRef.current = multiSel; }, [multiSel]);
+
+  // 跨轨道框选功能
+  const collectSelectedKeyframes = () => {
+    const range = globalSel;
+    if (!range) return { cam: [], vis: {}, trs: {} };
+    const minT = Math.min(range.start, range.end), maxT = Math.max(range.start, range.end);
+    const result = { cam: [] as number[], vis: {} as Record<string, number[]>, trs: {} as Record<string, number[]> };
+    
+    // 相机关键帧
+    timeline.cameraKeys.forEach((k, i) => {
+      if (k.time >= minT && k.time <= maxT) result.cam.push(i);
+    });
+    
+    // 可见性关键帧
+    Object.entries(timeline.visTracks).forEach(([objKey, keys]) => {
+      const indices: number[] = [];
+      keys.forEach((k, i) => {
+        if (k.time >= minT && k.time <= maxT) indices.push(i);
+      });
+      if (indices.length > 0) result.vis[objKey] = indices;
+    });
+    
+    // 变换关键帧
+    Object.entries(timeline.trsTracks).forEach(([objKey, keys]) => {
+      const indices: number[] = [];
+      keys.forEach((k, i) => {
+        if (k.time >= minT && k.time <= maxT) indices.push(i);
+      });
+      if (indices.length > 0) result.trs[objKey] = indices;
+    });
+    
+    return result;
+  };
+
+  const deleteSelectedKeyframes = () => {
+    const sel = collectSelectedKeyframes();
+    if (sel.cam.length === 0 && Object.keys(sel.vis).length === 0 && Object.keys(sel.trs).length === 0) return;
+    
+    pushHistory();
+    setTimeline(prev => {
+      const newTimeline = { ...prev };
+      
+      // 删除相机关键帧
+      if (sel.cam.length > 0) {
+        newTimeline.cameraKeys = prev.cameraKeys.filter((_, i) => !sel.cam.includes(i));
+      }
+      
+      // 删除可见性关键帧
+      const newVisTracks = { ...prev.visTracks };
+      Object.entries(sel.vis).forEach(([objKey, indices]) => {
+        if (newVisTracks[objKey]) {
+          newVisTracks[objKey] = newVisTracks[objKey].filter((_, i) => !indices.includes(i));
+        }
+      });
+      newTimeline.visTracks = newVisTracks;
+      
+      // 删除变换关键帧
+      const newTrsTracks = { ...prev.trsTracks };
+      Object.entries(sel.trs).forEach(([objKey, indices]) => {
+        if (newTrsTracks[objKey]) {
+          newTrsTracks[objKey] = newTrsTracks[objKey].filter((_, i) => !indices.includes(i));
+        }
+      });
+      newTimeline.trsTracks = newTrsTracks;
+      
+      return newTimeline;
+    });
+    
+    setGlobalSel(null);
+    setMultiSel({ cam: [], vis: {}, trs: {} });
+  };
+
+  const moveSelectedKeyframes = (deltaTime: number) => {
+    const sel = collectSelectedKeyframes();
+    if (sel.cam.length === 0 && Object.keys(sel.vis).length === 0 && Object.keys(sel.trs).length === 0) return;
+    
+    pushHistory();
+    setTimeline(prev => {
+      const newTimeline = { ...prev };
+      
+      // 移动相机关键帧
+      if (sel.cam.length > 0) {
+        newTimeline.cameraKeys = prev.cameraKeys.map((k, i) => 
+          sel.cam.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
+        );
+      }
+      
+      // 移动可见性关键帧
+      const newVisTracks = { ...prev.visTracks };
+      Object.entries(sel.vis).forEach(([objKey, indices]) => {
+        if (newVisTracks[objKey]) {
+          newVisTracks[objKey] = newVisTracks[objKey].map((k, i) =>
+            indices.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
+          );
+        }
+      });
+      newTimeline.visTracks = newVisTracks;
+      
+      // 移动变换关键帧
+      const newTrsTracks = { ...prev.trsTracks };
+      Object.entries(sel.trs).forEach(([objKey, indices]) => {
+        if (newTrsTracks[objKey]) {
+          newTrsTracks[objKey] = newTrsTracks[objKey].map((k, i) =>
+            indices.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
+          );
+        }
+      });
+      newTimeline.trsTracks = newTrsTracks;
+      
+      return newTimeline;
+    });
+  };
+
+  // 键盘事件处理
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        deleteSelectedKeyframes();
+      } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [globalSel]);
   type StepMarker = { id: string; time: number; name: string };
   const [steps, setSteps] = useState<StepMarker[]>([]);
   const stepsRef = useRef<StepMarker[]>([]);
@@ -1057,14 +1183,16 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   function selectObject(obj: THREE.Object3D, addToSelection: boolean = false) {
     const scene = sceneRef.current!;
     if (boxHelperRef.current) { scene.remove(boxHelperRef.current); boxHelperRef.current = null; }
-    const nextSel = ((): Set<string> => {
-      setSelectedKey(obj.uuid);
-      const prev = selectedSet;
-      const next = new Set(prev);
-      if (addToSelection) { if (next.has(obj.uuid)) next.delete(obj.uuid); else next.add(obj.uuid); }
-      else { next.clear(); next.add(obj.uuid); }
-      return next;
-    })();
+    let nextSel: Set<string>;
+    if (addToSelection) {
+      nextSel = new Set(selectedSet);
+      if (nextSel.has(obj.uuid)) nextSel.delete(obj.uuid);
+      else nextSel.add(obj.uuid);
+    } else {
+      nextSel = new Set([obj.uuid]);
+    }
+    
+    setSelectedKey(obj.uuid);
     setSelectedSet(nextSel);
     setSelectedCamKeyIdx(null);
     setSelectedTrs(null);
@@ -1538,7 +1666,6 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         const newList = [...list, nextKey].sort((a,b)=>a.time-b.time);
         return { ...prev, trsTracks: { ...prev.trsTracks, [key]: newList } };
       }
-      pushHistory();
       const next: TransformKeyframe = {
         ...list[updateIndex],
         position: [obj.position.x, obj.position.y, obj.position.z],
@@ -1937,7 +2064,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 let inside=false; for (const p of pts){ proj.copy(p).project(c); const sxp=(proj.x*0.5+0.5)*r.domElement.clientWidth; const syp=(-proj.y*0.5+0.5)*r.domElement.clientHeight; if (sxp>=xMin&&sxp<=xMax&&syp>=yMin&&syp<=yMax){ inside=true; break; } }
                 if (inside) added.push(o.uuid);
               });
-              setSelectedSet(prev=>{ const next=new Set(prev); added.forEach(id=> next.add(id)); return next; });
+              const newSel = new Set(selectedSet);
+              added.forEach(id=>newSel.add(id));
+              setSelectedSet(newSel);
+              if (added.length > 0) setSelectedKey(added[0]);
+              attachTransformForSelection(newSel);
               setBoxSel(null); syncHighlight(); setPrsTick(v=>v+1);
             };
             window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
@@ -2164,7 +2295,43 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               {/* 右侧可滚动轨道列 - 确保有滚动条显示 */}
               <div style={{ flex: 1, overflow: 'hidden' }}>
                 <div ref={tracksScrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', width: '100%' }} onScroll={(e)=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}>
-                  <div style={{ minWidth: `${pxPerSec*timeline.duration}px` }}>
+                  <div style={{ minWidth: `${pxPerSec*timeline.duration}px`, position: 'relative' }}
+                    onMouseDown={(e)=>{
+                      if (e.target !== e.currentTarget) return;
+                      const el = e.currentTarget;
+                      const rect = el.getBoundingClientRect();
+                      const scrollLeft = tracksScrollRef.current?.scrollLeft || 0;
+                      const toTime = (clientX: number) => {
+                        const x = Math.max(0, clientX - rect.left + scrollLeft);
+                        return Math.max(0, Math.min(timeline.duration, x / Math.max(1, pxPerSec)));
+                      };
+                      const startTime = toTime(e.clientX);
+                      setGlobalSel({ start: startTime, end: startTime });
+                      const onMove = (ev: MouseEvent) => {
+                        setGlobalSel(prev => prev ? { ...prev, end: toTime(ev.clientX) } : null);
+                      };
+                      const onUp = () => {
+                        window.removeEventListener('mousemove', onMove);
+                        window.removeEventListener('mouseup', onUp);
+                      };
+                      window.addEventListener('mousemove', onMove);
+                      window.addEventListener('mouseup', onUp);
+                    }}
+                  >
+                    {/* 全局选择区域显示 */}
+                    {globalSel && (
+                      <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        bottom: 0,
+                        left: `${Math.min(globalSel.start, globalSel.end) * pxPerSec}px`,
+                        width: `${Math.abs(globalSel.end - globalSel.start) * pxPerSec}px`,
+                        background: 'rgba(96,165,250,0.2)',
+                        border: '1px solid rgba(59,130,246,0.6)',
+                        pointerEvents: 'none',
+                        zIndex: 10
+                      }} />
+                    )}
                     <Flex vertical gap={8}>
                       {/* 相机轨道 */}
                       <div style={{ position:'relative' }} onClick={()=>{ setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(null); setActiveTrackId('cam'); }}>
