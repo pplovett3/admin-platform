@@ -294,6 +294,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const modelRootRef = useRef<THREE.Object3D | null>(null);
   const boxHelperRef = useRef<THREE.Box3Helper | null>(null);
   const tcontrolsRef = useRef<TransformControls | null>(null);
+  const multiPivotRef = useRef<THREE.Object3D | null>(null);
+  const prevPivotWorldRef = useRef<THREE.Matrix4 | null>(null);
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   const ambLightRef = useRef<THREE.AmbientLight | null>(null);
   const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
@@ -376,6 +378,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [globalSel, setGlobalSel] = useState<{ start:number; end:number }|null>(null);
   const globalSelRef = useRef<{ start:number; end:number }|null>(null);
   useEffect(()=>{ globalSelRef.current = globalSel; }, [globalSel]);
+  // const [multiSel, setMultiSel] = useState<{ cam:number[]; vis:Record<string, number[]>; trs:Record<string, number[]> }>({ cam:[], vis:{}, trs:{} });
+  // const multiSelRef = useRef(multiSel);
+  // useEffect(()=>{ multiSelRef.current = multiSel; }, [multiSel]);
   type StepMarker = { id: string; time: number; name: string };
   const [steps, setSteps] = useState<StepMarker[]>([]);
   const stepsRef = useRef<StepMarker[]>([]);
@@ -627,39 +632,35 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     (tcontrols as any).visible = false;
     tcontrols.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
-      // 撤销：拖拽开始/结束各入栈一次
-      if (e.value) { pushHistory(); }
+      if (e.value) { prevPivotWorldRef.current = (multiPivotRef.current||tcontrols.object)?.matrixWorld.clone() || null; pushHistory(); }
+      else { pushHistory(); }
     });
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
       if (!obj) return;
       setPrsTick(v=>v+1);
-      const key = obj.uuid;
-      setTimeline(prev => {
-        const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
-        const list = (tracks[key] || []).slice();
-        const eps = 1e-3; let idx = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
-        if (idx < 0) {
-          if (!autoKeyRef.current) return prev;
-          // 自动落帧
-          const newKey: TransformKeyframe = {
-            time: prev.current,
-            position: [obj.position.x, obj.position.y, obj.position.z],
-            rotationEuler: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
-            scale: [obj.scale.x, obj.scale.y, obj.scale.z],
-            easing: 'easeInOut'
-          };
-          const newList = [...list, newKey].sort((a,b)=>a.time-b.time);
-          tracks[key] = newList;
-          return { ...prev, trsTracks: tracks };
-        }
-        // 写回现有帧
-        const next = { ...list[idx], position: [obj.position.x, obj.position.y, obj.position.z], rotationEuler: [obj.rotation.x, obj.rotation.y, obj.rotation.z], scale: [obj.scale.x, obj.scale.y, obj.scale.z] } as TransformKeyframe;
-        list[idx] = next; tracks[key] = list;
-        return { ...prev, trsTracks: tracks };
-      });
-      // 拖拽结束再入一次撤销快照
-      if (!(tcontrols as any).dragging) pushHistory();
+      // 如果是多选，应用相对变换到所有选中对象
+      const selIds = Array.from(selectedSet);
+      if (multiPivotRef.current && selIds.length>1 && obj === multiPivotRef.current) {
+        const pivot = multiPivotRef.current;
+        const prevMat = prevPivotWorldRef.current; if (!prevMat) return;
+        const curMat = pivot.matrixWorld.clone();
+        const delta = new THREE.Matrix4().copy(prevMat).invert().multiply(curMat);
+        selIds.forEach(id=>{
+          const o = keyToObject.current.get(id); if (!o) return;
+          const mw = o.matrixWorld.clone();
+          mw.premultiply(delta);
+          const parentInv = new THREE.Matrix4().copy((o.parent as any).matrixWorld).invert();
+          o.matrix.copy(parentInv.multiply(mw));
+          o.matrix.decompose(o.position, o.quaternion, o.scale);
+          o.updateMatrixWorld(true);
+          writeBackTRSFromObject(o);
+        });
+        prevPivotWorldRef.current = curMat.clone();
+        return;
+      }
+      // 单选
+      writeBackTRSFromObject(obj);
     });
     scene.add(tcontrols as any);
     tcontrolsRef.current = tcontrols;
@@ -670,7 +671,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     tcontrols.setRotationSnap(gizmoSnap.r ?? null as any);
     tcontrols.setScaleSnap(gizmoSnap.s ?? null as any);
 
-    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerdown', (ev: any)=>{
+      // Ctrl/Meta + 左键用于框选，禁止 OrbitControls 平移/旋转
+      if ((ev.ctrlKey || ev.metaKey) && ev.button===0) { (controls as any).enabled = false; }
+      onPointerDown(ev);
+      // 鼠标抬起后恢复
+      const onUp=()=>{ (controls as any).enabled = true; window.removeEventListener('pointerup', onUp); };
+      window.addEventListener('pointerup', onUp);
+    });
 
     // markers container
     const markers = new THREE.Group();
@@ -1012,32 +1020,56 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   }
   useEffect(()=>{ syncHighlight(); }, [selectedSet, highlightMode]);
 
-  function selectObject(obj: THREE.Object3D, addToSelection: boolean = false) {
-    const scene = sceneRef.current!;
-    if (boxHelperRef.current) { scene.remove(boxHelperRef.current); boxHelperRef.current = null; }
-    setSelectedKey(obj.uuid);
-    setSelectedSet(prev => {
-      const next = new Set(prev);
-      if (addToSelection) { if (next.has(obj.uuid)) next.delete(obj.uuid); else next.add(obj.uuid); }
-      else { next.clear(); next.add(obj.uuid); }
-      return next;
-    });
-    setSelectedCamKeyIdx(null);
-    setSelectedTrs(null);
-    setSelectedVis(null);
-    // attach transform controls
+  function attachTransformForSelection(nextSet: Set<string>) {
     const tcontrols = tcontrolsRef.current;
-    if (tcontrols) {
-      if (mode === 'anim') {
-        tcontrols.attach(obj);
+    if (!tcontrols) return;
+    if (mode === 'anim') {
+      if (nextSet.size > 1) {
+        // create or update pivot
+        let pivot = multiPivotRef.current;
+        if (!pivot) { pivot = new THREE.Object3D(); (pivot as any).name = 'multi_pivot'; (sceneRef.current as any)?.add(pivot); multiPivotRef.current = pivot; }
+        // compute center of selected objects' bounding boxes
+        const selObjs: THREE.Object3D[] = Array.from(nextSet).map(k=> keyToObject.current.get(k)!).filter(Boolean);
+        const box = new THREE.Box3(); const tmp = new THREE.Box3();
+        selObjs.forEach(o=>{ tmp.setFromObject(o); box.union(tmp); });
+        const center = new THREE.Vector3(); box.getCenter(center);
+        pivot.position.copy(center);
+        pivot.rotation.set(0,0,0); // keep neutral rotation by default
+        pivot.updateMatrixWorld(true);
+        tcontrols.attach(pivot as any);
+        tcontrols.setMode(gizmoMode);
+        tcontrols.setSpace(gizmoSpace as any);
+        (tcontrols as any).visible = true;
+      } else if (nextSet.size === 1) {
+        const only = keyToObject.current.get(Array.from(nextSet)[0]!)!;
+        tcontrols.attach(only);
         tcontrols.setMode(gizmoMode);
         tcontrols.setSpace(gizmoSpace as any);
         (tcontrols as any).visible = true;
       } else {
-        tcontrols.detach();
-        (tcontrols as any).visible = false;
+        tcontrols.detach(); (tcontrols as any).visible = false;
       }
+    } else {
+      tcontrols.detach(); (tcontrols as any).visible = false;
     }
+  }
+
+  function selectObject(obj: THREE.Object3D, addToSelection: boolean = false) {
+    const scene = sceneRef.current!;
+    if (boxHelperRef.current) { scene.remove(boxHelperRef.current); boxHelperRef.current = null; }
+    const nextSel = ((): Set<string> => {
+      setSelectedKey(obj.uuid);
+      const prev = selectedSet;
+      const next = new Set(prev);
+      if (addToSelection) { if (next.has(obj.uuid)) next.delete(obj.uuid); else next.add(obj.uuid); }
+      else { next.clear(); next.add(obj.uuid); }
+      return next;
+    })();
+    setSelectedSet(nextSel);
+    setSelectedCamKeyIdx(null);
+    setSelectedTrs(null);
+    setSelectedVis(null);
+    attachTransformForSelection(nextSel);
     // outline highlight
     syncHighlight();
     setPrsTick(v=>v+1);
@@ -2291,6 +2323,7 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
   return (
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4, minWidth: `${duration*pxPerSec}px` }}
       onMouseDown={(e)=>{ if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; e.stopPropagation(); onActivate?.(); const start = toTime(e.clientX); onSelectionChange?.({ start, end: start }); const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); }}
+      onDoubleClick={(e)=>{ e.stopPropagation(); onActivate?.(); /* 预留：双击快速创建关键帧 */ }}
     >
       {selection && (
         <div title={`选择: ${Math.min(selection.start, selection.end).toFixed(2)}s - ${Math.max(selection.start, selection.end).toFixed(2)}s`}
