@@ -349,6 +349,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   } | null>(null);
   const [stretchFactor, setStretchFactor] = useState<number>(1);
   const [pxPerSec, setPxPerSec] = useState<number>(80);
+  type StepMarker = { id: string; time: number; name: string };
+  const [steps, setSteps] = useState<StepMarker[]>([]);
+  const stepsRef = useRef<StepMarker[]>([]);
+  useEffect(()=>{ stepsRef.current = steps; }, [steps]);
   const tracksScrollRef = useRef<HTMLDivElement | null>(null);
   const innerScrollRef = useRef<HTMLDivElement | null>(null);
   const rulerScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1644,7 +1648,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const colRight = showRight ? '320px' : '0px';
   const isTimelineCollapsed = mode !== 'anim';
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease', userSelect: 'none' }}
+      onMouseDown={(e)=>{
+        const target = e.target as HTMLElement;
+        const tag = target.tagName.toLowerCase();
+        const editable = target.isContentEditable || ['input','textarea'].includes(tag);
+        if (!editable) { (document.activeElement as HTMLElement | null)?.blur?.(); }
+      }}
+    >
       <Card title="模型与结构树" bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
         <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
@@ -1723,6 +1734,20 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           <Tooltip title="隔离所选"><Button size="small" icon={<IconIsolate />} onClick={onIsolateSelected} disabled={!selectedKey} /></Tooltip>
           <Tooltip title="显示全部"><Button size="small" icon={<IconShowAll />} onClick={onShowAll} /></Tooltip>
         </div>
+        {/* 播放控制组 */}
+        <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)', bottom: 8, zIndex: 5, background:'rgba(15,23,42,0.7)', backdropFilter:'blur(6px)', padding:8, borderRadius:8, display:'flex', alignItems:'center', gap:8, boxShadow:'0 2px 8px rgba(0,0,0,0.25)' }}>
+          <Space>
+            <Button size="small" onClick={()=>{ setTimeline(v=>({ ...v, current: 0, playing: false })); applyTimelineAt(0); }}>复位</Button>
+            <Button size="small" onClick={onTogglePlay}>{timeline.playing ? '暂停' : '播放'}</Button>
+            <Button size="small" onClick={()=>{ // 上一步
+              if (steps.length===0) return; const t = timeline.current; const prev = [...steps].filter(s=>s.time < t).sort((a,b)=>a.time-b.time).pop(); if (!prev) { setTimeline(v=>({ ...v, current: 0, playing:false })); applyTimelineAt(0); return; } setTimeline(v=>({ ...v, current: prev.time, playing:false })); applyTimelineAt(prev.time);
+            }}>上一步</Button>
+            <Button size="small" onClick={()=>{ // 下一步
+              if (steps.length===0) return; const t = timeline.current; const next = [...steps].filter(s=>s.time > t).sort((a,b)=>a.time-b.time)[0]; if (!next) { setTimeline(v=>({ ...v, current: v.duration, playing:false })); applyTimelineAt(timeline.duration); return; } setTimeline(v=>({ ...v, current: next.time, playing:false })); applyTimelineAt(next.time);
+            }}>下一步</Button>
+            <span style={{ color:'#94a3b8' }}>当前步骤：{(()=>{ if (steps.length===0) return '无'; const t=timeline.current; let idx=-1; for(let i=0;i<steps.length;i++){ if (steps[i].time<=t) idx=i; } return idx>=0 ? `${idx+1}. ${steps[idx].name}` : '未到步骤'; })()}</span>
+          </Space>
+        </div>
         <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }} />
       </Card>
       <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
@@ -1796,9 +1821,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           />
           <Flex justify="space-between" align="center" wrap style={{ flex: '0 0 auto' }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('.track-area')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
             <Space>
-              <Button onClick={onTogglePlay}>{timeline.playing ? '暂停' : '播放'}</Button>
-              <Upload {...importTimeline}><Button>导入</Button></Upload>
-              <Button onClick={exportTimeline}>导出</Button>
+              {/* 删除：播放/导入/导出，转移到三维视窗底部控件 */}
             </Space>
             <Space>
               <span style={{ color: '#94a3b8' }}>动画</span>
@@ -1826,11 +1849,22 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <InputNumber min={0} max={timeline.duration} step={0.01} value={Number(timeline.current.toFixed(2))} onChange={(v)=> onScrub(Number(v||0))} />
             </Flex>
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
-              <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
+              <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden', position:'relative' }}
                 onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
                 onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
                 <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
+                {/* 步骤气泡标记 */}
+                <div style={{ position:'absolute', left:0, right:0, top: -22, height: 20, pointerEvents:'none' }}>
+                  {steps.map((s, i)=> (
+                    <div key={s.id}
+                      title={`${i+1}. ${s.name}`}
+                      onClick={(e)=>{ e.stopPropagation(); const act = window.prompt('编辑步骤名称，留空则删除', s.name||`步骤${i+1}`); if (act==null) return; if (act==='') setSteps(prev=>prev.filter(x=>x.id!==s.id)); else setSteps(prev=>prev.map(x=>x.id===s.id?{...x,name:act}:x)); }}
+                      style={{ position:'absolute', left: `${s.time*pxPerSec}px`, transform:'translateX(-50%)', top: 0, background:'#0ea5b7', color:'#fff', borderRadius: 10, padding:'0 8px', fontSize:12, lineHeight:'20px', pointerEvents:'auto', boxShadow:'0 2px 4px rgba(0,0,0,0.25)' }}>
+                      {i+1}. {s.name||`步骤${i+1}`}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
             {/* spacer reserved for future timeline zoom bar */}
@@ -1838,6 +1872,15 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           <div className="track-area" style={{ marginTop: 8, flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', paddingRight: 8 }} onMouseDown={(e)=>{ if ((e.target as HTMLElement).closest('[data-keyframe]')) return; (window as any).__selectedKeyId = undefined; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis(null); }}>
             {/* 固定不滚动的操作按钮区域 */}
             <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                <strong style={{ width: 80 }}>步骤</strong>
+                <Button size="small" onClick={()=>{
+                  const t = timeline.current;
+                  const name = window.prompt('步骤名称', `步骤${steps.length+1}`) || `步骤${steps.length+1}`;
+                  const newStep: StepMarker = { id: generateUuid(), time: Math.max(0, Math.min(timeline.duration, t)), name };
+                  setSteps(prev=>[...prev, newStep].sort((a,b)=>a.time-b.time));
+                }}>添加步骤</Button>
+              </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <strong style={{ width: 80 }}>相机</strong>
                 <Button size="small" onClick={addCameraKeyframe}>添加关键帧</Button>
