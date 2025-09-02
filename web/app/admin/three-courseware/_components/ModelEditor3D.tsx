@@ -308,6 +308,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
   const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set());
+  const selectedSetRef = useRef<Set<string>>(new Set());
+  useEffect(() => { selectedSetRef.current = selectedSet; }, [selectedSet]);
   const [treeFilter, setTreeFilter] = useState<string>('');
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -491,15 +493,47 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     });
   };
 
+  // 全局选择处理函数
+  const handleGlobalSelectionStart = (startTime: number, e: React.MouseEvent) => {
+    console.log('Global selection started from track'); // Debug
+    setGlobalSel({ start: startTime, end: startTime });
+    
+    const scrollContainer = tracksScrollRef.current!;
+    const rect = scrollContainer.getBoundingClientRect();
+    const scrollLeft = scrollContainer.scrollLeft || 0;
+    const toTime = (clientX: number) => {
+      const x = Math.max(0, clientX - rect.left + scrollLeft);
+      return Math.max(0, Math.min(timeline.duration, x / Math.max(1, pxPerSec)));
+    };
+    
+    const onMove = (ev: MouseEvent) => {
+      setGlobalSel(prev => prev ? { ...prev, end: toTime(ev.clientX) } : null);
+    };
+    const onUp = () => {
+      console.log('Global selection ended from track'); // Debug
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   // 键盘事件处理
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      console.log('Key pressed:', e.key, 'Ctrl:', e.ctrlKey, 'Meta:', e.metaKey, 'Shift:', e.shiftKey); // Debug
+      
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        console.log('Ignoring keydown in input field'); // Debug
+        return;
+      }
       
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        console.log('Delete key pressed'); // Debug
         deleteSelectedKeyframes();
       } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
+        console.log('Undo/Redo key pressed', e.shiftKey ? 'redo' : 'undo'); // Debug
         if (e.shiftKey) redo(); else undo();
       }
     };
@@ -758,15 +792,20 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     (tcontrols as any).visible = false;
     tcontrols.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
-      if (e.value) { prevPivotWorldRef.current = (multiPivotRef.current||tcontrols.object)?.matrixWorld.clone() || null; pushHistory(); }
-      else { pushHistory(); }
+      if (e.value) { 
+        prevPivotWorldRef.current = (multiPivotRef.current||tcontrols.object)?.matrixWorld.clone() || null; 
+        pushHistory(); 
+      }
     });
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
       if (!obj) return;
       setPrsTick(v=>v+1);
+      
+      // 获取当前最新的选中集合
+      const selIds = Array.from(selectedSetRef.current);
+      
       // 如果是多选，应用相对变换到所有选中对象
-      const selIds = Array.from(selectedSet);
       if (multiPivotRef.current && selIds.length>1 && obj === multiPivotRef.current) {
         const pivot = multiPivotRef.current;
         const prevMat = prevPivotWorldRef.current; if (!prevMat) return;
@@ -1654,7 +1693,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         return i >= 0 ? i : -1;
       })();
       if (updateIndex < 0 || !list[updateIndex]) {
-        if (!autoKey) return prev;
+        if (!autoKeyRef.current) return prev;
         // 自动关键帧：若无当前帧，新增一帧
         const nextKey: TransformKeyframe = {
           time: prev.current,
@@ -1803,18 +1842,28 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     redoStack.current = [];
   };
   const undo = () => {
+    console.log('Undo called, stack size:', undoStack.current.length); // Debug
     const last = undoStack.current.pop();
-    if (!last) return;
+    if (!last) {
+      console.log('No undo history available'); // Debug
+      return;
+    }
     redoStack.current.push({ timeline: JSON.parse(JSON.stringify(timelineRef.current)) });
     setTimeline(last.timeline);
     applyTimelineAt(last.timeline.current);
+    console.log('Undo applied'); // Debug
   };
   const redo = () => {
+    console.log('Redo called, stack size:', redoStack.current.length); // Debug
     const last = redoStack.current.pop();
-    if (!last) return;
+    if (!last) {
+      console.log('No redo history available'); // Debug
+      return;
+    }
     undoStack.current.push({ timeline: JSON.parse(JSON.stringify(timelineRef.current)) });
     setTimeline(last.timeline);
     applyTimelineAt(last.timeline.current);
+    console.log('Redo applied'); // Debug
   };
 
   function buildPath(object: THREE.Object3D): string {
@@ -2293,31 +2342,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               </div>
               
               {/* 右侧可滚动轨道列 - 确保有滚动条显示 */}
-              <div style={{ flex: 1, overflow: 'hidden' }}>
+              <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
                 <div ref={tracksScrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', width: '100%' }} onScroll={(e)=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}>
-                  <div style={{ minWidth: `${pxPerSec*timeline.duration}px`, position: 'relative' }}
-                    onMouseDown={(e)=>{
-                      if (e.target !== e.currentTarget) return;
-                      const el = e.currentTarget;
-                      const rect = el.getBoundingClientRect();
-                      const scrollLeft = tracksScrollRef.current?.scrollLeft || 0;
-                      const toTime = (clientX: number) => {
-                        const x = Math.max(0, clientX - rect.left + scrollLeft);
-                        return Math.max(0, Math.min(timeline.duration, x / Math.max(1, pxPerSec)));
-                      };
-                      const startTime = toTime(e.clientX);
-                      setGlobalSel({ start: startTime, end: startTime });
-                      const onMove = (ev: MouseEvent) => {
-                        setGlobalSel(prev => prev ? { ...prev, end: toTime(ev.clientX) } : null);
-                      };
-                      const onUp = () => {
-                        window.removeEventListener('mousemove', onMove);
-                        window.removeEventListener('mouseup', onUp);
-                      };
-                      window.addEventListener('mousemove', onMove);
-                      window.addEventListener('mouseup', onUp);
-                    }}
-                  >
+                  <div style={{ minWidth: `${pxPerSec*timeline.duration}px`, position: 'relative' }}>
+
                     {/* 全局选择区域显示 */}
                     {globalSel && (
                       <div style={{
@@ -2329,7 +2357,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                         background: 'rgba(96,165,250,0.2)',
                         border: '1px solid rgba(59,130,246,0.6)',
                         pointerEvents: 'none',
-                        zIndex: 10
+                        zIndex: 15
                       }} />
                     )}
                     <Flex vertical gap={8}>
@@ -2347,6 +2375,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                           onActivate={()=> setActiveTrackId('cam') }
                           onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
                           onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); setActiveTrackId('cam'); }}
+                          onGlobalSelectionStart={handleGlobalSelectionStart}
                         />
                       </div>
                       
@@ -2365,6 +2394,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                             onActivate={()=> setActiveTrackId(`vis:${objKey}`)}
                             onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
                             onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`vis:${objKey}`); }}
+                            onGlobalSelectionStart={handleGlobalSelectionStart}
                           />
                         </div>
                       ))}
@@ -2384,6 +2414,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                             onActivate={()=> setActiveTrackId(`trs:${objKey}`)}
                             onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
                             onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}
+                            onGlobalSelectionStart={handleGlobalSelectionStart}
                           />
                         </div>
                       ))}
@@ -2468,7 +2499,7 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement> }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef, onGlobalSelectionStart }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement>; onGlobalSelectionStart?: (startTime: number, e: React.MouseEvent) => void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
     const el = ref.current; if (!el) return 0; 
@@ -2489,7 +2520,26 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
   };
   return (
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4, minWidth: `${duration*pxPerSec}px` }}
-      onMouseDown={(e)=>{ if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; e.stopPropagation(); onActivate?.(); const start = toTime(e.clientX); onSelectionChange?.({ start, end: start }); const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp); }}
+      onMouseDown={(e)=>{ 
+        if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; 
+        e.stopPropagation(); 
+        onActivate?.(); 
+        
+        // 检查是否需要启动全局选择
+        if (onGlobalSelectionStart && e.shiftKey) {
+          const startTime = toTime(e.clientX);
+          onGlobalSelectionStart(startTime, e);
+          return;
+        }
+        
+        // 本地轨道选择
+        const start = toTime(e.clientX); 
+        onSelectionChange?.({ start, end: start }); 
+        const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; 
+        const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; 
+        window.addEventListener('mousemove', onMove); 
+        window.addEventListener('mouseup', onUp); 
+      }}
       onDoubleClick={(e)=>{ e.stopPropagation(); onActivate?.(); /* 预留：双击快速创建关键帧 */ }}
     >
       {selection && (
