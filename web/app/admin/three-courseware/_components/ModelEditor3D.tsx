@@ -486,23 +486,39 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   };
 
   const moveSelectedKeyframes = (deltaTime: number) => {
-    const sel = collectSelectedKeyframes();
-    if (sel.cam.length === 0 && Object.keys(sel.vis).length === 0 && Object.keys(sel.trs).length === 0) return;
+    if (selectedKeyframes.length === 0) return;
     
     pushHistory();
     setTimeline(prev => {
       const newTimeline = { ...prev };
       
+      // 按类型分组移动
+      const toMoveCam: number[] = [];
+      const toMoveVis: Record<string, number[]> = {};
+      const toMoveTrs: Record<string, number[]> = {};
+      
+      selectedKeyframes.forEach(kf => {
+        if (kf.trackType === 'cam') {
+          toMoveCam.push(kf.index);
+        } else if (kf.trackType === 'vis') {
+          if (!toMoveVis[kf.trackId]) toMoveVis[kf.trackId] = [];
+          toMoveVis[kf.trackId].push(kf.index);
+        } else if (kf.trackType === 'trs') {
+          if (!toMoveTrs[kf.trackId]) toMoveTrs[kf.trackId] = [];
+          toMoveTrs[kf.trackId].push(kf.index);
+        }
+      });
+      
       // 移动相机关键帧
-      if (sel.cam.length > 0) {
+      if (toMoveCam.length > 0) {
         newTimeline.cameraKeys = prev.cameraKeys.map((k, i) => 
-          sel.cam.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
+          toMoveCam.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
         );
       }
       
       // 移动可见性关键帧
       const newVisTracks = { ...prev.visTracks };
-      Object.entries(sel.vis).forEach(([objKey, indices]) => {
+      Object.entries(toMoveVis).forEach(([objKey, indices]) => {
         if (newVisTracks[objKey]) {
           newVisTracks[objKey] = newVisTracks[objKey].map((k, i) =>
             indices.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
@@ -513,7 +529,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       
       // 移动变换关键帧
       const newTrsTracks = { ...prev.trsTracks };
-      Object.entries(sel.trs).forEach(([objKey, indices]) => {
+      Object.entries(toMoveTrs).forEach(([objKey, indices]) => {
         if (newTrsTracks[objKey]) {
           newTrsTracks[objKey] = newTrsTracks[objKey].map((k, i) =>
             indices.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
@@ -540,7 +556,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     };
     
     const onMove = (ev: MouseEvent) => {
-      setGlobalSel(prev => prev ? { ...prev, end: toTime(ev.clientX) } : null);
+      setGlobalSel(prev => {
+        if (!prev) return null;
+        const newRange = { ...prev, end: toTime(ev.clientX) };
+        // 实时更新选中的关键帧
+        collectAndSelectKeyframesInRange(newRange);
+        return newRange;
+      });
     };
     const onUp = () => {
       console.log('Global selection ended from track'); // Debug
@@ -2456,6 +2478,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                           trackType="cam"
                           selectedKeyframes={selectedKeyframes}
                           setSelectedKeyframes={setSelectedKeyframes}
+                          moveSelectedKeyframes={moveSelectedKeyframes}
                         />
                       </div>
                       
@@ -2478,6 +2501,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                             trackType="vis"
                             selectedKeyframes={selectedKeyframes}
                             setSelectedKeyframes={setSelectedKeyframes}
+                            moveSelectedKeyframes={moveSelectedKeyframes}
                           />
                         </div>
                       ))}
@@ -2501,6 +2525,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                             trackType="trs"
                             selectedKeyframes={selectedKeyframes}
                             setSelectedKeyframes={setSelectedKeyframes}
+                            moveSelectedKeyframes={moveSelectedKeyframes}
                           />
                         </div>
                       ))}
@@ -2585,7 +2610,7 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, trackType, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef, onGlobalSelectionStart, selectedKeyframes, setSelectedKeyframes }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; trackType: 'cam' | 'vis' | 'trs'; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement>; onGlobalSelectionStart?: (startTime: number, e: React.MouseEvent) => void; selectedKeyframes?: SelectedKeyframe[]; setSelectedKeyframes?: (kfs: SelectedKeyframe[]) => void }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, trackType, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef, onGlobalSelectionStart, selectedKeyframes, setSelectedKeyframes, moveSelectedKeyframes }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; trackType: 'cam' | 'vis' | 'trs'; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement>; onGlobalSelectionStart?: (startTime: number, e: React.MouseEvent) => void; selectedKeyframes?: SelectedKeyframe[]; setSelectedKeyframes?: (kfs: SelectedKeyframe[]) => void; moveSelectedKeyframes?: (deltaTime: number) => void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
     const el = ref.current; if (!el) return 0; 
@@ -2596,13 +2621,36 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
   };
   const onDown = (e: React.MouseEvent, idx: number) => {
     e.stopPropagation();
-    (window as any).__selectedKeyId = `${trackId}:${idx}`;
-    onActivate?.();
-    onSelectKey?.(idx);
-    const onMove = (ev: MouseEvent) => { onChangeKeyTime(idx, Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
-    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    
+    // 检查当前关键帧是否在多选中
+    const isCurrentInMultiSelection = selectedKeyframes?.some(kf => kf.trackType === trackType && kf.trackId === trackId && kf.index === idx);
+    
+    if (isCurrentInMultiSelection && selectedKeyframes && selectedKeyframes.length > 1 && moveSelectedKeyframes) {
+      // 拖拽多选关键帧
+      const initialTime = keys[idx];
+      const onMove = (ev: MouseEvent) => {
+        const newTime = Math.max(0, Math.min(duration, toTime(ev.clientX)));
+        const deltaTime = newTime - initialTime;
+        
+        // 使用统一的批量移动函数
+        moveSelectedKeyframes(deltaTime);
+      };
+      const onUp = () => { 
+        window.removeEventListener('mousemove', onMove); 
+        window.removeEventListener('mouseup', onUp); 
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    } else {
+      // 单个关键帧拖拽（原有逻辑）
+      (window as any).__selectedKeyId = `${trackId}:${idx}`;
+      onActivate?.();
+      onSelectKey?.(idx);
+      const onMove = (ev: MouseEvent) => { onChangeKeyTime(idx, Math.max(0, Math.min(duration, toTime(ev.clientX)))); };
+      const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    }
   };
   return (
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4, minWidth: `${duration*pxPerSec}px` }}
@@ -2628,7 +2676,12 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
                         const start = toTime(e.clientX); 
                         onSelectionChange?.({ start, end: start }); 
                         const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; 
-                        const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; 
+                        const onUp = ()=>{ 
+                          window.removeEventListener('mousemove', onMove); 
+                          window.removeEventListener('mouseup', onUp); 
+                          // 鼠标抬起后隐藏单轨道选择框
+                          onSelectionChange?.(null);
+                        }; 
                         window.addEventListener('mousemove', onMove); 
                         window.addEventListener('mouseup', onUp); 
                       }}
@@ -2639,8 +2692,19 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
           style={{ position: 'absolute', top: 2, bottom: 2, left: `${Math.min(selection.start, selection.end)*pxPerSec}px`, width: `${Math.abs(selection.end - selection.start)*pxPerSec}px`, background: 'rgba(96,165,250,0.25)', border: '1px solid rgba(59,130,246,0.8)', pointerEvents: 'none' }} />
       )}
       {keys.map((t, idx) => {
-        const isSelected = selectedKeyframes?.some(kf => kf.trackType === trackType && kf.trackId === trackId && kf.index === idx);
+        const isMultiSelected = selectedKeyframes?.some(kf => kf.trackType === trackType && kf.trackId === trackId && kf.index === idx);
+        const isSingleSelected = (window as any).__selectedKeyId === `${trackId}:${idx}`;
         const isInRange = selection && t >= Math.min(selection.start, selection.end) && t <= Math.max(selection.start, selection.end);
+        
+        let boxShadow = 'none';
+        if (isMultiSelected) {
+          boxShadow = '0 0 0 2px #ff6b6b'; // 多选：红色
+        } else if (isSingleSelected) {
+          boxShadow = '0 0 0 2px #fff'; // 单选：白色
+        } else if (isInRange) {
+          boxShadow = '0 0 0 2px rgba(147,197,253,0.9)'; // 范围选择：蓝色
+        }
+        
         return (
           <div key={idx} data-keyframe title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
             style={{ 
@@ -2653,8 +2717,8 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
               borderRadius: 3, 
               background: color, 
               cursor: 'ew-resize', 
-              boxShadow: isSelected ? '0 0 0 2px #ff6b6b' : (isInRange ? '0 0 0 2px rgba(147,197,253,0.9)' : 'none'),
-              zIndex: isSelected ? 10 : 1
+              boxShadow,
+              zIndex: (isMultiSelected || isSingleSelected) ? 10 : 1
             }} 
           />
         );
