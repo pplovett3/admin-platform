@@ -262,6 +262,8 @@ type TransformKeyframe = {
   easing?: 'linear' | 'easeInOut';
 };
 
+type SelectedKeyframe = { trackType: 'cam' | 'vis' | 'trs', trackId: string, index: number };
+
 function generateUuid(): string {
   try {
     if (typeof globalThis !== 'undefined' && (globalThis as any).crypto?.randomUUID) {
@@ -381,6 +383,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const globalSelRef = useRef<{ start:number; end:number }|null>(null);
   useEffect(()=>{ globalSelRef.current = globalSel; }, [globalSel]);
 
+  // 统一的关键帧选择状态
+  const [selectedKeyframes, setSelectedKeyframes] = useState<SelectedKeyframe[]>([]);
+  const selectedKeyframesRef = useRef<SelectedKeyframe[]>([]);
+  useEffect(() => { selectedKeyframesRef.current = selectedKeyframes; }, [selectedKeyframes]);
+
   // 跨轨道框选功能
   const collectSelectedKeyframes = () => {
     const range = globalSel;
@@ -415,32 +422,58 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   };
 
   const deleteSelectedKeyframes = () => {
-    const sel = collectSelectedKeyframes();
-    if (sel.cam.length === 0 && Object.keys(sel.vis).length === 0 && Object.keys(sel.trs).length === 0) return;
+    if (selectedKeyframes.length === 0) return;
     
     pushHistory();
     setTimeline(prev => {
       const newTimeline = { ...prev };
       
+      // 按类型分组删除
+      const toDeleteCam: number[] = [];
+      const toDeleteVis: Record<string, number[]> = {};
+      const toDeleteTrs: Record<string, number[]> = {};
+      
+      selectedKeyframes.forEach(kf => {
+        if (kf.trackType === 'cam') {
+          toDeleteCam.push(kf.index);
+        } else if (kf.trackType === 'vis') {
+          if (!toDeleteVis[kf.trackId]) toDeleteVis[kf.trackId] = [];
+          toDeleteVis[kf.trackId].push(kf.index);
+        } else if (kf.trackType === 'trs') {
+          if (!toDeleteTrs[kf.trackId]) toDeleteTrs[kf.trackId] = [];
+          toDeleteTrs[kf.trackId].push(kf.index);
+        }
+      });
+      
       // 删除相机关键帧
-      if (sel.cam.length > 0) {
-        newTimeline.cameraKeys = prev.cameraKeys.filter((_, i) => !sel.cam.includes(i));
+      if (toDeleteCam.length > 0) {
+        newTimeline.cameraKeys = prev.cameraKeys.filter((_, i) => !toDeleteCam.includes(i));
       }
       
       // 删除可见性关键帧
       const newVisTracks = { ...prev.visTracks };
-      Object.entries(sel.vis).forEach(([objKey, indices]) => {
+      Object.entries(toDeleteVis).forEach(([objKey, indices]) => {
         if (newVisTracks[objKey]) {
-          newVisTracks[objKey] = newVisTracks[objKey].filter((_, i) => !indices.includes(i));
+          const filteredKeys = newVisTracks[objKey].filter((_, i) => !indices.includes(i));
+          if (filteredKeys.length === 0) {
+            delete newVisTracks[objKey]; // 删除空轨道
+          } else {
+            newVisTracks[objKey] = filteredKeys;
+          }
         }
       });
       newTimeline.visTracks = newVisTracks;
       
       // 删除变换关键帧
       const newTrsTracks = { ...prev.trsTracks };
-      Object.entries(sel.trs).forEach(([objKey, indices]) => {
+      Object.entries(toDeleteTrs).forEach(([objKey, indices]) => {
         if (newTrsTracks[objKey]) {
-          newTrsTracks[objKey] = newTrsTracks[objKey].filter((_, i) => !indices.includes(i));
+          const filteredKeys = newTrsTracks[objKey].filter((_, i) => !indices.includes(i));
+          if (filteredKeys.length === 0) {
+            delete newTrsTracks[objKey]; // 删除空轨道
+          } else {
+            newTrsTracks[objKey] = filteredKeys;
+          }
         }
       });
       newTimeline.trsTracks = newTrsTracks;
@@ -448,8 +481,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       return newTimeline;
     });
     
+    setSelectedKeyframes([]);
     setGlobalSel(null);
-    setMultiSel({ cam: [], vis: {}, trs: {} });
   };
 
   const moveSelectedKeyframes = (deltaTime: number) => {
@@ -513,9 +546,51 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       console.log('Global selection ended from track'); // Debug
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      
+      // 选择完成后，收集范围内的关键帧
+      const range = globalSelRef.current;
+      if (range) {
+        collectAndSelectKeyframesInRange(range);
+      }
+      setGlobalSel(null); // 隐藏选择框
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  };
+
+  // 收集并选择范围内的关键帧
+  const collectAndSelectKeyframesInRange = (range: { start: number; end: number }) => {
+    const minT = Math.min(range.start, range.end);
+    const maxT = Math.max(range.start, range.end);
+    const selected: SelectedKeyframe[] = [];
+    
+    // 相机关键帧
+    timeline.cameraKeys.forEach((k, i) => {
+      if (k.time >= minT && k.time <= maxT) {
+        selected.push({ trackType: 'cam', trackId: 'cam', index: i });
+      }
+    });
+    
+    // 可见性关键帧
+    Object.entries(timeline.visTracks).forEach(([objKey, keys]) => {
+      keys.forEach((k, i) => {
+        if (k.time >= minT && k.time <= maxT) {
+          selected.push({ trackType: 'vis', trackId: objKey, index: i });
+        }
+      });
+    });
+    
+    // 变换关键帧
+    Object.entries(timeline.trsTracks).forEach(([objKey, keys]) => {
+      keys.forEach((k, i) => {
+        if (k.time >= minT && k.time <= maxT) {
+          selected.push({ trackType: 'trs', trackId: objKey, index: i });
+        }
+      });
+    });
+    
+    setSelectedKeyframes(selected);
+    console.log('Selected keyframes:', selected); // Debug
   };
 
   // 键盘事件处理
@@ -529,7 +604,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       }
       
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        console.log('Delete key pressed'); // Debug
+        console.log('Delete key pressed, selected keyframes:', selectedKeyframes.length); // Debug
         deleteSelectedKeyframes();
       } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -804,9 +879,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       
       // 获取当前最新的选中集合
       const selIds = Array.from(selectedSetRef.current);
+      console.log('ObjectChange - selIds:', selIds, 'obj:', obj?.name, 'multiPivot:', multiPivotRef.current?.name); // Debug
       
       // 如果是多选，应用相对变换到所有选中对象
       if (multiPivotRef.current && selIds.length>1 && obj === multiPivotRef.current) {
+        console.log('Applying multi-object transform'); // Debug
         const pivot = multiPivotRef.current;
         const prevMat = prevPivotWorldRef.current; if (!prevMat) return;
         const curMat = pivot.matrixWorld.clone();
@@ -2376,6 +2453,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                           onChangeKeyTime={(idx, t)=> { (window as any).__selectedKeyId = `cam:${idx}`; setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); updateCameraKeyTime(idx, t); }}
                           onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `cam:${idx}`; setMode('anim'); setSelectedTrs(null); setSelectedVis(null); setSelectedCamKeyIdx(idx); setActiveTrackId('cam'); }}
                           onGlobalSelectionStart={handleGlobalSelectionStart}
+                          trackType="cam"
+                          selectedKeyframes={selectedKeyframes}
+                          setSelectedKeyframes={setSelectedKeyframes}
                         />
                       </div>
                       
@@ -2395,6 +2475,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                             onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey===objKey) updateVisibilityKeyTime(idx, t); else { setSelectedKey(objKey); updateVisibilityKeyTime(idx, t); } }}
                             onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `vis:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedTrs(null); setSelectedVis({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`vis:${objKey}`); }}
                             onGlobalSelectionStart={handleGlobalSelectionStart}
+                            trackType="vis"
+                            selectedKeyframes={selectedKeyframes}
+                            setSelectedKeyframes={setSelectedKeyframes}
                           />
                         </div>
                       ))}
@@ -2415,6 +2498,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                             onChangeKeyTime={(idx, t)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); updateTRSKeyTime(idx, t);} }
                             onSelectKey={(idx)=>{ (window as any).__selectedKeyId = `trs:${objKey}:${idx}`; setMode('anim'); setSelectedCamKeyIdx(null); setSelectedVis(null); setSelectedTrs({ key: objKey, index: idx }); if (selectedKey!==objKey) setSelectedKey(objKey); setActiveTrackId(`trs:${objKey}`); }}
                             onGlobalSelectionStart={handleGlobalSelectionStart}
+                            trackType="trs"
+                            selectedKeyframes={selectedKeyframes}
+                            setSelectedKeyframes={setSelectedKeyframes}
                           />
                         </div>
                       ))}
@@ -2499,7 +2585,7 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
   );
 }
 
-function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef, onGlobalSelectionStart }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement>; onGlobalSelectionStart?: (startTime: number, e: React.MouseEvent) => void }) {
+function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKey, trackId, trackType, selection, onSelectionChange, onActivate, pxPerSec=80, scrollerRef, onGlobalSelectionStart, selectedKeyframes, setSelectedKeyframes }: { duration: number; keys: number[]; color: string; onChangeKeyTime: (index: number, t: number)=>void; onSelectKey?: (index: number)=>void; trackId: string; trackType: 'cam' | 'vis' | 'trs'; selection?: { start: number; end: number } | null; onSelectionChange?: (sel: { start: number; end: number } | null)=>void; onActivate?: ()=>void; pxPerSec?: number; scrollerRef?: React.RefObject<HTMLDivElement>; onGlobalSelectionStart?: (startTime: number, e: React.MouseEvent) => void; selectedKeyframes?: SelectedKeyframe[]; setSelectedKeyframes?: (kfs: SelectedKeyframe[]) => void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const toTime = (clientX: number) => {
     const el = ref.current; if (!el) return 0; 
@@ -2520,36 +2606,59 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
   };
   return (
     <div ref={ref} style={{ position: 'relative', height: 22, background: '#1f2937', border: '1px solid #334155', borderRadius: 4, minWidth: `${duration*pxPerSec}px` }}
-      onMouseDown={(e)=>{ 
-        if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; 
-        e.stopPropagation(); 
-        onActivate?.(); 
-        
-        // 检查是否需要启动全局选择
-        if (onGlobalSelectionStart && e.shiftKey) {
-          const startTime = toTime(e.clientX);
-          onGlobalSelectionStart(startTime, e);
-          return;
-        }
-        
-        // 本地轨道选择
-        const start = toTime(e.clientX); 
-        onSelectionChange?.({ start, end: start }); 
-        const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; 
-        const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; 
-        window.addEventListener('mousemove', onMove); 
-        window.addEventListener('mouseup', onUp); 
-      }}
+                            onMouseDown={(e)=>{ 
+                        if ((e.target as HTMLElement).hasAttribute('data-keyframe')) return; 
+                        e.stopPropagation(); 
+                        onActivate?.(); 
+                        
+                        // 检查是否需要启动全局选择
+                        if (onGlobalSelectionStart && e.shiftKey) {
+                          const startTime = toTime(e.clientX);
+                          onGlobalSelectionStart(startTime, e);
+                          return;
+                        }
+                        
+                        // 点击空白区域取消关键帧选择
+                        if (selectedKeyframes && selectedKeyframes.length > 0 && setSelectedKeyframes) {
+                          // 清除选择的关键帧
+                          setSelectedKeyframes([]);
+                        }
+                        
+                        // 本地轨道选择
+                        const start = toTime(e.clientX); 
+                        onSelectionChange?.({ start, end: start }); 
+                        const onMove = (ev: MouseEvent)=>{ onSelectionChange?.({ start, end: toTime(ev.clientX) }); }; 
+                        const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }; 
+                        window.addEventListener('mousemove', onMove); 
+                        window.addEventListener('mouseup', onUp); 
+                      }}
       onDoubleClick={(e)=>{ e.stopPropagation(); onActivate?.(); /* 预留：双击快速创建关键帧 */ }}
     >
       {selection && (
         <div title={`选择: ${Math.min(selection.start, selection.end).toFixed(2)}s - ${Math.max(selection.start, selection.end).toFixed(2)}s`}
           style={{ position: 'absolute', top: 2, bottom: 2, left: `${Math.min(selection.start, selection.end)*pxPerSec}px`, width: `${Math.abs(selection.end - selection.start)*pxPerSec}px`, background: 'rgba(96,165,250,0.25)', border: '1px solid rgba(59,130,246,0.8)', pointerEvents: 'none' }} />
       )}
-      {keys.map((t, idx) => (
-        <div key={idx} data-keyframe title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
-          style={{ position: 'absolute', left: `${t*pxPerSec}px`, top: 2, width: 12, height: 18, marginLeft: -6, borderRadius: 3, background: color, cursor: 'ew-resize', boxShadow: ((window as any).__selectedKeyId===`${trackId}:${idx}`) ? '0 0 0 2px #fff' : (selection && t>=Math.min(selection.start, selection.end) && t<=Math.max(selection.start, selection.end) ? '0 0 0 2px rgba(147,197,253,0.9)' : 'none') }} />
-      ))}
+      {keys.map((t, idx) => {
+        const isSelected = selectedKeyframes?.some(kf => kf.trackType === trackType && kf.trackId === trackId && kf.index === idx);
+        const isInRange = selection && t >= Math.min(selection.start, selection.end) && t <= Math.max(selection.start, selection.end);
+        return (
+          <div key={idx} data-keyframe title={`t=${t.toFixed(2)}s`} onMouseDown={(e)=>onDown(e, idx)}
+            style={{ 
+              position: 'absolute', 
+              left: `${t*pxPerSec}px`, 
+              top: 2, 
+              width: 12, 
+              height: 18, 
+              marginLeft: -6, 
+              borderRadius: 3, 
+              background: color, 
+              cursor: 'ew-resize', 
+              boxShadow: isSelected ? '0 0 0 2px #ff6b6b' : (isInRange ? '0 0 0 2px rgba(147,197,253,0.9)' : 'none'),
+              zIndex: isSelected ? 10 : 1
+            }} 
+          />
+        );
+      })}
     </div>
   );
 }
