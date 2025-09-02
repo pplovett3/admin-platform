@@ -492,49 +492,38 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     setTimeline(prev => {
       const newTimeline = { ...prev };
       
-      // 按类型分组移动
-      const toMoveCam: number[] = [];
-      const toMoveVis: Record<string, number[]> = {};
-      const toMoveTrs: Record<string, number[]> = {};
+      // 按类型分组移动，但要考虑排序可能会改变索引
+      const newCameraKeys = [...prev.cameraKeys];
+      const newVisTracks = { ...prev.visTracks };
+      const newTrsTracks = { ...prev.trsTracks };
       
       selectedKeyframes.forEach(kf => {
-        if (kf.trackType === 'cam') {
-          toMoveCam.push(kf.index);
-        } else if (kf.trackType === 'vis') {
-          if (!toMoveVis[kf.trackId]) toMoveVis[kf.trackId] = [];
-          toMoveVis[kf.trackId].push(kf.index);
-        } else if (kf.trackType === 'trs') {
-          if (!toMoveTrs[kf.trackId]) toMoveTrs[kf.trackId] = [];
-          toMoveTrs[kf.trackId].push(kf.index);
+        if (kf.trackType === 'cam' && newCameraKeys[kf.index]) {
+          newCameraKeys[kf.index] = { 
+            ...newCameraKeys[kf.index], 
+            time: Math.max(0, Math.min(prev.duration, newCameraKeys[kf.index].time + deltaTime)) 
+          };
+        } else if (kf.trackType === 'vis' && newVisTracks[kf.trackId] && newVisTracks[kf.trackId][kf.index]) {
+          newVisTracks[kf.trackId] = newVisTracks[kf.trackId].map((k, i) =>
+            i === kf.index ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
+          );
+        } else if (kf.trackType === 'trs' && newTrsTracks[kf.trackId] && newTrsTracks[kf.trackId][kf.index]) {
+          newTrsTracks[kf.trackId] = newTrsTracks[kf.trackId].map((k, i) =>
+            i === kf.index ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
+          );
         }
       });
       
-      // 移动相机关键帧
-      if (toMoveCam.length > 0) {
-        newTimeline.cameraKeys = prev.cameraKeys.map((k, i) => 
-          toMoveCam.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
-        );
-      }
+      // 对移动后的关键帧进行排序
+      newTimeline.cameraKeys = newCameraKeys.sort((a,b)=>a.time-b.time);
       
-      // 移动可见性关键帧
-      const newVisTracks = { ...prev.visTracks };
-      Object.entries(toMoveVis).forEach(([objKey, indices]) => {
-        if (newVisTracks[objKey]) {
-          newVisTracks[objKey] = newVisTracks[objKey].map((k, i) =>
-            indices.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
-          );
-        }
+      Object.keys(newVisTracks).forEach(objKey => {
+        newVisTracks[objKey] = newVisTracks[objKey].sort((a,b)=>a.time-b.time);
       });
       newTimeline.visTracks = newVisTracks;
       
-      // 移动变换关键帧
-      const newTrsTracks = { ...prev.trsTracks };
-      Object.entries(toMoveTrs).forEach(([objKey, indices]) => {
-        if (newTrsTracks[objKey]) {
-          newTrsTracks[objKey] = newTrsTracks[objKey].map((k, i) =>
-            indices.includes(i) ? { ...k, time: Math.max(0, Math.min(prev.duration, k.time + deltaTime)) } : k
-          );
-        }
+      Object.keys(newTrsTracks).forEach(objKey => {
+        newTrsTracks[objKey] = newTrsTracks[objKey].sort((a,b)=>a.time-b.time);
       });
       newTimeline.trsTracks = newTrsTracks;
       
@@ -2632,12 +2621,18 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
     if (isCurrentInMultiSelection && selectedKeyframes && selectedKeyframes.length > 1 && moveSelectedKeyframes) {
       // 拖拽多选关键帧
       const initialTime = keys[idx];
+      let lastDeltaTime = 0; // 记录上次的偏移量
+      
       const onMove = (ev: MouseEvent) => {
         const newTime = Math.max(0, Math.min(duration, toTime(ev.clientX)));
         const deltaTime = newTime - initialTime;
         
-        // 使用统一的批量移动函数
-        moveSelectedKeyframes(deltaTime);
+        // 计算本次相对于上次的增量
+        const incrementalDelta = deltaTime - lastDeltaTime;
+        lastDeltaTime = deltaTime;
+        
+        // 使用增量移动，避免累积误差
+        moveSelectedKeyframes(incrementalDelta);
       };
       const onUp = () => { 
         window.removeEventListener('mousemove', onMove); 
@@ -2670,8 +2665,8 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
                           return;
                         }
                         
-                        // 点击空白区域取消关键帧选择
-                        if (selectedKeyframes && selectedKeyframes.length > 0 && setSelectedKeyframes) {
+                        // 点击空白区域取消关键帧选择（只有当不是Shift键时才清除）
+                        if (!e.shiftKey && selectedKeyframes && selectedKeyframes.length > 0 && setSelectedKeyframes) {
                           // 清除选择的关键帧
                           setSelectedKeyframes([]);
                         }
@@ -2683,8 +2678,39 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
                         const onUp = ()=>{ 
                           window.removeEventListener('mousemove', onMove); 
                           window.removeEventListener('mouseup', onUp); 
-                          // 鼠标抬起后隐藏单轨道选择框
-                          onSelectionChange?.(null);
+                          
+                          // 获取最终选择范围内的关键帧
+                          const finalSelection = { start, end: toTime((window.event as MouseEvent)?.clientX || e.clientX) };
+                          const minT = Math.min(finalSelection.start, finalSelection.end);
+                          const maxT = Math.max(finalSelection.start, finalSelection.end);
+                          
+                          // 将范围内的关键帧添加到多选状态
+                          if (setSelectedKeyframes && Math.abs(maxT - minT) > 0.01) { // 防止点击误选
+                            const newSelectedKeyframes: SelectedKeyframe[] = [];
+                            keys.forEach((keyTime, idx) => {
+                              if (keyTime >= minT && keyTime <= maxT) {
+                                newSelectedKeyframes.push({ trackType, trackId, index: idx });
+                              }
+                            });
+                            
+                            if (newSelectedKeyframes.length > 0) {
+                              const combined = [...(selectedKeyframes || [])];
+                              newSelectedKeyframes.forEach(newKf => {
+                                const exists = combined.some(kf => 
+                                  kf.trackType === newKf.trackType && 
+                                  kf.trackId === newKf.trackId && 
+                                  kf.index === newKf.index
+                                );
+                                if (!exists) combined.push(newKf);
+                              });
+                              setSelectedKeyframes(combined);
+                            }
+                          }
+                          
+                          // 延时隐藏单轨道选择框
+                          setTimeout(() => {
+                            onSelectionChange?.(null);
+                          }, 0);
                         }; 
                         window.addEventListener('mousemove', onMove); 
                         window.addEventListener('mouseup', onUp); 
@@ -2696,7 +2722,13 @@ function DraggableMiniTrack({ duration, keys, color, onChangeKeyTime, onSelectKe
           style={{ position: 'absolute', top: 2, bottom: 2, left: `${Math.min(selection.start, selection.end)*pxPerSec}px`, width: `${Math.abs(selection.end - selection.start)*pxPerSec}px`, background: 'rgba(96,165,250,0.25)', border: '1px solid rgba(59,130,246,0.8)', pointerEvents: 'none' }} />
       )}
       {keys.map((t, idx) => {
-        const isMultiSelected = selectedKeyframes?.some(kf => kf.trackType === trackType && kf.trackId === trackId && kf.index === idx);
+        // 检查多选状态
+        const currentTrackId = trackType === 'cam' ? 'cam' : trackId;
+        const isMultiSelected = selectedKeyframes?.some(kf => 
+          kf.trackType === trackType && 
+          kf.trackId === currentTrackId && 
+          kf.index === idx
+        );
         const isSingleSelected = (window as any).__selectedKeyId === `${trackId}:${idx}`;
         const isInRange = selection && t >= Math.min(selection.start, selection.end) && t <= Math.max(selection.start, selection.end);
         
