@@ -601,7 +601,115 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     });
     
     setSelectedKeyframes(selected);
+    // 强制重新渲染所有轨道以确保高亮显示正确
+    setPrsTick(v => v + 1);
     console.log('Selected keyframes:', selected); // Debug
+  };
+
+  // 复制粘贴剪贴板（专门用于Ctrl+C/V）
+  const [keyframeClipboard, setKeyframeClipboard] = useState<{
+    keyframes: SelectedKeyframe[];
+    originalTimes: number[];
+    anchorTime: number;
+  } | null>(null);
+
+  // 复制选中的关键帧
+  const copySelectedKeyframes = () => {
+    if (selectedKeyframes.length === 0) {
+      message.warning('请先选择关键帧');
+      return;
+    }
+
+    const keyframes = [...selectedKeyframes];
+    const originalTimes: number[] = [];
+    let minTime = Infinity;
+
+    // 收集原始时间并找到最小时间作为锚点
+    keyframes.forEach(kf => {
+      let time = 0;
+      if (kf.trackType === 'cam') {
+        time = timeline.cameraKeys[kf.index]?.time || 0;
+      } else if (kf.trackType === 'vis') {
+        time = timeline.visTracks[kf.trackId]?.[kf.index]?.time || 0;
+      } else if (kf.trackType === 'trs') {
+        time = timeline.trsTracks[kf.trackId]?.[kf.index]?.time || 0;
+      }
+      originalTimes.push(time);
+      minTime = Math.min(minTime, time);
+    });
+
+    setKeyframeClipboard({
+      keyframes,
+      originalTimes,
+      anchorTime: minTime
+    });
+
+    message.success(`已复制 ${keyframes.length} 个关键帧`);
+  };
+
+  // 粘贴关键帧到当前时间
+  const pasteKeyframes = () => {
+    if (!keyframeClipboard) {
+      message.warning('剪贴板为空');
+      return;
+    }
+
+    const currentTime = timeline.current;
+    const { keyframes, originalTimes, anchorTime } = keyframeClipboard;
+    
+    pushHistory();
+    
+    setTimeline(prev => {
+      const newTimeline = { ...prev };
+      const newCameraKeys = [...prev.cameraKeys];
+      const newVisTracks = { ...prev.visTracks };
+      const newTrsTracks = { ...prev.trsTracks };
+
+      keyframes.forEach((kf, idx) => {
+        const originalTime = originalTimes[idx];
+        const relativeTime = originalTime - anchorTime;
+        const newTime = Math.max(0, Math.min(prev.duration, currentTime + relativeTime));
+
+        if (kf.trackType === 'cam') {
+          const originalKey = prev.cameraKeys[kf.index];
+          if (originalKey) {
+            const newKey = { ...originalKey, time: newTime };
+            newCameraKeys.push(newKey);
+          }
+        } else if (kf.trackType === 'vis') {
+          const originalKey = prev.visTracks[kf.trackId]?.[kf.index];
+          if (originalKey) {
+            const newKey = { ...originalKey, time: newTime };
+            if (!newVisTracks[kf.trackId]) newVisTracks[kf.trackId] = [];
+            newVisTracks[kf.trackId].push(newKey);
+          }
+        } else if (kf.trackType === 'trs') {
+          const originalKey = prev.trsTracks[kf.trackId]?.[kf.index];
+          if (originalKey) {
+            const newKey = { ...originalKey, time: newTime };
+            if (!newTrsTracks[kf.trackId]) newTrsTracks[kf.trackId] = [];
+            newTrsTracks[kf.trackId].push(newKey);
+          }
+        }
+      });
+
+      // 排序关键帧
+      newTimeline.cameraKeys = newCameraKeys.sort((a,b)=>a.time-b.time);
+      
+      Object.keys(newVisTracks).forEach(objKey => {
+        newVisTracks[objKey] = newVisTracks[objKey].sort((a,b)=>a.time-b.time);
+      });
+      newTimeline.visTracks = newVisTracks;
+      
+      Object.keys(newTrsTracks).forEach(objKey => {
+        newTrsTracks[objKey] = newTrsTracks[objKey].sort((a,b)=>a.time-b.time);
+      });
+      newTimeline.trsTracks = newTrsTracks;
+
+      return newTimeline;
+    });
+
+    message.success(`已粘贴 ${keyframes.length} 个关键帧到时间 ${currentTime.toFixed(2)}s`);
   };
 
   // 键盘事件处理
@@ -621,12 +729,20 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         e.preventDefault();
         console.log('Undo/Redo key pressed', e.shiftKey ? 'redo' : 'undo'); // Debug
         if (e.shiftKey) redo(); else undo();
+      } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        console.log('Copy key pressed'); // Debug
+        copySelectedKeyframes();
+      } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        console.log('Paste key pressed'); // Debug
+        pasteKeyframes();
       }
     };
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [globalSel]);
+  }, [selectedKeyframes, keyframeClipboard, timeline]);
   type StepMarker = { id: string; time: number; name: string };
   const [steps, setSteps] = useState<StepMarker[]>([]);
   const stepsRef = useRef<StepMarker[]>([]);
@@ -2323,12 +2439,21 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <span style={{ color: '#94a3b8' }}>激活轨道：</span>
               <span style={{ minWidth: 120, color: activeTrackId ? '#e2e8f0' : '#94a3b8' }}>{(()=>{ const t = activeTrackId; if(!t) return '未选择'; if(t==='cam') return '相机'; if(t.startsWith('vis:')){ const k=t.slice(4); return `显隐: ${keyToObject.current.get(k)?.name||k.slice(0,8)}`;} if(t.startsWith('trs:')){ const k=t.slice(4); return `TRS: ${keyToObject.current.get(k)?.name||k.slice(0,8)}`;} return t; })()}</span>
               <Divider type="vertical" />
+              <span style={{ color: '#94a3b8' }}>已选择: </span>
+              <span style={{ color: selectedKeyframes.length > 0 ? '#22d3ee' : '#94a3b8', fontWeight: selectedKeyframes.length > 0 ? 600 : 400 }}>
+                {selectedKeyframes.length} 关键帧
+              </span>
+              <Divider type="vertical" />
               <InputNumber size="small" min={0.01} step={0.01} value={stretchFactor} onChange={(v)=>setStretchFactor(Number(v||1))} addonBefore="倍率" />
               <Button size="small" onClick={applyStretch} disabled={!selection || !activeTrackId}>拉伸</Button>
               <Button size="small" onClick={copySelection} disabled={!selection || !activeTrackId}>复制</Button>
               <Button size="small" onClick={pasteAtCurrent} disabled={!activeTrackId || !clipboard}>粘贴</Button>
               <Button size="small" danger onClick={()=>{ if (bulkDeleteSelected()) { setSelection(null); } }} disabled={!selection || !activeTrackId}>删除</Button>
               <Button size="small" onClick={()=>setSelection(null)} disabled={!selection}>清选</Button>
+              <Divider type="vertical" />
+              <Button size="small" onClick={copySelectedKeyframes} disabled={selectedKeyframes.length === 0}>复制(Ctrl+C)</Button>
+              <Button size="small" onClick={pasteKeyframes} disabled={!keyframeClipboard}>粘贴(Ctrl+V)</Button>
+              {keyframeClipboard && <span style={{ color: '#94a3b8', fontSize: '12px' }}>剪贴板: {keyframeClipboard.keyframes.length}帧</span>}
             </Space>
           </Flex>
           <div style={{ marginTop: 8, flex: '0 0 auto', display: 'flex', flexDirection: 'column' }}>
