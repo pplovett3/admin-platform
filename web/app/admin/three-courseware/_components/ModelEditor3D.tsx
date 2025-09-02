@@ -1876,21 +1876,36 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               <InputNumber min={0} max={timeline.duration} step={0.01} value={Number(timeline.current.toFixed(2))} onChange={(v)=> onScrub(Number(v||0))} />
             </Flex>
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
-              <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden', position:'relative' }}
+              <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
                 onScroll={(e)=>{ if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = (e.target as HTMLDivElement).scrollLeft; }}
                 onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
-                <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
-                {/* 步骤标记（仅显示序号，悬浮显示名称，点击打开弹窗编辑/删除） */}
-                <div style={{ position:'absolute', left:0, right:0, top: -18, height: 16, pointerEvents:'none' }}>
-                  {steps.map((s, i)=> (
-                    <div key={s.id}
-                      title={`${i+1}. ${s.name||''}`}
-                      onClick={(e)=>{ e.stopPropagation(); setEditingStep(s); stepForm.setFieldsValue({ name: s.name||`步骤${i+1}` }); setStepModalOpen(true); }}
-                      style={{ position:'absolute', left: `${s.time*pxPerSec}px`, transform:'translateX(-50%)', top: 0, background:'#0ea5b7', color:'#fff', borderRadius: 8, width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, pointerEvents:'auto', boxShadow:'0 2px 4px rgba(0,0,0,0.25)' }}>
-                      {i+1}
-                    </div>
-                  ))}
+                <div style={{ position:'relative', height: 46, minWidth: `${pxPerSec*timeline.duration}px` }}>
+                  {/* ruler at bottom */}
+                  <div style={{ position:'absolute', left:0, right:0, bottom:0 }}>
+                    <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
+                  </div>
+                  {/* 步骤标记（仅显示序号，悬浮显示名称，点击或拖拽） */}
+                  <div style={{ position:'absolute', left:0, right:0, top: 4, height: 16, pointerEvents:'none' }}>
+                    {steps.map((s, i)=> (
+                      <div key={s.id}
+                        title={`${i+1}. ${s.name||''}`}
+                        onMouseDown={(e)=>{ 
+                          e.stopPropagation(); e.preventDefault();
+                          const sc = rulerScrollRef.current; if (!sc) return;
+                          let moved=false;
+                          const rect = sc.getBoundingClientRect();
+                          const toTime=(clientX:number)=>{ const x = Math.max(0, clientX - rect.left + sc.scrollLeft); return Math.max(0, Math.min(timeline.duration, x/Math.max(1, pxPerSec))); };
+                          const onMove=(ev:MouseEvent)=>{ moved=true; const t = toTime(ev.clientX); setSteps(prev=>prev.map(x=>x.id===s.id?{...x,time:t}:x).sort((a,b)=>a.time-b.time)); };
+                          const onUp=(ev:MouseEvent)=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); if (!moved) { setEditingStep(s); stepForm.setFieldsValue({ name: s.name||`步骤${i+1}` }); setStepModalOpen(true); } };
+                          window.addEventListener('mousemove', onMove);
+                          window.addEventListener('mouseup', onUp);
+                        }}
+                        style={{ position:'absolute', left: `${s.time*pxPerSec}px`, transform:'translateX(-50%)', top: 0, background:'#0ea5b7', color:'#fff', borderRadius: 8, width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, pointerEvents:'auto', boxShadow:'0 2px 4px rgba(0,0,0,0.25)', cursor:'ew-resize' }}>
+                        {i+1}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
