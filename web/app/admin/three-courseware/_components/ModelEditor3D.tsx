@@ -488,7 +488,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const moveSelectedKeyframes = (deltaTime: number) => {
     if (selectedKeyframes.length === 0) return;
     
-    pushHistory();
+    // 关键帧批量移动不进入撤销记录
     setTimeline(prev => {
       const newTimeline = { ...prev };
       
@@ -1551,7 +1551,11 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
 
   // timeline actions
   const onTogglePlay = () => setTimeline(prev => { const playing = !prev.playing; if (playing) applyTimelineAt(prev.current); return { ...prev, playing }; });
-  const onScrub = (val: number) => { pushHistory(); setTimeline(prev => ({ ...prev, current: val })); applyTimelineAt(val); };
+  const onScrub = (val: number) => { 
+    // 时间条拖动不进入撤销记录
+    setTimeline(prev => ({ ...prev, current: val })); 
+    applyTimelineAt(val); 
+  };
   const onChangeDuration = (val: number | null) => setTimeline(prev => ({ ...prev, duration: Math.max(1, Number(val||10)) }));
   const addCameraKeyframe = () => {
     pushHistory();
@@ -1737,7 +1741,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     message.success('已应用区间拉伸');
   };
   const updateCameraKeyTime = (idx: number, time: number) => setTimeline(prev => {
-    pushHistory();
+    // 关键帧时间拖拽不进入撤销记录
     const keys = prev.cameraKeys.slice();
     const k = { ...keys[idx], time: Math.max(0, Math.min(prev.duration, Number(time)||0)) };
     keys[idx] = k;
@@ -1844,7 +1848,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   };
   const updateTRSKeyTime = (idx: number, time: number) => {
     if (!selectedKey) return;
-    pushHistory();
+    // 关键帧时间拖拽不进入撤销记录
     setTimeline(prev => {
       const track = (prev.trsTracks[selectedKey] || []).slice();
       if (!track[idx]) return prev;
