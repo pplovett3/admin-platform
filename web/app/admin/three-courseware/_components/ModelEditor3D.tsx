@@ -305,6 +305,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [loading, setLoading] = useState(false);
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set());
   const [treeFilter, setTreeFilter] = useState<string>('');
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -380,6 +381,9 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [editingStep, setEditingStep] = useState<StepMarker | null>(null);
   const [stepDraftTime, setStepDraftTime] = useState<number>(0);
   const [stepForm] = Form.useForm();
+  // 重命名弹窗
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameForm] = Form.useForm();
   const tracksScrollRef = useRef<HTMLDivElement | null>(null);
   const innerScrollRef = useRef<HTMLDivElement | null>(null);
   const rulerScrollRef = useRef<HTMLDivElement | null>(null);
@@ -968,11 +972,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     const hits = raycaster.intersectObjects(meshes, true);
     if (hits.length > 0) {
       const obj = hits[0].object as THREE.Object3D;
-      selectObject(obj);
+      const add = event.ctrlKey || event.metaKey;
+      selectObject(obj, add);
       return;
     }
     // 点击空白：取消选中
     setSelectedKey(undefined);
+    setSelectedSet(new Set());
     setSelectedCamKeyIdx(null);
     setSelectedTrs(null);
     setSelectedVis(null);
@@ -982,10 +988,29 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
   }
 
-  function selectObject(obj: THREE.Object3D) {
+  function syncHighlight() {
+    const outline = outlineRef.current;
+    const objs: THREE.Object3D[] = Array.from(selectedSet).map(k=> keyToObject.current.get(k)!).filter(Boolean);
+    if (outline && highlightMode === 'outline') {
+      outline.selectedObjects = objs;
+      clearEmissiveHighlight();
+    } else {
+      if (outline) outline.selectedObjects = [];
+      clearEmissiveHighlight();
+      objs.forEach(o=> applyEmissiveHighlight(o));
+    }
+  }
+
+  function selectObject(obj: THREE.Object3D, addToSelection: boolean = false) {
     const scene = sceneRef.current!;
     if (boxHelperRef.current) { scene.remove(boxHelperRef.current); boxHelperRef.current = null; }
     setSelectedKey(obj.uuid);
+    setSelectedSet(prev => {
+      const next = new Set(prev);
+      if (addToSelection) { if (next.has(obj.uuid)) next.delete(obj.uuid); else next.add(obj.uuid); }
+      else { next.clear(); next.add(obj.uuid); }
+      return next;
+    });
     setSelectedCamKeyIdx(null);
     setSelectedTrs(null);
     setSelectedVis(null);
@@ -1003,14 +1028,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       }
     }
     // outline highlight
-    const outline = outlineRef.current;
-    if (outline && highlightMode === 'outline') {
-      outline.selectedObjects = [obj];
-      clearEmissiveHighlight();
-    } else {
-      if (outline) outline.selectedObjects = [];
-      applyEmissiveHighlight(obj);
-    }
+    syncHighlight();
     setPrsTick(v=>v+1);
   }
 
@@ -1065,11 +1083,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     controls.update();
   }
 
-  const onTreeSelect = (_keys: React.Key[], info: any) => {
+  const onTreeSelect = (keys: React.Key[], info: any) => {
     const key = info?.node?.key as string | undefined;
     if (!key) return;
+    const add = !!info?.nativeEvent?.ctrlKey || !!info?.nativeEvent?.metaKey;
     const obj = keyToObject.current.get(key);
-    if (obj) selectObject(obj);
+    if (obj) selectObject(obj, add);
   };
 
   const onFocusSelected = () => {
@@ -1705,12 +1724,43 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               className="three-tree"
               showLine={{ showLeafIcon: false }}
               blockNode
+              multiple
+              draggable
+              onDrop={(info)=>{
+                const dragKey = String(info.dragNode.key);
+                const dropKey = String(info.node.key);
+                if (dragKey===dropKey) return;
+                const dragObj = keyToObject.current.get(dragKey);
+                const dropObj = keyToObject.current.get(dropKey);
+                if (!dragObj || !dropObj) return;
+                let p: THREE.Object3D | null = dropObj as any; while (p) { if (p===dragObj) return; p = p.parent as any; }
+                const mat = dragObj.matrixWorld.clone();
+                dropObj.add(dragObj);
+                dragObj.updateMatrixWorld(true);
+                const parentInv = new THREE.Matrix4().copy(dropObj.matrixWorld).invert();
+                dragObj.matrix.copy(parentInv.multiply(mat));
+                dragObj.matrix.decompose(dragObj.position, dragObj.quaternion, dragObj.scale);
+                const root = modelRootRef.current!; const nodes: TreeNode[] = []; const map = keyToObject.current; map.clear(); const makeNode=(obj:THREE.Object3D):TreeNode=>{ const key=obj.uuid; map.set(key,obj); return { title: obj.name || obj.type || key.slice(0,8), key, children: obj.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setPrsTick(v=>v+1);
+              }}
               treeData={filterTree(treeData, treeFilter) as any}
               onSelect={onTreeSelect}
-              selectedKeys={selectedKey ? [selectedKey] : []}
+              selectedKeys={Array.from(selectedSet)}
               titleRender={(node: any) => (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr var(--icon-w)', alignItems: 'center', height: 'var(--tree-row-h)' }}>
-                  <span title={node.title} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.title}</span>
+                  <span title={node.title} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor:'context-menu' }}
+                    onContextMenu={(e)=>{ e.preventDefault(); const key=String(node.key); const obj=keyToObject.current.get(key); if(!obj) return; const action = window.prompt('输入操作: rename / group / ungroup / delete', 'rename'); if(!action) return; if(action==='rename'){ setRenameOpen(true); renameForm.setFieldsValue({ name: obj.name||'' }); (window as any).__renameKey = key; }
+                    else if(action==='group'){ // 将当前选中集合或当前节点打组
+                      const ids = selectedSet.size>0? Array.from(selectedSet) : [key]; const objs = ids.map(k=>keyToObject.current.get(k)!).filter(Boolean); if(objs.length===0) return; let parent = objs[0].parent as THREE.Object3D; // 简化：以第一个的父为公共父
+                      const grp = new THREE.Group(); grp.name = `组${Math.floor(Math.random()*1000)}`; parent.add(grp);
+                      grp.updateMatrixWorld(true);
+                      objs.forEach(o=>{ const mat=o.matrixWorld.clone(); grp.add(o); o.updateMatrixWorld(true); const inv=new THREE.Matrix4().copy(grp.matrixWorld).invert(); o.matrix.copy(inv.multiply(mat)); o.matrix.decompose(o.position,o.quaternion,o.scale); });
+                      // 重建树
+                      const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setSelectedSet(new Set([grp.uuid])); setSelectedKey(grp.uuid); syncHighlight();
+                    }
+                    else if(action==='ungroup'){ const o=keyToObject.current.get(key)!; if(!(o as any).isGroup) return; const parent=o.parent as THREE.Object3D; const mat=o.matrixWorld.clone(); const kids=[...o.children]; kids.forEach(k=>{ const km=k.matrixWorld.clone(); parent.add(k as any); (k as any).updateMatrixWorld(true); const inv=new THREE.Matrix4().copy(parent.matrixWorld).invert(); (k as any).matrix.copy(inv.multiply(km)); (k as any).matrix.decompose((k as any).position,(k as any).quaternion,(k as any).scale); }); parent.remove(o);
+                      const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o2:THREE.Object3D):TreeNode=>{ const k=o2.uuid; map.set(k,o2); return { title:o2.name||o2.type||k.slice(0,8), key:k, children:o2.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setSelectedSet(new Set(kids.map(k=>k.uuid))); setSelectedKey(kids[0]?.uuid); syncHighlight(); }
+                    else if(action==='delete'){ const o=keyToObject.current.get(key)!; if(!o || o===modelRootRef.current) return; const parent=o.parent as THREE.Object3D; parent.remove(o); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o2:THREE.Object3D):TreeNode=>{ const k=o2.uuid; map.set(k,o2); return { title:o2.name||o2.type||k.slice(0,8), key:k, children:o2.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setSelectedSet(new Set()); setSelectedKey(undefined); syncHighlight(); }
+                  }}>{node.title}</span>
                   <Button size="small" type="text" style={{ width: 'var(--icon-w)', textAlign: 'center' }} onClick={(e)=>{ e.stopPropagation(); onToggleHide(String(node.key), !hiddenKeys.has(String(node.key))); }} icon={hiddenKeys.has(String(node.key)) ? <EyeInvisibleOutlined /> : <EyeOutlined />} />
                 </div>
               )}
@@ -2039,6 +2089,13 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
       <SettingsModal />
+      <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
+        <Form layout="vertical" form={renameForm} preserve={false}>
+          <Form.Item name="name" label="名称" rules={[{ required:true, message:'请输入名称' }]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
       <StepEditor
         open={stepModalOpen}
         value={editingStep ? { id: editingStep.id, name: editingStep.name } : null}
