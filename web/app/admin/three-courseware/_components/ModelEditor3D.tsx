@@ -57,6 +57,29 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
   );
 }
 
+// 步骤编辑弹窗
+function StepEditor({ open, value, defaultTime, onCancel, onSave, onDelete }: { open: boolean; value: { id: string; name: string } | null; defaultTime?: number; onCancel: ()=>void; onSave: (name: string)=>void; onDelete: ()=>void }) {
+  const [form] = Form.useForm();
+  useEffect(()=>{
+    if (open) form.setFieldsValue({ name: value?.name || '' });
+  }, [open, value, form]);
+  return (
+    <Modal title={value? '编辑步骤' : '添加步骤'} open={open} onCancel={onCancel} onOk={async ()=>{ const v = await form.validateFields(); onSave(String(v.name||'')); }}
+      footer={null} destroyOnClose={true} maskClosable>
+      <Form layout="vertical" form={form} preserve={false}>
+        <Form.Item name="name" label="步骤名称" rules={[{ required: true, message: '请输入步骤名称' }]}>
+          <Input placeholder="例如：拧紧螺栓" />
+        </Form.Item>
+        <Space style={{ width: '100%', justifyContent:'flex-end' }}>
+          {value && <Button danger onClick={onDelete}>删除</Button>}
+          <Button onClick={onCancel}>取消</Button>
+          <Button type="primary" onClick={async ()=>{ const v = await form.validateFields(); onSave(String(v.name||'')); }}>确定</Button>
+        </Space>
+      </Form>
+    </Modal>
+  );
+}
+
 // --- iOS 扁平风格图标（替换默认图标，交互不变） ---
 function IconViewLeft(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -353,6 +376,10 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [steps, setSteps] = useState<StepMarker[]>([]);
   const stepsRef = useRef<StepMarker[]>([]);
   useEffect(()=>{ stepsRef.current = steps; }, [steps]);
+  const [stepModalOpen, setStepModalOpen] = useState(false);
+  const [editingStep, setEditingStep] = useState<StepMarker | null>(null);
+  const [stepDraftTime, setStepDraftTime] = useState<number>(0);
+  const [stepForm] = Form.useForm();
   const tracksScrollRef = useRef<HTMLDivElement | null>(null);
   const innerScrollRef = useRef<HTMLDivElement | null>(null);
   const rulerScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1854,14 +1881,14 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
                 onWheel={(e)=>{ if (e.ctrlKey) return; e.preventDefault(); const el=e.currentTarget as HTMLDivElement; const rect = el.getBoundingClientRect(); const mouseX = e.clientX - rect.left + el.scrollLeft; const timeAtMouse = mouseX / Math.max(1, pxPerSec); const factor = e.deltaY>0 ? 0.9 : 1.1; const next = Math.max(20, Math.min(400, pxPerSec*factor)); const centerPxBefore = timeAtMouse * pxPerSec; const centerPxAfter = timeAtMouse * next; const scrollLeft = el.scrollLeft + (centerPxAfter - centerPxBefore); setPxPerSec(next); requestAnimationFrame(()=>{ if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft; if (tracksScrollRef.current) tracksScrollRef.current.scrollLeft = scrollLeft; }); }}
               >
                 <TimeRuler duration={timeline.duration} pxPerSec={pxPerSec} current={timeline.current} onScrub={onScrub} />
-                {/* 步骤气泡标记 */}
-                <div style={{ position:'absolute', left:0, right:0, top: -22, height: 20, pointerEvents:'none' }}>
+                {/* 步骤标记（仅显示序号，悬浮显示名称，点击打开弹窗编辑/删除） */}
+                <div style={{ position:'absolute', left:0, right:0, top: -18, height: 16, pointerEvents:'none' }}>
                   {steps.map((s, i)=> (
                     <div key={s.id}
-                      title={`${i+1}. ${s.name}`}
-                      onClick={(e)=>{ e.stopPropagation(); const act = window.prompt('编辑步骤名称，留空则删除', s.name||`步骤${i+1}`); if (act==null) return; if (act==='') setSteps(prev=>prev.filter(x=>x.id!==s.id)); else setSteps(prev=>prev.map(x=>x.id===s.id?{...x,name:act}:x)); }}
-                      style={{ position:'absolute', left: `${s.time*pxPerSec}px`, transform:'translateX(-50%)', top: 0, background:'#0ea5b7', color:'#fff', borderRadius: 10, padding:'0 8px', fontSize:12, lineHeight:'20px', pointerEvents:'auto', boxShadow:'0 2px 4px rgba(0,0,0,0.25)' }}>
-                      {i+1}. {s.name||`步骤${i+1}`}
+                      title={`${i+1}. ${s.name||''}`}
+                      onClick={(e)=>{ e.stopPropagation(); setEditingStep(s); stepForm.setFieldsValue({ name: s.name||`步骤${i+1}` }); setStepModalOpen(true); }}
+                      style={{ position:'absolute', left: `${s.time*pxPerSec}px`, transform:'translateX(-50%)', top: 0, background:'#0ea5b7', color:'#fff', borderRadius: 8, width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, pointerEvents:'auto', boxShadow:'0 2px 4px rgba(0,0,0,0.25)' }}>
+                      {i+1}
                     </div>
                   ))}
                 </div>
@@ -1874,12 +1901,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <strong style={{ width: 80 }}>步骤</strong>
-                <Button size="small" onClick={()=>{
-                  const t = timeline.current;
-                  const name = window.prompt('步骤名称', `步骤${steps.length+1}`) || `步骤${steps.length+1}`;
-                  const newStep: StepMarker = { id: generateUuid(), time: Math.max(0, Math.min(timeline.duration, t)), name };
-                  setSteps(prev=>[...prev, newStep].sort((a,b)=>a.time-b.time));
-                }}>添加步骤</Button>
+                <Button size="small" onClick={()=>{ setStepDraftTime(timeline.current); setEditingStep(null); stepForm.setFieldsValue({ name: `步骤${steps.length+1}` }); setStepModalOpen(true); }}>添加步骤</Button>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <strong style={{ width: 80 }}>相机</strong>
@@ -2002,6 +2024,24 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
       <SettingsModal />
+      <StepEditor
+        open={stepModalOpen}
+        value={editingStep ? { id: editingStep.id, name: editingStep.name } : null}
+        defaultTime={stepDraftTime}
+        onCancel={()=>{ setStepModalOpen(false); setEditingStep(null); }}
+        onDelete={()=>{ if (!editingStep) return; setSteps(prev=>prev.filter(s=>s.id!==editingStep.id)); setStepModalOpen(false); setEditingStep(null); }}
+        onSave={(name)=>{
+          if (editingStep) {
+            setSteps(prev=>prev.map(s=>s.id===editingStep.id?{...s,name}:s));
+            setEditingStep(null);
+            setStepModalOpen(false);
+          } else {
+            const newStep: StepMarker = { id: generateUuid(), time: Math.max(0, Math.min(timeline.duration, stepDraftTime)), name: name||`步骤${steps.length+1}` };
+            setSteps(prev=>[...prev, newStep].sort((a,b)=>a.time-b.time));
+            setStepModalOpen(false);
+          }
+        }}
+      />
       <Modal title="从 URL 导入模型" open={urlImportOpen} onCancel={()=>setUrlImportOpen(false)} onOk={()=>{ urlForm.validateFields().then(v=>{ setUrlImportOpen(false); loadModel(v.url); }); }} destroyOnClose>
         <Form layout="vertical" form={urlForm}>
           <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>

@@ -30,9 +30,9 @@
 3) 知识点标注
    - 选中对象添加标签：标题、摘要、图片/视频 URL；锚点支持包围盒中心/命中点/局部偏移；视窗内显示看板/标记点。
 4) 动画（基础）
-   - 时间线编辑：相机关键帧、节点显隐/高亮、节点 TRS、标注显示/隐藏；常用缓动；预览。
+   - 时间线编辑：相机关键帧、节点显隐/高亮、节点 TRS、步骤标记；常用缓动；预览。（不再需要“标注显隐轨道”）
 5) 导出/保存
-   - 以 JSON 存储 `annotations.json`、`timeline.json`、`course.json`；可打包课件（含媒体清单）。
+   - 以统一 JSON `courseware.json` 存储完整三维课件（模型地址、标注列表、时间线含步骤、可选渲染设置）；支持打包课件（含媒体清单）。
 6) AI 课件生成与播放
    - DeepSeek 等大模型生成 `course.json`；可选接 TTS 语音与字幕；播放时镜头聚焦与高亮同步。
 7) 平台接入
@@ -52,11 +52,11 @@
   - 视窗：选中高亮、对焦、标注点可见、播放控制。
 
 ### 七、数据格式（对外约定）
-1) annotations.json
+1) courseware.json（统一导出/导入）
 ```json
 {
   "version": "1.0",
-  "model": "model.glb",
+  "model": "https://.../model.glb",
   "annotations": [
     {
       "id": "uuid-1",
@@ -68,25 +68,24 @@
         { "type": "video", "src": "media/engine.mp4" }
       ]
     }
-  ]
+  ],
+  "timeline": {
+    "duration": 10,
+    "cameraKeys": [{ "time": 0, "position": [1,2,3], "target": [0,0,0], "easing": "easeInOut" }],
+    "visTracks": { "node-23": [{ "time": 0, "value": true }, { "time": 2.0, "value": false }] },
+    "trsTracks": { "node-45": [{ "time": 1.5, "position": [0,0.1,0] }] },
+    "steps": [ { "id": "step-1", "time": 2.5, "name": "步骤1" } ]
+  },
+  "settings": {
+    "bgTransparent": false,
+    "bgColor": "#919191",
+    "lights": { "dir": { "intensity": 1.2 }, "amb": { "intensity": 0.6 } }
+  }
 }
 ```
+说明：时间线不再包含“标注显隐轨道（annotationTracks）”。旧版 `annotations.json`/`timeline.json` 可在导入时合并为 `courseware.json`。
 
-2) timeline.json
-```json
-{
-  "version": "1.0",
-  "fps": 30,
-  "tracks": [
-    { "type": "camera", "keys": [{ "t": 0, "pos": [1,2,3], "rot": [0,0,0,1], "ease": "easeInOut" }] },
-    { "type": "visibility", "target": { "nodeIndex": 23 }, "keys": [{ "t": 0, "value": true }, { "t": 2.0, "value": false }] },
-    { "type": "trs", "target": { "nodeIndex": 45 }, "keys": [{ "t": 0, "pos": [0,0,0] }, { "t": 1.5, "pos": [0,0.1,0] }] },
-    { "type": "marker", "annotationId": "uuid-1", "keys": [{ "t": 0.5, "value": "show" }, { "t": 3.0, "value": "hide" }] }
-  ]
-}
-```
-
-3) course.json（AI 讲解）
+2) course.json（AI 讲解）
 ```json
 {
   "version": "1.0",
