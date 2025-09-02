@@ -1032,6 +1032,53 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     setPrsTick(v=>v+1);
   }
 
+  // --- 层级编辑工具 ---
+  function rebuildTree() {
+    const root = modelRootRef.current!;
+    const nodes: TreeNode[] = [];
+    const map = keyToObject.current; map.clear();
+    const makeNode = (o: THREE.Object3D): TreeNode => {
+      const k = o.uuid; map.set(k, o);
+      return { title: o.name || o.type || k.slice(0,8), key: k, children: o.children?.map(makeNode) };
+    };
+    nodes.push(makeNode(root));
+    setTreeData(nodes);
+  }
+
+  function groupNodes(nodeKeys: string[]) {
+    const objs = nodeKeys.map(k => keyToObject.current.get(k)!).filter(Boolean);
+    if (objs.length === 0) return;
+    const parent = objs[0].parent as THREE.Object3D;
+    const grp = new THREE.Group(); grp.name = `组${Math.floor(Math.random()*1000)}`; parent.add(grp); grp.updateMatrixWorld(true);
+    objs.forEach(o => { const mw = o.matrixWorld.clone(); grp.add(o); o.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(grp.matrixWorld).invert(); o.matrix.copy(inv.multiply(mw)); o.matrix.decompose(o.position, o.quaternion, o.scale); });
+    rebuildTree();
+    setSelectedSet(new Set([grp.uuid])); setSelectedKey(grp.uuid); syncHighlight(); setPrsTick(v=>v+1);
+  }
+
+  function ungroupNode(key: string) {
+    const o = keyToObject.current.get(key); if (!o) return;
+    if (!(o as any).isGroup) return;
+    const parent = o.parent as THREE.Object3D; const kids = [...o.children];
+    kids.forEach(k => { const mw = (k as any).matrixWorld.clone(); parent.add(k as any); (k as any).updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(parent.matrixWorld).invert(); (k as any).matrix.copy(inv.multiply(mw)); (k as any).matrix.decompose((k as any).position, (k as any).quaternion, (k as any).scale); });
+    parent.remove(o);
+    rebuildTree();
+    setSelectedSet(new Set(kids.map(k => k.uuid))); setSelectedKey(kids[0]?.uuid); syncHighlight(); setPrsTick(v=>v+1);
+  }
+
+  function deleteNode(key: string) {
+    const o = keyToObject.current.get(key); if (!o) return; if (o === modelRootRef.current) return;
+    const parent = o.parent as THREE.Object3D; parent.remove(o);
+    rebuildTree();
+    setSelectedSet(new Set()); setSelectedKey(undefined); syncHighlight(); setPrsTick(v=>v+1);
+  }
+
+  function handleNodeAction(action: string, key: string) {
+    if (action === 'rename') { const obj = keyToObject.current.get(key); if (!obj) return; setRenameOpen(true); renameForm.setFieldsValue({ name: obj.name || '' }); (window as any).__renameKey = key; return; }
+    if (action === 'group') { const ids = selectedSet.size>0 ? Array.from(selectedSet) : [key]; groupNodes(ids); return; }
+    if (action === 'ungroup') { ungroupNode(key); return; }
+    if (action === 'delete') { deleteNode(key); return; }
+  }
+
   function clearEmissiveHighlight() {
     for (const m of Array.from(highlightedMats.current)) {
       const backup = materialBackup.current.get(m);
@@ -1747,20 +1794,19 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
               selectedKeys={Array.from(selectedSet)}
               titleRender={(node: any) => (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr var(--icon-w)', alignItems: 'center', height: 'var(--tree-row-h)' }}>
-                  <span title={node.title} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor:'context-menu' }}
-                    onContextMenu={(e)=>{ e.preventDefault(); const key=String(node.key); const obj=keyToObject.current.get(key); if(!obj) return; const action = window.prompt('输入操作: rename / group / ungroup / delete', 'rename'); if(!action) return; if(action==='rename'){ setRenameOpen(true); renameForm.setFieldsValue({ name: obj.name||'' }); (window as any).__renameKey = key; }
-                    else if(action==='group'){ // 将当前选中集合或当前节点打组
-                      const ids = selectedSet.size>0? Array.from(selectedSet) : [key]; const objs = ids.map(k=>keyToObject.current.get(k)!).filter(Boolean); if(objs.length===0) return; let parent = objs[0].parent as THREE.Object3D; // 简化：以第一个的父为公共父
-                      const grp = new THREE.Group(); grp.name = `组${Math.floor(Math.random()*1000)}`; parent.add(grp);
-                      grp.updateMatrixWorld(true);
-                      objs.forEach(o=>{ const mat=o.matrixWorld.clone(); grp.add(o); o.updateMatrixWorld(true); const inv=new THREE.Matrix4().copy(grp.matrixWorld).invert(); o.matrix.copy(inv.multiply(mat)); o.matrix.decompose(o.position,o.quaternion,o.scale); });
-                      // 重建树
-                      const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setSelectedSet(new Set([grp.uuid])); setSelectedKey(grp.uuid); syncHighlight();
-                    }
-                    else if(action==='ungroup'){ const o=keyToObject.current.get(key)!; if(!(o as any).isGroup) return; const parent=o.parent as THREE.Object3D; const mat=o.matrixWorld.clone(); const kids=[...o.children]; kids.forEach(k=>{ const km=k.matrixWorld.clone(); parent.add(k as any); (k as any).updateMatrixWorld(true); const inv=new THREE.Matrix4().copy(parent.matrixWorld).invert(); (k as any).matrix.copy(inv.multiply(km)); (k as any).matrix.decompose((k as any).position,(k as any).quaternion,(k as any).scale); }); parent.remove(o);
-                      const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o2:THREE.Object3D):TreeNode=>{ const k=o2.uuid; map.set(k,o2); return { title:o2.name||o2.type||k.slice(0,8), key:k, children:o2.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setSelectedSet(new Set(kids.map(k=>k.uuid))); setSelectedKey(kids[0]?.uuid); syncHighlight(); }
-                    else if(action==='delete'){ const o=keyToObject.current.get(key)!; if(!o || o===modelRootRef.current) return; const parent=o.parent as THREE.Object3D; parent.remove(o); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o2:THREE.Object3D):TreeNode=>{ const k=o2.uuid; map.set(k,o2); return { title:o2.name||o2.type||k.slice(0,8), key:k, children:o2.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); setSelectedSet(new Set()); setSelectedKey(undefined); syncHighlight(); }
-                  }}>{node.title}</span>
+                  <Dropdown trigger={["contextMenu"]} menu={{
+                    onClick: ({ key })=> handleNodeAction(String(key), String(node.key)),
+                    items:[
+                      { key:'rename', label:'重命名' },
+                      { type:'divider' },
+                      { key:'group', label:'打组(含多选)' },
+                      { key:'ungroup', label:'解组' },
+                      { type:'divider' },
+                      { key:'delete', danger:true, label:'删除' }
+                    ]
+                  }}>
+                    <span title={node.title} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor:'context-menu' }}>{node.title}</span>
+                  </Dropdown>
                   <Button size="small" type="text" style={{ width: 'var(--icon-w)', textAlign: 'center' }} onClick={(e)=>{ e.stopPropagation(); onToggleHide(String(node.key), !hiddenKeys.has(String(node.key))); }} icon={hiddenKeys.has(String(node.key)) ? <EyeInvisibleOutlined /> : <EyeOutlined />} />
                 </div>
               )}
