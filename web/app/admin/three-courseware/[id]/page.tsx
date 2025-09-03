@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Card, Space, Typography, Button, Alert, Spin, App } from 'antd';
+import { Alert, Spin, App, Typography, Space, Button } from 'antd';
 import dynamic from 'next/dynamic';
 import { apiGet } from '@/app/_utils/api';
+import Link from 'next/link';
 
 const ModelEditor3D = dynamic(()=>import('../_components/ModelEditor3D'), { ssr: false });
-import Link from 'next/link';
 
 interface CoursewareData {
   _id: string;
@@ -76,19 +76,11 @@ export default function ThreeCoursewareEditorPage() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <Space style={{ marginBottom: 12 }}>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          {courseware.name} - 三维课件编辑器
-        </Typography.Title>
-        <Link href="/admin/three-courseware"><Button>返回列表</Button></Link>
-      </Space>
-      <ModelEditor3D 
-        coursewareId={id}
-        coursewareData={courseware}
-        initialUrl={courseware.modelUrl}
-      />
-    </div>
+    <ModelEditor3D 
+      coursewareId={id}
+      coursewareData={courseware}
+      initialUrl={courseware.modelUrl}
+    />
   );
 }
 

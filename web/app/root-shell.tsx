@@ -7,7 +7,7 @@ import TopBarClient from './topbar-client';
 export default function RootShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isLogin = pathname === '/login';
-  const isEditorFullscreen = pathname?.startsWith('/admin/three-courseware/editor');
+  const isEditorFullscreen = pathname?.startsWith('/admin/three-courseware/editor') || pathname?.match(/^\/admin\/three-courseware\/[^\/]+$/);
 
   if (isLogin) {
     return (

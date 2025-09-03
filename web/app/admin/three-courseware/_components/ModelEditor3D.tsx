@@ -1241,6 +1241,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   async function loadModel(src: string) {
     const scene = sceneRef.current!;
     setLoading(true);
+    message.loading('正在加载模型...', 0); // 0表示不自动消失
     try {
       // 清除旧模型
       if (modelRootRef.current) {
@@ -1316,6 +1317,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       setTreeData(nodes);
 
       focusObject(root);
+      message.destroy(); // 关闭加载消息
       message.success('模型已加载');
       // 若存在待恢复的标注，模型加载完成后尝试按路径绑定
       if (pendingImportRef.current) {
@@ -1323,6 +1325,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
     } catch (e: any) {
       console.error(e);
+      message.destroy(); // 关闭加载消息
       message.error(e?.message || '加载失败');
     } finally {
       setLoading(false);
@@ -1349,11 +1352,68 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         });
       });
       setAnnotations(restored);
+      
+      // 处理时间线数据
+      if (pending.timeline) {
+        const tl = pending.timeline;
+        
+        // 转换 visTracks 和 trsTracks 格式，使用路径查找对象
+        const visTracks: Record<string, VisibilityKeyframe[]> = {};
+        if (Array.isArray(tl.visTracks)) {
+          tl.visTracks.forEach((track: any) => {
+            if (track.nodeKey && Array.isArray(track.keys)) {
+              const target = findByFlexiblePath(track.nodeKey);
+              if (target) {
+                visTracks[target.uuid] = track.keys.map((k: any) => ({
+                  time: k.time,
+                  value: k.visible
+                }));
+              }
+            }
+          });
+        }
+
+        const trsTracks: Record<string, TransformKeyframe[]> = {};
+        if (Array.isArray(tl.trsTracks)) {
+          tl.trsTracks.forEach((track: any) => {
+            if (track.nodeKey && Array.isArray(track.keys)) {
+              const target = findByFlexiblePath(track.nodeKey);
+              if (target) {
+                trsTracks[target.uuid] = track.keys.map((k: any) => ({
+                  time: k.time,
+                  position: k.position,
+                  rotationEuler: k.rotation,
+                  scale: k.scale,
+                  easing: k.easing || 'linear'
+                }));
+              }
+            }
+          });
+        }
+
+        setTimeline(prev => ({
+          ...prev,
+          duration: tl.duration || 10,
+          cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
+          visTracks,
+          trsTracks
+        }));
+      }
+
+      // 处理步骤数据
+      if (pending.steps && Array.isArray(pending.steps)) {
+        setSteps(pending.steps.map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          time: s.time
+        })));
+      }
+      
       pendingImportRef.current = null;
       if (restored.length === 0) message.warning('已导入，但未找到匹配的节点（请确认模型一致或节点名称未变化）');
-      else message.success(`已恢复 ${restored.length} 条标注`);
+      else message.success(`已恢复 ${restored.length} 条标注和动画数据`);
     } catch (e:any) {
-      message.error(e?.message || '恢复标注失败');
+      message.error(e?.message || '恢复数据失败');
     }
   }
 
@@ -1376,14 +1436,28 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (markers) {
       const markerHits = raycaster.intersectObjects(markers.children, true);
       if (markerHits.length > 0) {
-        const mkObj = markerHits[0].object;
-        const annoId = (mkObj.userData?.annotationId) as string | undefined;
+        // 查找标注ID，可能在直接对象上或其父组上
+        let annoId: string | undefined;
+        let currentObj = markerHits[0].object;
+        
+        // 向上遍历找到标注ID
+        while (currentObj && !annoId) {
+          annoId = currentObj.userData?.annotationId;
+          if (!annoId && currentObj.parent) {
+            currentObj = currentObj.parent;
+          } else {
+            break;
+          }
+        }
+        
         if (annoId) {
           const anno = annotations.find(a => a.id === annoId) || null;
-          setEditingAnno(anno);
-          const target = anno ? keyToObject.current.get(anno.targetKey) : undefined;
-          if (target) selectObject(target);
-          return;
+          if (anno) {
+            setEditingAnno(anno);
+            const target = keyToObject.current.get(anno.targetKey);
+            if (target) selectObject(target);
+            return;
+          }
         }
       }
     }
@@ -1669,6 +1743,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   function refreshMarkers() {
     const group = ensureMarkers();
+    const camera = cameraRef.current;
+    if (!camera) return;
+    
     // clear
     while (group.children.length) {
       const c = group.children.pop()!;
@@ -1678,23 +1755,130 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         else (c as any).material.dispose?.();
       }
     }
+    
     // rebuild
     annotations.forEach(a => {
       const target = keyToObject.current.get(a.targetKey);
       if (!target) return;
+      
       const pos = new THREE.Vector3(a.anchor.offset[0], a.anchor.offset[1], a.anchor.offset[2]);
       target.updateWorldMatrix(true, true);
       const world = pos.clone().applyMatrix4((target as any).matrixWorld);
-      const geom = new THREE.SphereGeometry(0.012, 16, 16);
-      const mat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.position.copy(world);
-      mesh.userData.annotationId = a.id;
-      group.add(mesh);
+      
+      // 创建标注组
+      const annotationGroup = new THREE.Group();
+      annotationGroup.userData.annotationId = a.id;
+      
+      // 1. 创建标注点（原点）
+      const pointGeom = new THREE.SphereGeometry(0.008, 12, 12);
+      const pointMat = new THREE.MeshBasicMaterial({ 
+        color: 0x1890ff,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.9
+      });
+      const pointMesh = new THREE.Mesh(pointGeom, pointMat);
+      pointMesh.position.copy(world);
+      pointMesh.renderOrder = 1000; // 确保在前面渲染
+      annotationGroup.add(pointMesh);
+      
+      // 2. 计算标签位置（偏移到合适位置）
+      const cameraPos = camera.position.clone();
+      const direction = cameraPos.clone().sub(world).normalize();
+      const labelOffset = 0.15; // 标签距离
+      const labelPos = world.clone().add(direction.multiplyScalar(labelOffset));
+      
+      // 3. 创建连接线
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([world, labelPos]);
+      const lineMat = new THREE.LineBasicMaterial({ 
+        color: 0x1890ff,
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false
+      });
+      const line = new THREE.Line(lineGeom, lineMat);
+      line.renderOrder = 999;
+      annotationGroup.add(line);
+      
+      // 4. 创建标签背景和文字（使用CSS2DRenderer会更好，但这里用简单的Sprite）
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d')!;
+      const fontSize = 24;
+      const padding = 8;
+      const text = a.label.title || '未命名';
+      
+      // 设置字体
+      context.font = `${fontSize}px Arial`;
+      const textMetrics = context.measureText(text);
+      const textWidth = textMetrics.width;
+      const textHeight = fontSize;
+      
+      // 设置canvas大小
+      canvas.width = textWidth + padding * 2;
+      canvas.height = textHeight + padding * 2;
+      
+      // 重新设置字体（canvas resize后会丢失）
+      context.font = `${fontSize}px Arial`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      
+      // 绘制背景
+      context.fillStyle = 'rgba(24, 144, 255, 0.9)';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // 绘制边框
+      context.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      context.lineWidth = 1;
+      context.strokeRect(0, 0, canvas.width, canvas.height);
+      
+      // 绘制文字
+      context.fillStyle = 'white';
+      context.fillText(text, canvas.width / 2, canvas.height / 2);
+      
+      // 创建sprite
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      const spriteMat = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true,
+        depthTest: false
+      });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.position.copy(labelPos);
+      sprite.scale.set(canvas.width * 0.0008, canvas.height * 0.0008, 1); // 调整大小
+      sprite.renderOrder = 1001;
+      sprite.userData.clickable = true; // 标记可点击
+      annotationGroup.add(sprite);
+      
+      group.add(annotationGroup);
     });
   }
 
   useEffect(() => { refreshMarkers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [annotations, selectedKey]);
+  
+  // 相机变化时更新标注位置
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    
+    const handleCameraChange = () => {
+      // 延迟更新避免过于频繁
+      if ((handleCameraChange as any).timeout) {
+        clearTimeout((handleCameraChange as any).timeout);
+      }
+      (handleCameraChange as any).timeout = setTimeout(() => {
+        refreshMarkers();
+      }, 100);
+    };
+    
+    controls.addEventListener('change', handleCameraChange);
+    return () => {
+      controls.removeEventListener('change', handleCameraChange);
+      if ((handleCameraChange as any).timeout) {
+        clearTimeout((handleCameraChange as any).timeout);
+      }
+    };
+  }, []);
 
   const addAnnotationForSelected = () => {
     if (!selectedKey) return;
@@ -2062,17 +2246,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     try {
       // 构造保存数据
       const saveData = {
-        annotations: annotations.map(a => ({
-          id: a.id,
-          nodeKey: a.targetKey,
-          title: a.label.title,
-          description: a.label.summary || '',
-          position: {
-            x: a.anchor.offset[0],
-            y: a.anchor.offset[1], 
-            z: a.anchor.offset[2]
-          }
-        })),
+        annotations: annotations.map(a => {
+          const obj = keyToObject.current.get(a.targetKey);
+          return {
+            id: a.id,
+            nodeKey: obj ? buildPath(obj) : a.targetKey, // 保存路径而不是UUID
+            title: a.label.title,
+            description: a.label.summary || '',
+            position: {
+              x: a.anchor.offset[0],
+              y: a.anchor.offset[1], 
+              z: a.anchor.offset[2]
+            }
+          };
+        }),
         animations: [{
           id: 'main',
           name: '主动画',
@@ -2085,24 +2272,30 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               target: k.target,
               easing: k.easing || 'linear'
             })),
-            visTracks: Object.entries(timeline.visTracks).map(([nodeKey, keys]) => ({
-              nodeKey,
-              keys: keys.map(k => ({
-                time: k.time,
-                visible: k.value,
-                easing: 'linear'
-              }))
-            })),
-            trsTracks: Object.entries(timeline.trsTracks).map(([nodeKey, keys]) => ({
-              nodeKey,
-              keys: keys.map(k => ({
-                time: k.time,
-                position: k.position,
-                rotation: k.rotationEuler, 
-                scale: k.scale,
-                easing: k.easing || 'linear'
-              }))
-            }))
+            visTracks: Object.entries(timeline.visTracks).map(([nodeKey, keys]) => {
+              const obj = keyToObject.current.get(nodeKey);
+              return {
+                nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
+                keys: keys.map(k => ({
+                  time: k.time,
+                  visible: k.value,
+                  easing: 'linear'
+                }))
+              };
+            }),
+            trsTracks: Object.entries(timeline.trsTracks).map(([nodeKey, keys]) => {
+              const obj = keyToObject.current.get(nodeKey);
+              return {
+                nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
+                keys: keys.map(k => ({
+                  time: k.time,
+                  position: k.position,
+                  rotation: k.rotationEuler, 
+                  scale: k.scale,
+                  easing: k.easing || 'linear'
+                }))
+              };
+            })
           },
           steps: steps.map(s => ({
             id: s.id,
@@ -2176,68 +2369,27 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 初始化课件名称
       setCoursewareName(coursewareData.name || '三维课件');
       
-      // 初始化标注
+      // 初始化标注（延迟到模型加载后处理，因为需要通过路径查找对象）
       if (coursewareData.annotations && Array.isArray(coursewareData.annotations)) {
-        const restoredAnnotations: Annotation[] = coursewareData.annotations.map(a => ({
-          id: a.id,
-          targetKey: a.nodeKey,
-          targetPath: '', // 这个会在模型加载后重新计算
-          anchor: { space: 'local', offset: [a.position.x, a.position.y, a.position.z] },
-          label: { title: a.title, summary: a.description }
-        }));
-        setAnnotations(restoredAnnotations);
+        // 存储到pending中，等模型加载后再处理
+        pendingImportRef.current = { 
+          annotations: coursewareData.annotations.map(a => ({
+            id: a.id,
+            target: { path: a.nodeKey }, // 使用保存的路径
+            anchor: { offset: [a.position.x, a.position.y, a.position.z] },
+            label: { title: a.title, summary: a.description }
+          }))
+        };
       }
 
-      // 初始化动画和时间线
+      // 初始化动画和时间线（延迟到模型加载后处理）
       if (coursewareData.animations && Array.isArray(coursewareData.animations) && coursewareData.animations[0]) {
         const mainAnimation = coursewareData.animations[0];
         if (mainAnimation.timeline) {
-          const tl = mainAnimation.timeline;
-          
-          // 转换 visTracks 和 trsTracks 格式
-          const visTracks: Record<string, VisibilityKeyframe[]> = {};
-          if (Array.isArray(tl.visTracks)) {
-            tl.visTracks.forEach((track: any) => {
-              if (track.nodeKey && Array.isArray(track.keys)) {
-                visTracks[track.nodeKey] = track.keys.map((k: any) => ({
-                  time: k.time,
-                  value: k.visible
-                }));
-              }
-            });
-          }
-
-          const trsTracks: Record<string, TransformKeyframe[]> = {};
-          if (Array.isArray(tl.trsTracks)) {
-            tl.trsTracks.forEach((track: any) => {
-              if (track.nodeKey && Array.isArray(track.keys)) {
-                trsTracks[track.nodeKey] = track.keys.map((k: any) => ({
-                  time: k.time,
-                  position: k.position,
-                  rotationEuler: k.rotation,
-                  scale: k.scale,
-                  easing: k.easing || 'linear'
-                }));
-              }
-            });
-          }
-
-          setTimeline(prev => ({
-            ...prev,
-            duration: tl.duration || 10,
-            cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
-            visTracks,
-            trsTracks
-          }));
-        }
-
-        // 初始化步骤
-        if (mainAnimation.steps && Array.isArray(mainAnimation.steps)) {
-          setSteps(mainAnimation.steps.map((s: any) => ({
-            id: s.id,
-            name: s.name,
-            time: s.time
-          })));
+          // 存储时间线数据到pending中
+          if (!pendingImportRef.current) pendingImportRef.current = {};
+          pendingImportRef.current.timeline = mainAnimation.timeline;
+          pendingImportRef.current.steps = mainAnimation.steps;
         }
       }
 

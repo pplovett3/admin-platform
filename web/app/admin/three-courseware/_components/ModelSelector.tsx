@@ -203,19 +203,19 @@ export default function ModelSelector({ open, onCancel, onSelect }: ModelSelecto
                         border: selectedModel?.id === item.id ? '2px solid #1890ff' : '1px solid #d9d9d9',
                         borderRadius: 6,
                         marginBottom: 8,
-                        backgroundColor: selectedModel?.id === item.id ? '#e6f7ff' : '#fafafa',
+                        backgroundColor: selectedModel?.id === item.id ? '#1a3a5c' : '#2a4b6b',
                         transition: 'all 0.3s',
                       }}
                       onClick={() => setSelectedModel(item)}
                       onMouseEnter={(e) => {
                         if (selectedModel?.id !== item.id) {
-                          e.currentTarget.style.backgroundColor = '#f0f0f0';
+                          e.currentTarget.style.backgroundColor = '#1a3a5c';
                           e.currentTarget.style.borderColor = '#40a9ff';
                         }
                       }}
                       onMouseLeave={(e) => {
                         if (selectedModel?.id !== item.id) {
-                          e.currentTarget.style.backgroundColor = '#fafafa';
+                          e.currentTarget.style.backgroundColor = '#2a4b6b';
                           e.currentTarget.style.borderColor = '#d9d9d9';
                         }
                       }}

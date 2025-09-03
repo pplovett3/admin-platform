@@ -189,7 +189,7 @@ const CoursewareSchema = new Schema<ICourseware>(
         y: { type: Number, default: 0 },
         z: { type: Number, default: 0 }
       },
-      background: { type: String, default: '#f0f0f0' },
+      background: { type: String, default: '#919191' },
       lighting: { type: Schema.Types.Mixed }
     },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
