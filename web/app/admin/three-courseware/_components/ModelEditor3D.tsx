@@ -1222,6 +1222,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       obj.updateMatrixWorld();
     }
+    
+    // 更新标注位置（跟随父对象变换）
+    refreshMarkers();
+    
     // Annotations visibility
     const annTracks = tl.annotationTracks || {};
     const group = markersGroupRef.current;
@@ -1336,19 +1340,45 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const pending = pendingImportRef.current;
     if (!pending) return;
     try {
+      // 首先恢复模型结构（重命名、可见性等）
+      if (pending.modelStructure && Array.isArray(pending.modelStructure)) {
+        pending.modelStructure.forEach((item: any) => {
+          const obj = findByFlexiblePath(item.path || []);
+          if (obj && item.name !== undefined) {
+            obj.name = item.name;
+            if (item.visible !== undefined) obj.visible = item.visible;
+            // 注意：位置、旋转、缩放通常不应该从保存数据恢复，因为会影响模型原始结构
+            // 除非是用户明确的变换操作
+          }
+        });
+        // 重新构建树结构
+        rebuildTree();
+      }
+      
       const restored: Annotation[] = [];
       (pending.annotations || []).forEach((x: any) => {
-        const pathRaw = String(x?.target?.path || '');
-        const namePathRaw = String(x?.target?.namePath || '');
-        const target = findByFlexiblePath(pathRaw) || findByFlexiblePath(namePathRaw);
+        // 支持新的数据格式 (nodeKey + position)
+        const nodeKey = x.nodeKey || x?.target?.path || '';
+        const target = findByFlexiblePath(nodeKey);
         if (!target) return;
-        const offset = x?.anchor?.offset || [0,0,0];
+        
+        // 支持新的position格式 {x, y, z}
+        let offset = [0, 0, 0];
+        if (x.position) {
+          offset = [x.position.x || 0, x.position.y || 0, x.position.z || 0];
+        } else if (x?.anchor?.offset) {
+          offset = x.anchor.offset;
+        }
+        
         restored.push({
           id: String(x.id || generateUuid()),
           targetKey: target.uuid,
           targetPath: buildPath(target),
-          anchor: { space: 'local', offset: [Number(offset[0]||0), Number(offset[1]||0), Number(offset[2]||0)] },
-          label: { title: String(x?.label?.title || target.name || '未命名'), summary: String(x?.label?.summary || '') }
+          anchor: { space: 'local', offset: [Number(offset[0]), Number(offset[1]), Number(offset[2])] },
+          label: { 
+            title: String(x.title || x?.label?.title || target.name || '未命名'), 
+            summary: String(x.description || x?.label?.summary || '') 
+          }
         });
       });
       setAnnotations(restored);
@@ -1431,7 +1461,27 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const startY = event.clientY;
     let hasMoved = false;
     
-    // 先检测标注点
+    // 如果正在标注位置选择模式
+    if (isAnnotationPlacing && placingAnnotationTarget) {
+      const meshes: THREE.Object3D[] = [];
+      // 只检测选中的目标对象
+      placingAnnotationTarget.traverse(o => { 
+        const m = o as THREE.Mesh; 
+        if ((m as any).isMesh && (m as any).geometry) meshes.push(m); 
+      });
+      const hits = raycaster.intersectObjects(meshes);
+      
+      if (hits.length > 0) {
+        const hit = hits[0];
+        handleAnnotationPlacement(hit.point, placingAnnotationTarget);
+        return;
+      } else {
+        message.warning('请点击选中对象的表面');
+        return;
+      }
+    }
+    
+    // 先检测标注点（非标注位置选择模式下）
     const markers = markersGroupRef.current;
     if (markers) {
       const markerHits = raycaster.intersectObjects(markers.children, true);
@@ -1761,31 +1811,34 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const target = keyToObject.current.get(a.targetKey);
       if (!target) return;
       
+      // 计算标注点的世界坐标（跟随父对象变换）
       const pos = new THREE.Vector3(a.anchor.offset[0], a.anchor.offset[1], a.anchor.offset[2]);
       target.updateWorldMatrix(true, true);
-      const world = pos.clone().applyMatrix4((target as any).matrixWorld);
+      const world = pos.clone().applyMatrix4(target.matrixWorld);
       
       // 创建标注组
       const annotationGroup = new THREE.Group();
       annotationGroup.userData.annotationId = a.id;
+      annotationGroup.userData.targetKey = a.targetKey; // 便于查找
       
-      // 1. 创建标注点（原点）
-      const pointGeom = new THREE.SphereGeometry(0.008, 12, 12);
+      // 1. 创建标注点（蓝色圆点）
+      const pointGeom = new THREE.SphereGeometry(0.012, 16, 16);
       const pointMat = new THREE.MeshBasicMaterial({ 
         color: 0x1890ff,
         depthTest: false,
         transparent: true,
-        opacity: 0.9
+        opacity: 1.0
       });
       const pointMesh = new THREE.Mesh(pointGeom, pointMat);
       pointMesh.position.copy(world);
-      pointMesh.renderOrder = 1000; // 确保在前面渲染
+      pointMesh.renderOrder = 1000;
+      pointMesh.userData.annotationId = a.id; // 确保点击检测
       annotationGroup.add(pointMesh);
       
-      // 2. 计算标签位置（偏移到合适位置）
+      // 2. 计算标签位置（固定偏移，面向相机）
       const cameraPos = camera.position.clone();
       const direction = cameraPos.clone().sub(world).normalize();
-      const labelOffset = 0.15; // 标签距离
+      const labelOffset = 0.2; // 增大标签距离
       const labelPos = world.clone().add(direction.multiplyScalar(labelOffset));
       
       // 3. 创建连接线
@@ -1798,17 +1851,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       });
       const line = new THREE.Line(lineGeom, lineMat);
       line.renderOrder = 999;
+      line.userData.annotationId = a.id;
       annotationGroup.add(line);
       
-      // 4. 创建标签背景和文字（使用CSS2DRenderer会更好，但这里用简单的Sprite）
+      // 4. 创建改进的3D标签
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d')!;
-      const fontSize = 24;
-      const padding = 8;
+      const fontSize = 32; // 增大字体
+      const padding = 16; // 增大内边距
+      const borderRadius = 8; // 圆角
       const text = a.label.title || '未命名';
       
       // 设置字体
-      context.font = `${fontSize}px Arial`;
+      context.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
       const textMetrics = context.measureText(text);
       const textWidth = textMetrics.width;
       const textHeight = fontSize;
@@ -1818,24 +1873,40 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       canvas.height = textHeight + padding * 2;
       
       // 重新设置字体（canvas resize后会丢失）
-      context.font = `${fontSize}px Arial`;
+      context.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
       context.textAlign = 'center';
       context.textBaseline = 'middle';
       
-      // 绘制背景
-      context.fillStyle = 'rgba(24, 144, 255, 0.9)';
-      context.fillRect(0, 0, canvas.width, canvas.height);
+      // 绘制圆角背景
+      const drawRoundedRect = (x: number, y: number, width: number, height: number, radius: number) => {
+        context.beginPath();
+        context.moveTo(x + radius, y);
+        context.lineTo(x + width - radius, y);
+        context.quadraticCurveTo(x + width, y, x + width, y + radius);
+        context.lineTo(x + width, y + height - radius);
+        context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        context.lineTo(x + radius, y + height);
+        context.quadraticCurveTo(x, y + height, x, y + height - radius);
+        context.lineTo(x, y + radius);
+        context.quadraticCurveTo(x, y, x + radius, y);
+        context.closePath();
+      };
       
-      // 绘制边框
-      context.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-      context.lineWidth = 1;
-      context.strokeRect(0, 0, canvas.width, canvas.height);
+      // 半透明蓝色背景
+      drawRoundedRect(0, 0, canvas.width, canvas.height, borderRadius);
+      context.fillStyle = 'rgba(24, 144, 255, 0.85)';
+      context.fill();
       
-      // 绘制文字
+      // 白色边框
+      context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      context.lineWidth = 2;
+      context.stroke();
+      
+      // 绘制白色文字
       context.fillStyle = 'white';
       context.fillText(text, canvas.width / 2, canvas.height / 2);
       
-      // 创建sprite
+      // 创建sprite（始终面向相机）
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
       const spriteMat = new THREE.SpriteMaterial({ 
@@ -1845,9 +1916,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       });
       const sprite = new THREE.Sprite(spriteMat);
       sprite.position.copy(labelPos);
-      sprite.scale.set(canvas.width * 0.0008, canvas.height * 0.0008, 1); // 调整大小
+      
+      // 根据距离调整大小，使其在不同距离下保持合适的视觉尺寸
+      const distance = camera.position.distanceTo(world);
+      const scale = Math.max(0.0012, Math.min(0.003, 0.0015 * distance));
+      sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
+      
       sprite.renderOrder = 1001;
-      sprite.userData.clickable = true; // 标记可点击
+      sprite.userData.annotationId = a.id;
+      sprite.userData.clickable = true;
       annotationGroup.add(sprite);
       
       group.add(annotationGroup);
@@ -1880,23 +1957,59 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     };
   }, []);
 
+  // 标注位置选择状态
+  const [isAnnotationPlacing, setIsAnnotationPlacing] = useState(false);
+  const [placingAnnotationTarget, setPlacingAnnotationTarget] = useState<THREE.Object3D | null>(null);
+
   const addAnnotationForSelected = () => {
-    if (!selectedKey) return;
+    if (!selectedKey) {
+      message.warning('请先选择一个对象');
+      return;
+    }
     const obj = keyToObject.current.get(selectedKey);
     if (!obj) return;
-    const box = new THREE.Box3().setFromObject(obj);
-    const center = box.getCenter(new THREE.Vector3());
-    const local = obj.worldToLocal(center.clone());
-    const path = buildPath(obj);
+    
+    // 进入标注位置选择模式
+    setIsAnnotationPlacing(true);
+    setPlacingAnnotationTarget(obj);
+    message.info('请点击对象表面选择标注位置');
+    
+    // 修改鼠标样式
+    if (rendererRef.current?.domElement) {
+      rendererRef.current.domElement.style.cursor = 'crosshair';
+    }
+  };
+
+  // 取消标注位置选择
+  const cancelAnnotationPlacing = () => {
+    setIsAnnotationPlacing(false);
+    setPlacingAnnotationTarget(null);
+    if (rendererRef.current?.domElement) {
+      rendererRef.current.domElement.style.cursor = '';
+    }
+  };
+
+  // 处理标注位置选择的点击
+  const handleAnnotationPlacement = (intersectionPoint: THREE.Vector3, targetObj: THREE.Object3D) => {
+    if (!placingAnnotationTarget || targetObj !== placingAnnotationTarget) return;
+    
+    // 将世界坐标转换为对象的本地坐标
+    targetObj.updateWorldMatrix(true, true);
+    const localPos = targetObj.worldToLocal(intersectionPoint.clone());
+    const path = buildPath(targetObj);
+    
     const anno: Annotation = {
       id: generateUuid(),
-      targetKey: obj.uuid,
+      targetKey: targetObj.uuid,
       targetPath: path,
-      anchor: { space: 'local', offset: [local.x, local.y, local.z] },
-      label: { title: obj.name || '未命名', summary: '' }
+      anchor: { space: 'local', offset: [localPos.x, localPos.y, localPos.z] },
+      label: { title: targetObj.name || '未命名', summary: '' }
     };
+    
     setAnnotations(prev => [...prev, anno]);
     setEditingAnno(anno);
+    cancelAnnotationPlacing();
+    message.success('标注点已创建');
   };
 
   // timeline actions
@@ -2235,6 +2348,32 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     beforeUpload: async (file) => { try { const text = await file.text(); const json = JSON.parse(text); setTimeline(prev => ({ ...prev, duration: Number(json?.duration||prev.duration), cameraKeys: Array.isArray(json?.cameraKeys)? (json.cameraKeys as CameraKeyframe[]) : prev.cameraKeys, visTracks: (json?.visTracks||prev.visTracks) as Record<string, VisibilityKeyframe[]>, trsTracks: (json?.trsTracks||prev.trsTracks) as Record<string, TransformKeyframe[]> })); message.success('时间线已导入'); } catch (e:any) { message.error(e?.message||'导入失败'); } return false; }
   };
 
+  // 构建模型结构信息（保存重命名、可见性等）
+  const buildModelStructure = () => {
+    const structure: any[] = [];
+    const root = modelRootRef.current;
+    if (!root) return structure;
+    
+    const traverse = (obj: THREE.Object3D, path: string[] = []) => {
+      const currentPath = [...path, obj.name || 'unnamed'];
+      structure.push({
+        path: currentPath,
+        uuid: obj.uuid,
+        name: obj.name,
+        visible: obj.visible,
+        position: obj.position.toArray(),
+        rotation: obj.rotation.toArray(),
+        scale: obj.scale.toArray(),
+        type: obj.type
+      });
+      
+      obj.children.forEach(child => traverse(child, currentPath));
+    };
+    
+    traverse(root);
+    return structure;
+  };
+
   // 保存课件到后端
   const saveCourseware = async () => {
     if (!coursewareId) {
@@ -2321,7 +2460,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             ambient: ambLight,
             hemisphere: hemiLight
           }
-        }
+        },
+        // 保存模型结构信息（重命名、可见性等）
+        modelStructure: buildModelStructure()
       };
 
       await apiPut(`/api/coursewares/${coursewareId}`, saveData);
@@ -2782,7 +2923,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 <Flex vertical gap={8}>
                   <div>已选中：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
                   <Button onClick={onFocusSelected}>相机对焦</Button>
-                  <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
+                  {isAnnotationPlacing ? (
+                    <Flex vertical gap={8}>
+                      <div style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                        📍 请点击对象表面选择标注位置
+                      </div>
+                      <Button danger onClick={cancelAnnotationPlacing}>取消选择位置</Button>
+                    </Flex>
+                  ) : (
+                    <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
+                  )}
                 </Flex>
               ) : <div>点击结构树或视窗选择对象</div>}
               {/* 全局标注列表暂时隐藏 */}
