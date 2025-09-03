@@ -1487,6 +1487,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             
             if (toDelete.length > 0) {
               console.log('恢复时删除了', toDelete.length, '个对象');
+              console.log('删除记录更新前:', Array.from(deletedObjectsRef.current));
+              // 确保删除记录包含所有已删除的UUID
+              structure.deletedUUIDs.forEach((uuid: string) => {
+                deletedObjectsRef.current.add(uuid);
+              });
+              
+              console.log('删除记录更新后:', Array.from(deletedObjectsRef.current));
               
               // 删除后需要重新构建映射
               uuidToObject.clear();
@@ -1521,7 +1528,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         
         // 重建树结构
         rebuildTree();
-        console.log('模型结构恢复完成');
+        console.log('模型结构恢复完成，当前UI节点数:', Array.from(keyToObject.current.keys()).length);
+        
+        // 强制触发UI刷新
+        setPrsTick(prev => prev + 1);
       }
       
       const restored: Annotation[] = [];
@@ -2120,11 +2130,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const sprite = new THREE.Sprite(spriteMat);
       sprite.position.copy(labelPos);
       
-      // 根据距离和用户设置调整大小
-      const distance = camera.position.distanceTo(world);
-      const baseScale = Math.max(0.0012, Math.min(0.003, 0.0015 * distance));
-      const finalScale = baseScale * labelScale; // 应用用户设置的缩放
-      sprite.scale.set(canvas.width * finalScale, canvas.height * finalScale, 1);
+      // 使用固定大小，不随距离变化
+      const fixedScale = 0.002 * labelScale; // 固定基础缩放 * 用户设置
+      sprite.scale.set(canvas.width * fixedScale, canvas.height * fixedScale, 1);
       
       sprite.renderOrder = 1001;
       sprite.userData.annotationId = a.id;
@@ -2640,6 +2648,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       已删除对象: structure.deletedUUIDs.length,
       '总计原始对象': structure.objects.length + structure.deletedUUIDs.length
     });
+    console.log('删除记录详情:', Array.from(deletedObjectsRef.current));
     return structure;
   };
 
