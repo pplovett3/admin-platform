@@ -1558,7 +1558,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
     
-    console.log('onPointerDown触发，标注模式:', isAnnotationPlacing, '目标对象:', placingAnnotationTarget?.name);
+    console.log('onPointerDown触发，标注模式(ref):', isAnnotationPlacingRef.current, '目标对象:', placingAnnotationTargetRef.current?.name);
     
     // 记录初始位置，用于区分点击和拖拽
     const startX = event.clientX;
@@ -1566,10 +1566,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     let hasMoved = false;
     
     // 如果正在标注位置选择模式
-    if (isAnnotationPlacing && placingAnnotationTarget) {
+    if (isAnnotationPlacingRef.current && placingAnnotationTargetRef.current) {
       const meshes: THREE.Object3D[] = [];
       // 只检测选中的目标对象及其子对象
-      placingAnnotationTarget.traverse(o => { 
+      placingAnnotationTargetRef.current.traverse(o => { 
         const m = o as THREE.Mesh; 
         if (m.isMesh && m.geometry && m.visible) {
           meshes.push(m); 
@@ -2067,6 +2067,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // 标注位置选择状态
   const [isAnnotationPlacing, setIsAnnotationPlacing] = useState(false);
   const [placingAnnotationTarget, setPlacingAnnotationTarget] = useState<THREE.Object3D | null>(null);
+  const isAnnotationPlacingRef = useRef(false);
+  const placingAnnotationTargetRef = useRef<THREE.Object3D | null>(null);
 
   const addAnnotationForSelected = () => {
     if (!selectedKey) {
@@ -2079,23 +2081,30 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       return;
     }
     
-
+    console.log('设置标注模式，对象:', obj.name, obj.uuid);
     
     // 进入标注位置选择模式
     setIsAnnotationPlacing(true);
     setPlacingAnnotationTarget(obj);
+    isAnnotationPlacingRef.current = true;
+    placingAnnotationTargetRef.current = obj;
+    
     message.info('请点击对象表面选择标注位置');
     
     // 修改鼠标样式
     if (rendererRef.current?.domElement) {
       rendererRef.current.domElement.style.cursor = 'crosshair';
     }
+    
+    console.log('标注模式设置后(ref):', isAnnotationPlacingRef.current, placingAnnotationTargetRef.current?.name);
   };
 
   // 取消标注位置选择
   const cancelAnnotationPlacing = () => {
     setIsAnnotationPlacing(false);
     setPlacingAnnotationTarget(null);
+    isAnnotationPlacingRef.current = false;
+    placingAnnotationTargetRef.current = null;
     if (rendererRef.current?.domElement) {
       rendererRef.current.domElement.style.cursor = '';
     }
@@ -2103,13 +2112,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   // 处理标注位置选择的点击
   const handleAnnotationPlacement = (intersectionPoint: THREE.Vector3, hitObject: THREE.Object3D) => {
-    if (!placingAnnotationTarget) return;
+    if (!placingAnnotationTargetRef.current) return;
     
     // 检查击中的对象是否是目标对象或其子对象
     let isValidTarget = false;
     let currentObj: THREE.Object3D | null = hitObject;
     while (currentObj) {
-      if (currentObj === placingAnnotationTarget) {
+      if (currentObj === placingAnnotationTargetRef.current) {
         isValidTarget = true;
         break;
       }
@@ -2121,16 +2130,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
     
     // 将世界坐标转换为目标对象的本地坐标
-    placingAnnotationTarget.updateWorldMatrix(true, true);
-    const localPos = placingAnnotationTarget.worldToLocal(intersectionPoint.clone());
-    const path = buildPath(placingAnnotationTarget);
+    placingAnnotationTargetRef.current.updateWorldMatrix(true, true);
+    const localPos = placingAnnotationTargetRef.current.worldToLocal(intersectionPoint.clone());
+    const path = buildPath(placingAnnotationTargetRef.current);
     
     const anno: Annotation = {
       id: generateUuid(),
-      targetKey: placingAnnotationTarget.uuid,
+      targetKey: placingAnnotationTargetRef.current.uuid,
       targetPath: path,
       anchor: { space: 'local', offset: [localPos.x, localPos.y, localPos.z] },
-      label: { title: placingAnnotationTarget.name || '未命名', summary: '' }
+      label: { title: placingAnnotationTargetRef.current.name || '未命名', summary: '' }
     };
     
     setAnnotations(prev => [...prev, anno]);
@@ -2481,23 +2490,30 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const root = modelRootRef.current;
     if (!root) return structure;
     
-    const traverse = (obj: THREE.Object3D, path: string[] = []) => {
+    const traverse = (obj: THREE.Object3D, path: string[] = [], depth = 0) => {
+      // 限制深度，避免过深的层级结构
+      if (depth > 10) return;
+      
       const currentPath = [...path, obj.name || 'unnamed'];
+      
+      // 只保存必要的信息，减少数据量
       structure.push({
         path: currentPath,
         uuid: obj.uuid,
         name: obj.name,
         visible: obj.visible,
-        position: obj.position.toArray(),
-        rotation: obj.rotation.toArray(),
-        scale: obj.scale.toArray(),
         type: obj.type
+        // 暂时不保存位置、旋转、缩放，因为会增加很多数据量
+        // position: obj.position.toArray(),
+        // rotation: obj.rotation.toArray(),
+        // scale: obj.scale.toArray(),
       });
       
-      obj.children.forEach(child => traverse(child, currentPath));
+      obj.children.forEach(child => traverse(child, currentPath, depth + 1));
     };
     
     traverse(root);
+    console.log('模型结构数据大小:', structure.length, '个节点');
     return structure;
   };
 
@@ -2510,6 +2526,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
     setSaving(true);
     try {
+      // 确保clips数据的完整性
+      const validClips = clips.filter(clip => clip && clip.id && clip.timeline);
+      console.log('保存课件数据，clips数量:', validClips.length);
+      console.log('保存数据预览:', {
+        annotations: annotations.length,
+        animations: validClips.length,
+        modelStructure: modelRootRef.current ? '将计算' : '无模型'
+      });
+      
       // 构造保存数据
       const saveData = {
         annotations: annotations.map(a => {
@@ -2526,7 +2551,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             }
           };
         }),
-        animations: clips.map(clip => ({
+        animations: validClips.map(clip => ({
           id: clip.id,
           name: clip.name,
           description: clip.description || '',
@@ -2591,6 +2616,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // 保存模型结构信息（重命名、可见性等）
         modelStructure: buildModelStructure()
       };
+      
+      console.log('最终保存数据大小:', JSON.stringify(saveData).length, '字符');
 
       await apiPut(`/api/coursewares/${coursewareId}`, saveData);
       setLastSaved(new Date());
