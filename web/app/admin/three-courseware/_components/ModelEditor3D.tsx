@@ -1467,13 +1467,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         
           // 第二步：删除应该被删除的对象
           if (structure.deletedUUIDs && Array.isArray(structure.deletedUUIDs)) {
+            console.log('需要删除的UUID列表:', structure.deletedUUIDs);
             const toDelete = [];
-            for (const deletedUUID of structure.deletedUUIDs) {
-              const obj = uuidToObject.get(deletedUUID);
-              if (obj && obj !== modelRootRef.current) {
-                toDelete.push(obj);
-                // 更新删除记录
-                deletedObjectsRef.current.add(deletedUUID);
+            
+            // 通过路径查找需要删除的对象（因为UUID在重新加载后会变化）
+            for (const item of structure.objects) {
+              if (structure.deletedUUIDs.includes(item.uuid)) {
+                // 这个对象应该被删除，通过路径查找
+                const obj = findByFlexiblePath(item.path || []);
+                if (obj && obj !== modelRootRef.current) {
+                  toDelete.push(obj);
+                  console.log('通过路径找到待删除对象:', obj.name, 'UUID:', obj.uuid, '路径:', item.path);
+                }
               }
             }
             
@@ -1481,7 +1486,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             toDelete.forEach(obj => {
               if (obj.parent) {
                 obj.parent.remove(obj);
-                console.log('恢复时删除对象:', obj.name, obj.uuid);
+                console.log('恢复时删除对象:', obj.name, '新UUID:', obj.uuid);
               }
             });
             
@@ -1490,13 +1495,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               console.log('删除记录更新前:', Array.from(deletedObjectsRef.current));
             }
             
-            // 无论是否有对象被删除，都要确保删除记录正确
-            console.log('从数据恢复删除记录:', structure.deletedUUIDs);
+            // 更新删除记录：记录新删除对象的新UUID
+            console.log('从数据恢复删除记录（旧UUID）:', structure.deletedUUIDs);
             deletedObjectsRef.current.clear(); // 先清空
-            structure.deletedUUIDs.forEach((uuid: string) => {
-              deletedObjectsRef.current.add(uuid);
+            
+            // 记录刚删除对象的新UUID
+            toDelete.forEach(obj => {
+              deletedObjectsRef.current.add(obj.uuid);
+              console.log('记录删除对象的新UUID:', obj.uuid);
             });
-            console.log('删除记录更新后:', Array.from(deletedObjectsRef.current));
+            
+            console.log('删除记录更新后（新UUID）:', Array.from(deletedObjectsRef.current));
             
             // 重新构建对象映射
             if (toDelete.length > 0) {
