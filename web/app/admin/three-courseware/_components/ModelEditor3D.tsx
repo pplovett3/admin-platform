@@ -2030,14 +2030,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 2. 计算标签位置（使用保存的固定偏移量）
       let labelPos;
       if (a.label.offset) {
-        // 使用保存的偏移量（相对于标注点的本地坐标偏移）
-        const localLabelPos = new THREE.Vector3(
-          a.anchor.offset[0] + a.label.offset[0],
-          a.anchor.offset[1] + a.label.offset[1], 
-          a.anchor.offset[2] + a.label.offset[2]
+        // 使用保存的固定偏移量（世界坐标系中的绝对偏移）
+        labelPos = new THREE.Vector3(
+          world.x + a.label.offset[0],
+          world.y + a.label.offset[1], 
+          world.z + a.label.offset[2]
         );
-        target.updateWorldMatrix(true, true);
-        labelPos = localLabelPos.clone().applyMatrix4(target.matrixWorld);
       } else {
         // 兼容旧版本：动态计算偏移（面向相机）
         const cameraPos = camera.position.clone();
@@ -2233,7 +2231,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const localPos = placingAnnotationTargetRef.current.worldToLocal(intersectionPoint.clone());
     const path = buildPath(placingAnnotationTargetRef.current);
     
-    // 计算标签的固定偏移量（基于当前相机位置）
+    // 计算标签的固定偏移量（基于当前相机位置，保存为世界坐标偏移）
     const camera = cameraRef.current;
     let labelOffset: [number, number, number] = [0.2, 0.1, 0]; // 默认偏移
     if (camera) {
@@ -2243,12 +2241,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const labelDistance = 0.2; // 标签距离
       const labelWorldPos = worldPos.clone().add(direction.multiplyScalar(labelDistance));
       
-      // 将标签的世界坐标转换为目标对象的本地坐标偏移
-      const labelLocalPos = placingAnnotationTargetRef.current.worldToLocal(labelWorldPos);
+      // 保存世界坐标系中的绝对偏移量
       labelOffset = [
-        labelLocalPos.x - localPos.x,
-        labelLocalPos.y - localPos.y, 
-        labelLocalPos.z - localPos.z
+        labelWorldPos.x - worldPos.x,
+        labelWorldPos.y - worldPos.y, 
+        labelWorldPos.z - worldPos.z
       ] as [number, number, number];
     }
     
