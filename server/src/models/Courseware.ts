@@ -67,6 +67,18 @@ export interface IAnimation {
   steps: IAnimationStep[];
 }
 
+// 模型结构数据（用于保存重命名、层级等信息）
+export interface IModelStructureItem {
+  path: string[];
+  uuid: string;
+  name: string;
+  visible: boolean;
+  position: number[];
+  rotation: number[];
+  scale: number[];
+  type: string;
+}
+
 // 三维课件数据结构
 export interface ICourseware extends Document {
   name: string;
@@ -80,6 +92,7 @@ export interface ICourseware extends Document {
     background?: string;
     lighting?: any;
   };
+  modelStructure?: IModelStructureItem[]; // 模型结构信息
   createdBy: Types.ObjectId; // 创建者
   updatedBy: Types.ObjectId; // 最后修改者
   version: number; // 版本号
@@ -171,6 +184,17 @@ const AnimationSchema = new Schema({
   steps: [AnimationStepSchema]
 }, { _id: false });
 
+const ModelStructureItemSchema = new Schema({
+  path: [String],
+  uuid: { type: String, required: true },
+  name: { type: String, required: true },
+  visible: { type: Boolean, required: true },
+  position: [Number],
+  rotation: [Number],
+  scale: [Number],
+  type: { type: String, required: true }
+}, { _id: false });
+
 const CoursewareSchema = new Schema<ICourseware>(
   {
     name: { type: String, required: true },
@@ -192,6 +216,7 @@ const CoursewareSchema = new Schema<ICourseware>(
       background: { type: String, default: '#919191' },
       lighting: { type: Schema.Types.Mixed }
     },
+    modelStructure: [ModelStructureItemSchema],
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     version: { type: Number, default: 1 }

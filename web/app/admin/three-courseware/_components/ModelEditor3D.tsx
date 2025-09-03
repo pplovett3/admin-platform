@@ -80,6 +80,53 @@ function StepEditor({ open, value, defaultTime, onCancel, onSave, onDelete }: { 
   );
 }
 
+// 动画编辑弹窗
+function AnimationEditor({ open, value, onCancel, onSave, onDelete }: { 
+  open: boolean; 
+  value: { id: string; name: string; description?: string } | null; 
+  onCancel: ()=>void; 
+  onSave: (name: string, description: string)=>void; 
+  onDelete: ()=>void;
+}) {
+  const [form] = Form.useForm();
+  useEffect(()=>{
+    if (open) {
+      form.setFieldsValue({ 
+        name: value?.name || '', 
+        description: value?.description || '' 
+      });
+    }
+  }, [open, value, form]);
+  
+  return (
+    <Modal 
+      title={value ? '编辑动画' : '新建动画'} 
+      open={open} 
+      onCancel={onCancel}
+      footer={null} 
+      destroyOnClose={true} 
+      maskClosable
+    >
+      <Form layout="vertical" form={form} preserve={false}>
+        <Form.Item name="name" label="动画名称" rules={[{ required: true, message: '请输入动画名称' }]}>
+          <Input placeholder="例如：装配过程" />
+        </Form.Item>
+        <Form.Item name="description" label="动画描述">
+          <Input.TextArea placeholder="描述这个动画的内容和用途（可选）" rows={3} />
+        </Form.Item>
+        <Space style={{ width: '100%', justifyContent:'flex-end' }}>
+          {value && <Button danger onClick={onDelete}>删除动画</Button>}
+          <Button onClick={onCancel}>取消</Button>
+          <Button type="primary" onClick={async ()=>{ 
+            const v = await form.validateFields(); 
+            onSave(String(v.name||''), String(v.description||'')); 
+          }}>确定</Button>
+        </Space>
+      </Form>
+    </Modal>
+  );
+}
+
 // --- iOS 扁平风格图标（替换默认图标，交互不变） ---
 function IconViewLeft(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -292,6 +339,7 @@ interface CoursewareData {
   annotations: any[];
   animations: any[];
   settings: any;
+  modelStructure?: any[];
   version: number;
 }
 
@@ -770,6 +818,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [stepModalOpen, setStepModalOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<StepMarker | null>(null);
   const [stepDraftTime, setStepDraftTime] = useState<number>(0);
+  
+  // 动画编辑状态
+  const [animationModalOpen, setAnimationModalOpen] = useState(false);
+  const [editingAnimation, setEditingAnimation] = useState<Clip | null>(null);
   const [stepForm] = Form.useForm();
   // 重命名弹窗
   const [renameOpen, setRenameOpen] = useState(false);
@@ -820,19 +872,61 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   }, [mode, selectedKey, gizmoMode, gizmoSpace]);
 
   const createClip = () => {
-    const name = window.prompt('新建动画名称', `动画${clips.length + 1}`) || '';
-    if (!name.trim()) return;
-    const description = window.prompt('动画描述（可选）', '') || '';
-    const id = generateUuid();
-    const clip: Clip = { id, name, description, timeline: JSON.parse(JSON.stringify(timeline)) };
-    setClips(prev => [clip, ...prev]);
-    setActiveClipId(id);
+    setEditingAnimation(null);
+    setAnimationModalOpen(true);
   };
 
   const saveClip = () => {
     if (!activeClipId) return message.warning('请先选择或新建动画');
     setClips(prev => prev.map(c => c.id === activeClipId ? { ...c, timeline: JSON.parse(JSON.stringify(timeline)) } : c));
     message.success('动画已保存');
+  };
+  
+  // 动画编辑处理函数
+  const handleAnimationSave = (name: string, description: string) => {
+    if (editingAnimation) {
+      // 编辑现有动画
+      setClips(prev => prev.map(c => 
+        c.id === editingAnimation.id 
+          ? { ...c, name, description }
+          : c
+      ));
+      message.success('动画已更新');
+    } else {
+      // 创建新动画
+      const id = generateUuid();
+      const clip: Clip = { 
+        id, 
+        name, 
+        description, 
+        timeline: JSON.parse(JSON.stringify(timeline)) 
+      };
+      setClips(prev => [clip, ...prev]);
+      setActiveClipId(id);
+      message.success('动画已创建');
+    }
+    setAnimationModalOpen(false);
+    setEditingAnimation(null);
+  };
+  
+  const handleAnimationDelete = () => {
+    if (!editingAnimation) return;
+    
+    setClips(prev => prev.filter(c => c.id !== editingAnimation.id));
+    
+    // 如果删除的是当前活动动画，清除活动状态
+    if (activeClipId === editingAnimation.id) {
+      setActiveClipId('');
+    }
+    
+    setAnimationModalOpen(false);
+    setEditingAnimation(null);
+    message.success('动画已删除');
+  };
+  
+  const editClip = (clip: Clip) => {
+    setEditingAnimation(clip);
+    setAnimationModalOpen(true);
   };
 
   const onSelectClip = (id: string) => {
@@ -1464,16 +1558,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     // 如果正在标注位置选择模式
     if (isAnnotationPlacing && placingAnnotationTarget) {
       const meshes: THREE.Object3D[] = [];
-      // 只检测选中的目标对象
+      // 只检测选中的目标对象及其子对象
       placingAnnotationTarget.traverse(o => { 
         const m = o as THREE.Mesh; 
-        if ((m as any).isMesh && (m as any).geometry) meshes.push(m); 
+        if (m.isMesh && m.geometry && m.visible) {
+          meshes.push(m); 
+        }
       });
-      const hits = raycaster.intersectObjects(meshes);
+      
+      const hits = raycaster.intersectObjects(meshes, false);
       
       if (hits.length > 0) {
         const hit = hits[0];
-        handleAnnotationPlacement(hit.point, placingAnnotationTarget);
+        handleAnnotationPlacement(hit.point, hit.object);
         return;
       } else {
         message.warning('请点击选中对象的表面');
@@ -1990,20 +2087,35 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   };
 
   // 处理标注位置选择的点击
-  const handleAnnotationPlacement = (intersectionPoint: THREE.Vector3, targetObj: THREE.Object3D) => {
-    if (!placingAnnotationTarget || targetObj !== placingAnnotationTarget) return;
+  const handleAnnotationPlacement = (intersectionPoint: THREE.Vector3, hitObject: THREE.Object3D) => {
+    if (!placingAnnotationTarget) return;
     
-    // 将世界坐标转换为对象的本地坐标
-    targetObj.updateWorldMatrix(true, true);
-    const localPos = targetObj.worldToLocal(intersectionPoint.clone());
-    const path = buildPath(targetObj);
+    // 检查击中的对象是否是目标对象或其子对象
+    let isValidTarget = false;
+    let currentObj: THREE.Object3D | null = hitObject;
+    while (currentObj) {
+      if (currentObj === placingAnnotationTarget) {
+        isValidTarget = true;
+        break;
+      }
+      currentObj = currentObj.parent;
+    }
+    
+    if (!isValidTarget) {
+      return;
+    }
+    
+    // 将世界坐标转换为目标对象的本地坐标
+    placingAnnotationTarget.updateWorldMatrix(true, true);
+    const localPos = placingAnnotationTarget.worldToLocal(intersectionPoint.clone());
+    const path = buildPath(placingAnnotationTarget);
     
     const anno: Annotation = {
       id: generateUuid(),
-      targetKey: targetObj.uuid,
+      targetKey: placingAnnotationTarget.uuid,
       targetPath: path,
       anchor: { space: 'local', offset: [localPos.x, localPos.y, localPos.z] },
-      label: { title: targetObj.name || '未命名', summary: '' }
+      label: { title: placingAnnotationTarget.name || '未命名', summary: '' }
     };
     
     setAnnotations(prev => [...prev, anno]);
@@ -2516,10 +2628,23 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         pendingImportRef.current = { 
           annotations: coursewareData.annotations.map(a => ({
             id: a.id,
-            target: { path: a.nodeKey }, // 使用保存的路径
-            anchor: { offset: [a.position.x, a.position.y, a.position.z] },
+            nodeKey: a.nodeKey, // 新格式：直接使用nodeKey
+            position: a.position, // 新格式：直接使用position对象
+            title: a.title,
+            description: a.description,
+            // 兼容老格式
+            target: { path: a.nodeKey }, 
+            anchor: { offset: [a.position?.x || 0, a.position?.y || 0, a.position?.z || 0] },
             label: { title: a.title, summary: a.description }
-          }))
+          })),
+          // 包含模型结构数据
+          modelStructure: coursewareData.modelStructure || (coursewareData as any).settings?.modelStructure
+        };
+      } else if (coursewareData.modelStructure || (coursewareData as any).settings?.modelStructure) {
+        // 如果只有模型结构没有标注
+        pendingImportRef.current = {
+          annotations: [],
+          modelStructure: coursewareData.modelStructure || (coursewareData as any).settings?.modelStructure
         };
       }
 
@@ -3024,6 +3149,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 options={(clips||[]).map(c=>({ label: c.name, value: c.id }))} />
               <Button size="small" onClick={createClip}>新建</Button>
               <Button size="small" type="primary" onClick={saveClip}>保存</Button>
+              {activeClipId && (
+                <Button 
+                  size="small" 
+                  onClick={() => {
+                    const clip = clips.find(c => c.id === activeClipId);
+                    if (clip) editClip(clip);
+                  }}
+                >
+                  编辑
+                </Button>
+              )}
               <Divider type="vertical" />
               <span style={{ color: '#94a3b8' }}>激活轨道：</span>
               <span style={{ minWidth: 120, color: activeTrackId ? '#e2e8f0' : '#94a3b8' }}>{(()=>{ const t = activeTrackId; if(!t) return '未选择'; if(t==='cam') return '相机'; if(t.startsWith('vis:')){ const k=t.slice(4); return `显隐: ${keyToObject.current.get(k)?.name||k.slice(0,8)}`;} if(t.startsWith('trs:')){ const k=t.slice(4); return `TRS: ${keyToObject.current.get(k)?.name||k.slice(0,8)}`;} return t; })()}</span>
@@ -3279,6 +3415,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           <div style={{ color:'#94a3b8' }}>支持后端代理域名以解决 CORS（已适配）</div>
         </Form>
       </Modal>
+      <AnimationEditor
+        open={animationModalOpen}
+        value={editingAnimation}
+        onCancel={() => { setAnimationModalOpen(false); setEditingAnimation(null); }}
+        onSave={handleAnimationSave}
+        onDelete={handleAnimationDelete}
+      />
     </div>
   );
 }
