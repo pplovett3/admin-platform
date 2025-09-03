@@ -380,6 +380,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnno, setEditingAnno] = useState<Annotation | null>(null);
+  const [labelScale, setLabelScale] = useState(1.0); // 标签大小缩放
   const keyToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   const markersGroupRef = useRef<THREE.Group | null>(null);
   const pendingImportRef = useRef<any | null>(null); // 缓存导入的 JSON，待模型加载后再解析
@@ -1442,19 +1443,65 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const pending = pendingImportRef.current;
     if (!pending) return;
     try {
-      // 首先恢复模型结构（重命名、可见性等）
+      // 首先恢复模型结构（重命名、可见性、层级关系等）
       if (pending.modelStructure && Array.isArray(pending.modelStructure)) {
+        console.log('开始恢复模型结构，共', pending.modelStructure.length, '个节点');
+        
+        // 第一步：建立UUID到对象的映射
+        const uuidToObject = new Map<string, THREE.Object3D>();
+        const traverseForMapping = (obj: THREE.Object3D) => {
+          uuidToObject.set(obj.uuid, obj);
+          obj.children.forEach(traverseForMapping);
+        };
+        if (modelRootRef.current) traverseForMapping(modelRootRef.current);
+        
+        // 第二步：恢复基本属性（名称、可见性）
         pending.modelStructure.forEach((item: any) => {
-          const obj = findByFlexiblePath(item.path || []);
+          const obj = uuidToObject.get(item.uuid) || findByFlexiblePath(item.path || []);
           if (obj && item.name !== undefined) {
             obj.name = item.name;
             if (item.visible !== undefined) obj.visible = item.visible;
-            // 注意：位置、旋转、缩放通常不应该从保存数据恢复，因为会影响模型原始结构
-            // 除非是用户明确的变换操作
           }
         });
+        
+        // 第三步：恢复层级关系（如果保存了父子关系信息）
+        const restoreHierarchy = () => {
+          const changes = [];
+          for (const item of pending.modelStructure) {
+            const obj = uuidToObject.get(item.uuid);
+            const targetParent = item.parentUuid ? uuidToObject.get(item.parentUuid) : modelRootRef.current;
+            
+            if (obj && targetParent && obj.parent !== targetParent) {
+              // 需要移动对象到新的父级
+              changes.push({ obj, newParent: targetParent, targetIndex: item.indexInParent || 0 });
+            }
+          }
+          
+          // 执行层级变更
+          changes.forEach(({ obj, newParent, targetIndex }) => {
+            // 从原父级移除
+            if (obj.parent) {
+              obj.parent.remove(obj);
+            }
+            // 添加到新父级的指定位置
+            if (targetIndex >= 0 && targetIndex < newParent.children.length) {
+              newParent.children.splice(targetIndex, 0, obj);
+              obj.parent = newParent;
+            } else {
+              newParent.add(obj);
+            }
+          });
+          
+          if (changes.length > 0) {
+            console.log('恢复了', changes.length, '个对象的层级关系');
+          }
+        };
+        
+        restoreHierarchy();
+        
         // 重新构建树结构
         rebuildTree();
+        console.log('模型结构恢复完成');
       }
       
       const restored: Annotation[] = [];
@@ -2024,10 +2071,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const sprite = new THREE.Sprite(spriteMat);
       sprite.position.copy(labelPos);
       
-      // 根据距离调整大小，使其在不同距离下保持合适的视觉尺寸
+      // 根据距离和用户设置调整大小
       const distance = camera.position.distanceTo(world);
-      const scale = Math.max(0.0012, Math.min(0.003, 0.0015 * distance));
-      sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
+      const baseScale = Math.max(0.0012, Math.min(0.003, 0.0015 * distance));
+      const finalScale = baseScale * labelScale; // 应用用户设置的缩放
+      sprite.scale.set(canvas.width * finalScale, canvas.height * finalScale, 1);
       
       sprite.renderOrder = 1001;
       sprite.userData.annotationId = a.id;
@@ -2038,7 +2086,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     });
   }
 
-  useEffect(() => { refreshMarkers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [annotations, selectedKey]);
+  useEffect(() => { refreshMarkers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [annotations, selectedKey, labelScale]);
   
   // 相机变化时更新标注位置
   useEffect(() => {
@@ -2484,29 +2532,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     beforeUpload: async (file) => { try { const text = await file.text(); const json = JSON.parse(text); setTimeline(prev => ({ ...prev, duration: Number(json?.duration||prev.duration), cameraKeys: Array.isArray(json?.cameraKeys)? (json.cameraKeys as CameraKeyframe[]) : prev.cameraKeys, visTracks: (json?.visTracks||prev.visTracks) as Record<string, VisibilityKeyframe[]>, trsTracks: (json?.trsTracks||prev.trsTracks) as Record<string, TransformKeyframe[]> })); message.success('时间线已导入'); } catch (e:any) { message.error(e?.message||'导入失败'); } return false; }
   };
 
-  // 构建模型结构信息（保存重命名、可见性等）
+  // 构建模型结构信息（保存重命名、可见性、层级关系等）
   const buildModelStructure = () => {
     const structure: any[] = [];
     const root = modelRootRef.current;
     if (!root) return structure;
     
-    const traverse = (obj: THREE.Object3D, path: string[] = [], depth = 0) => {
+    const traverse = (obj: THREE.Object3D, parentPath: string[] = [], depth = 0) => {
       // 限制深度，避免过深的层级结构
       if (depth > 10) return;
       
-      const currentPath = [...path, obj.name || 'unnamed'];
+      const currentPath = [...parentPath, obj.name || 'unnamed'];
       
-      // 只保存必要的信息，减少数据量
+      // 保存必要的信息，包括父子关系
       structure.push({
         path: currentPath,
         uuid: obj.uuid,
         name: obj.name,
         visible: obj.visible,
-        type: obj.type
-        // 暂时不保存位置、旋转、缩放，因为会增加很多数据量
-        // position: obj.position.toArray(),
-        // rotation: obj.rotation.toArray(),
-        // scale: obj.scale.toArray(),
+        type: obj.type,
+        parentUuid: obj.parent ? obj.parent.uuid : null,
+        childrenUuids: obj.children.map(child => child.uuid),
+        // 保存在父对象中的索引位置，用于恢复顺序
+        indexInParent: obj.parent ? obj.parent.children.indexOf(obj) : 0
       });
       
       obj.children.forEach(child => traverse(child, currentPath, depth + 1));
@@ -2790,6 +2838,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           <InputNumber size="small" placeholder="旋转吸附°" value={gizmoSnap.r} min={0} step={1} onChange={(v)=>{ const n = (v==null? undefined: Number(v)*Math.PI/180); setGizmoSnap(s=>({ ...s, r: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setRotationSnap((n as any) ?? null); }} />
           <InputNumber size="small" placeholder="缩放吸附" value={gizmoSnap.s} min={0} step={0.01} onChange={(v)=>{ const n = (v==null? undefined: Number(v)); setGizmoSnap(s=>({ ...s, s: n })); tcontrolsRef.current?.setScaleSnap((n as any) ?? null); }} />
           <Select size="small" value={gizmoSpace} style={{ width: 120 }} onChange={(v)=>{ setGizmoSpace(v); tcontrolsRef.current?.setSpace(v as any); }} options={[{label:'局部', value:'local'},{label:'世界', value:'world'}]} />
+        </Space>
+        <Divider style={{ margin: '8px 0' }} />
+        <div style={{ fontWeight: 600 }}>标注设置</div>
+        <Space align="center">
+          <span>标签大小</span>
+          <Slider 
+            style={{ width: 120 }} 
+            min={0.2} 
+            max={3.0} 
+            step={0.1} 
+            value={labelScale} 
+            onChange={(v) => setLabelScale(v)} 
+          />
+          <span>{labelScale.toFixed(1)}x</span>
         </Space>
       </Flex>
     </Modal>
