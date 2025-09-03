@@ -1488,6 +1488,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             if (toDelete.length > 0) {
               console.log('恢复时删除了', toDelete.length, '个对象');
               console.log('删除记录更新前:', Array.from(deletedObjectsRef.current));
+              
               // 确保删除记录包含所有已删除的UUID
               structure.deletedUUIDs.forEach((uuid: string) => {
                 deletedObjectsRef.current.add(uuid);
@@ -1497,8 +1498,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               
               // 删除后需要重新构建映射
               uuidToObject.clear();
+              keyToObject.current.clear(); // 也清理全局映射
               const rebuildMapping = (obj: THREE.Object3D) => {
                 uuidToObject.set(obj.uuid, obj);
+                keyToObject.current.set(obj.uuid, obj); // 同时更新全局映射
                 obj.children.forEach(rebuildMapping);
               };
               if (modelRootRef.current) rebuildMapping(modelRootRef.current);
@@ -1528,7 +1531,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         
         // 重建树结构
         rebuildTree();
-        console.log('模型结构恢复完成，当前UI节点数:', Array.from(keyToObject.current.keys()).length);
+        
+        // 详细调试信息
+        const currentNodeCount = Array.from(keyToObject.current.keys()).length;
+        const sceneNodeCount = modelRootRef.current ? countSceneNodes(modelRootRef.current) : 0;
+        console.log('模型结构恢复完成');
+        console.log('- keyToObject映射节点数:', currentNodeCount);
+        console.log('- 实际场景节点数:', sceneNodeCount);
+        console.log('- 删除记录数:', deletedObjectsRef.current.size);
         
         // 强制触发UI刷新
         setPrsTick(prev => prev + 1);
@@ -2119,25 +2129,37 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       context.fillStyle = 'white';
       context.fillText(text, canvas.width / 2, canvas.height / 2);
       
-      // 创建sprite（始终面向相机）
+      // 创建固定的3D标签（不会朝向相机）
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
-      const spriteMat = new THREE.SpriteMaterial({ 
+      
+      // 使用PlaneGeometry创建固定平面
+      const fixedScale = 0.002 * labelScale; // 固定基础缩放 * 用户设置
+      const labelWidth = canvas.width * fixedScale;
+      const labelHeight = canvas.height * fixedScale;
+      
+      const geometry = new THREE.PlaneGeometry(labelWidth, labelHeight);
+      const material = new THREE.MeshBasicMaterial({ 
         map: texture,
         transparent: true,
-        depthTest: false
+        depthTest: false,
+        side: THREE.DoubleSide // 双面显示
       });
-      const sprite = new THREE.Sprite(spriteMat);
-      sprite.position.copy(labelPos);
       
-      // 使用固定大小，不随距离变化
-      const fixedScale = 0.002 * labelScale; // 固定基础缩放 * 用户设置
-      sprite.scale.set(canvas.width * fixedScale, canvas.height * fixedScale, 1);
+      const labelMesh = new THREE.Mesh(geometry, material);
+      labelMesh.position.copy(labelPos);
       
-      sprite.renderOrder = 1001;
-      sprite.userData.annotationId = a.id;
-      sprite.userData.clickable = true;
-      annotationGroup.add(sprite);
+      // 固定朝向（可以设置一个固定的旋转，比如朝向Y轴）
+      labelMesh.lookAt(
+        labelPos.x,
+        labelPos.y + 1, // 朝向Y轴上方
+        labelPos.z
+      );
+      
+      labelMesh.renderOrder = 1001;
+      labelMesh.userData.annotationId = a.id;
+      labelMesh.userData.clickable = true;
+      annotationGroup.add(labelMesh);
       
       group.add(annotationGroup);
     });
@@ -3009,6 +3031,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   function isUuidLike(s: string): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+  }
+
+  // 辅助函数：计算场景中的实际节点数
+  function countSceneNodes(root: THREE.Object3D): number {
+    let count = 0;
+    root.traverse(() => count++);
+    return count;
   }
 
   function findByFlexiblePath(path: string | string[]): THREE.Object3D | undefined {
