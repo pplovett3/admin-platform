@@ -352,6 +352,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [saving, setSaving] = useState<boolean>(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const autoKeyRef = useRef<boolean>(false);
+  const [coursewareName, setCoursewareName] = useState<string>('');
   useEffect(()=>{ autoKeyRef.current = autoKey; }, [autoKey]);
   const trackLabelWidth = 160;
   const materialBackup = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
@@ -1274,17 +1275,31 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         .setKTX2Loader(ktx2)
         .setDRACOLoader(draco);
 
-      // 如果通过后端代理加载（/api/files/proxy?...）需要携带鉴权头
-      try {
+      // 对于本地API文件，需要构建完整URL并添加认证
+      let finalSrc = src;
+      if (src.startsWith('/api/files/')) {
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        finalSrc = `${baseUrl}${src}`;
+      }
+
+      // 使用fetch来加载带认证的模型文件
+      let root: THREE.Object3D;
+      if (src.startsWith('/api/files/')) {
         const token = getToken?.();
-        if (token) {
-          (loader as any).setRequestHeader?.({ Authorization: `Bearer ${token}` });
-          (ktx2 as any).setRequestHeader?.({ Authorization: `Bearer ${token}` });
-          (draco as any).setRequestHeader?.({ Authorization: `Bearer ${token}` });
+        const response = await fetch(finalSrc, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load model: ${response.status} ${response.statusText}`);
         }
-      } catch {}
-      const gltf = await loader.loadAsync(src);
-      const root = gltf.scene || gltf.scenes[0];
+        const arrayBuffer = await response.arrayBuffer();
+        const gltf = await loader.parseAsync(arrayBuffer, '');
+        root = gltf.scene || gltf.scenes[0];
+      } else {
+        const gltf = await loader.loadAsync(finalSrc);
+        root = gltf.scene || gltf.scenes[0];
+      }
+      
       modelRootRef.current = root;
       scene.add(root);
       setModelName(root.name || '模型');
@@ -2158,6 +2173,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (!coursewareData || initialDataLoadedRef.current) return;
 
     try {
+      // 初始化课件名称
+      setCoursewareName(coursewareData.name || '三维课件');
+      
       // 初始化标注
       if (coursewareData.annotations && Array.isArray(coursewareData.annotations)) {
         const restoredAnnotations: Annotation[] = coursewareData.annotations.map(a => ({
@@ -2436,19 +2454,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         if (!editable) { (document.activeElement as HTMLElement | null)?.blur?.(); }
       }}
     >
-      <Card title="模型与结构树" bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
-        <Form layout="vertical" form={urlForm} onFinish={(v)=> loadModel(v.url)}>
-          <Form.Item name="url" label="GLB URL" rules={[{ required: true, message: '请输入 GLB 直链 URL' }]}>
-            <Input placeholder="https://.../model.glb" allowClear />
-          </Form.Item>
-          <Space wrap size={[8, 8]}>
-            <Button type="primary" htmlType="submit" loading={loading}>加载</Button>
-            <Button onClick={onFocusSelected} disabled={!selectedKey}>对焦所选</Button>
-            <Button onClick={onIsolateSelected} disabled={!selectedKey}>隔离所选</Button>
-            <Button onClick={onShowAll}>显示全部</Button>
-          </Space>
-        </Form>
-        <div style={{ marginTop: 12, flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
+      <Card title={coursewareName || '三维课件'} bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
+        <Space wrap size={[8, 8]} style={{ marginBottom: 12 }}>
+          <Button onClick={onFocusSelected} disabled={!selectedKey}>对焦所选</Button>
+          <Button onClick={onIsolateSelected} disabled={!selectedKey}>隔离所选</Button>
+          <Button onClick={onShowAll}>显示全部</Button>
+        </Space>
+        <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
           <Input.Search placeholder="搜索节点名" allowClear onChange={(e)=>setTreeFilter(e.target.value)} style={{ marginBottom: 8 }} />
           <div style={{
             '--tree-row-h': '28px',

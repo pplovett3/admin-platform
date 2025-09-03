@@ -32,7 +32,10 @@ export default function ThreeCoursewareCreatePage() {
       
       const created: any = await apiPost('/api/coursewares', coursewareData);
       message.success('课件创建成功');
-      router.push(`/admin/three-courseware/${created._id}`);
+      // 在新窗口中打开编辑器
+      window.open(`/admin/three-courseware/${created._id}`, '_blank');
+      // 返回列表页面
+      router.push('/admin/three-courseware');
     } catch (e: any) { 
       message.error(e?.message || '创建失败'); 
     } finally { 
