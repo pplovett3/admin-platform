@@ -1332,6 +1332,12 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
+    
+    // 记录初始位置，用于区分点击和拖拽
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let hasMoved = false;
+    
     // 先检测标注点
     const markers = markersGroupRef.current;
     if (markers) {
@@ -1351,6 +1357,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     // 若点击在 TransformControls 的 gizmo 上，不做射线选取，交给 gizmo 处理
     const tcontrols = tcontrolsRef.current;
     if (tcontrols && (tcontrols as any).dragging) return;
+    
     // 直接进行一次网格拾取
     // 命中场景网格（标注或兜底）
     const meshes: THREE.Object3D[] = [];
@@ -1363,16 +1370,38 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       selectObject(obj, add);
       return;
     }
-    // 点击空白：取消选中
-    setSelectedKey(undefined);
-    setSelectedSet(new Set());
-    setSelectedCamKeyIdx(null);
-    setSelectedTrs(null);
-    setSelectedVis(null);
-    const t = tcontrolsRef.current; if (t) { t.detach(); (t as any).visible = false; }
-    const outline = outlineRef.current; if (outline) outline.selectedObjects = [];
-    clearEmissiveHighlight();
-    if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
+    
+    // 监听鼠标移动来区分点击和拖拽
+    const onMove = (moveEvent: PointerEvent) => {
+      const deltaX = Math.abs(moveEvent.clientX - startX);
+      const deltaY = Math.abs(moveEvent.clientY - startY);
+      // 如果移动超过5像素，认为是拖拽操作
+      if (deltaX > 5 || deltaY > 5) {
+        hasMoved = true;
+      }
+    };
+    
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove as any);
+      window.removeEventListener('pointerup', onUp);
+      
+      // 只有在纯点击（无拖拽）且不是Ctrl/Meta键（框选）的情况下才取消选择
+      if (!hasMoved && !(event.ctrlKey || event.metaKey)) {
+        // 点击空白：取消选中
+        setSelectedKey(undefined);
+        setSelectedSet(new Set());
+        setSelectedCamKeyIdx(null);
+        setSelectedTrs(null);
+        setSelectedVis(null);
+        const t = tcontrolsRef.current; if (t) { t.detach(); (t as any).visible = false; }
+        const outline = outlineRef.current; if (outline) outline.selectedObjects = [];
+        clearEmissiveHighlight();
+        if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
+      }
+    };
+    
+    window.addEventListener('pointermove', onMove as any);
+    window.addEventListener('pointerup', onUp);
   }
 
   function syncHighlight() {
