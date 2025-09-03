@@ -2779,17 +2779,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           formData.append('file', glbBlob, `courseware-${coursewareId}-modified.glb`);
           
           console.log('⬆️ 上传修改后的模型文件...');
-          const uploadResponse = await fetch('/api/files/upload', {
+          const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+          const token = (typeof getToken === 'function' ? getToken() : localStorage.getItem('token')) as string | null;
+          const uploadResponse = await fetch(`${baseUrl}/api/files/upload`, {
             method: 'POST',
             body: formData,
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`
-            }
+            headers: token ? { 'Authorization': `Bearer ${token}` } : undefined
           });
           
           if (uploadResponse.ok) {
             const uploadResult = await uploadResponse.json();
-            modifiedModelUrl = uploadResult.url;
+            // 兼容后端返回的字段名（downloadUrl 或 url）
+            modifiedModelUrl = uploadResult.downloadUrl || uploadResult.url;
             console.log('✅ 模型文件上传成功:', modifiedModelUrl);
           } else {
             console.error('❌ 模型文件上传失败');
