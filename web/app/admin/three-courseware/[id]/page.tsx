@@ -13,6 +13,7 @@ interface CoursewareData {
   name: string;
   description: string;
   modelUrl: string;
+  modifiedModelUrl?: string;
   annotations: any[];
   animations: any[];
   settings: any;

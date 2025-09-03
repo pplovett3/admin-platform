@@ -254,6 +254,7 @@ function IconShowAll(props: React.SVGProps<SVGSVGElement>) {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -341,6 +342,7 @@ interface CoursewareData {
   name: string;
   description: string;
   modelUrl: string;
+  modifiedModelUrl?: string;
   annotations: any[];
   animations: any[];
   settings: any;
@@ -1059,7 +1061,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   useEffect(() => {
     if (initialUrl) {
       urlForm.setFieldsValue({ url: initialUrl });
-      loadModel(initialUrl);
+      // 优先加载修改后的模型（如果存在）
+      loadModel(initialUrl, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialUrl]);
@@ -1350,10 +1353,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   }
 
-  async function loadModel(src: string) {
+  async function loadModel(src: string, preferModified: boolean = false) {
     const scene = sceneRef.current!;
     setLoading(true);
-    message.loading('正在加载模型...', 0); // 0表示不自动消失
+    
+    // 如果有修改后的模型且优先使用修改版本，则使用修改后的URL
+    let actualSrc = src;
+    if (preferModified && coursewareData?.modifiedModelUrl) {
+      actualSrc = coursewareData.modifiedModelUrl;
+      console.log('🔄 使用修改后的模型文件:', actualSrc);
+      message.loading('正在加载修改后的模型...', 0);
+    } else {
+      console.log('📁 使用原始模型文件:', actualSrc);
+      message.loading('正在加载模型...', 0); // 0表示不自动消失
+    }
+    
     try {
       // 清除旧模型
       if (modelRootRef.current) {
@@ -1389,15 +1403,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         .setDRACOLoader(draco);
 
       // 对于本地API文件，需要构建完整URL并添加认证
-      let finalSrc = src;
-      if (src.startsWith('/api/files/')) {
+      let finalSrc = actualSrc;
+      if (actualSrc.startsWith('/api/files/')) {
         const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
-        finalSrc = `${baseUrl}${src}`;
+        finalSrc = `${baseUrl}${actualSrc}`;
       }
 
       // 使用fetch来加载带认证的模型文件
       let root: THREE.Object3D;
-      if (src.startsWith('/api/files/')) {
+      if (actualSrc.startsWith('/api/files/')) {
         const token = getToken?.();
         const response = await fetch(finalSrc, {
           headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -2653,6 +2667,58 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // 跟踪被删除的对象UUID
   const deletedObjectsRef = useRef<Set<string>>(new Set());
   
+  // GLB导出器
+  const exporterRef = useRef<GLTFExporter | null>(null);
+  
+  // 初始化导出器
+  useEffect(() => {
+    exporterRef.current = new GLTFExporter();
+  }, []);
+  
+  // 导出当前模型状态为GLB
+  const exportCurrentModelAsGLB = async (): Promise<Blob | null> => {
+    if (!modelRootRef.current || !exporterRef.current) {
+      console.error('模型或导出器未初始化');
+      return null;
+    }
+    
+    try {
+      console.log('开始导出当前模型状态为GLB...');
+      
+      // 克隆模型以避免影响当前场景
+      const clonedModel = modelRootRef.current.clone(true);
+      
+      // 导出为GLB格式
+      const result = await new Promise<ArrayBuffer>((resolve, reject) => {
+        exporterRef.current!.parse(
+          clonedModel,
+          (gltf) => {
+            if (gltf instanceof ArrayBuffer) {
+              resolve(gltf);
+            } else {
+              reject(new Error('导出格式错误'));
+            }
+          },
+          (error) => reject(error),
+          { binary: true } // 导出为GLB格式
+        );
+      });
+      
+      const blob = new Blob([result], { type: 'model/gltf-binary' });
+      console.log('GLB导出成功，大小:', (blob.size / 1024).toFixed(2), 'KB');
+      return blob;
+      
+    } catch (error) {
+      console.error('GLB导出失败:', error);
+      return null;
+    }
+  };
+  
+  // 检测是否有结构变化（删除、重命名、层级调整）
+  const hasStructureChanges = (): boolean => {
+    return deletedObjectsRef.current.size > 0; // 简化：主要检测删除操作
+  };
+  
   // 构建模型结构信息（包含删除记录）
   const buildModelStructure = () => {
     const structure: any = {
@@ -2700,13 +2766,45 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
     setSaving(true);
     try {
+      let modifiedModelUrl = null;
+      
+      // 如果模型结构有变化，导出新的GLB文件
+      if (modelRootRef.current && hasStructureChanges()) {
+        console.log('🔄 检测到模型结构变化，导出新GLB文件...');
+        const glbBlob = await exportCurrentModelAsGLB();
+        
+        if (glbBlob) {
+          // 上传新的GLB文件
+          const formData = new FormData();
+          formData.append('file', glbBlob, `courseware-${coursewareId}-modified.glb`);
+          
+          console.log('⬆️ 上传修改后的模型文件...');
+          const uploadResponse = await fetch('/api/files/upload', {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          
+          if (uploadResponse.ok) {
+            const uploadResult = await uploadResponse.json();
+            modifiedModelUrl = uploadResult.url;
+            console.log('✅ 模型文件上传成功:', modifiedModelUrl);
+          } else {
+            console.error('❌ 模型文件上传失败');
+            throw new Error('模型文件上传失败');
+          }
+        }
+      }
+      
       // 确保clips数据的完整性
       const validClips = clips.filter(clip => clip && clip.id && clip.timeline);
       console.log('保存课件数据，clips数量:', validClips.length);
       console.log('保存数据预览:', {
         annotations: annotations.length,
         animations: validClips.length,
-        modelStructure: modelRootRef.current ? '将计算' : '无模型'
+        modifiedModel: modifiedModelUrl ? '已更新' : '无变化'
       });
       
       // 构造保存数据
@@ -2799,7 +2897,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           }
         },
         // 保存模型结构信息（重命名、可见性等）
-        modelStructure: buildModelStructure()
+        modelStructure: buildModelStructure(),
+        // 如果有修改后的模型文件，保存其URL
+        ...(modifiedModelUrl && { modifiedModelUrl })
       };
       
       console.log('最终保存数据大小:', JSON.stringify(saveData).length, '字符');

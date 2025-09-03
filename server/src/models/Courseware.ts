@@ -86,6 +86,7 @@ export interface ICourseware extends Document {
   name: string;
   description: string;
   modelUrl: string; // GLB文件URL
+  modifiedModelUrl?: string; // 修改后的GLB文件URL（可选）
   annotations: IAnnotation[];
   animations: IAnimation[];
   settings: {
@@ -204,6 +205,7 @@ const CoursewareSchema = new Schema<ICourseware>(
     name: { type: String, required: true },
     description: { type: String, default: '' },
     modelUrl: { type: String, required: true },
+    modifiedModelUrl: { type: String },
     annotations: [AnnotationSchema],
     animations: [AnimationSchema],
     settings: {
