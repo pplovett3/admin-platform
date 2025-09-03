@@ -1471,13 +1471,26 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             const toDelete = [];
             
             // 通过路径查找需要删除的对象（因为UUID在重新加载后会变化）
+            console.log('当前保存的对象数据:', structure.objects.length, '条');
+            
             for (const item of structure.objects) {
               if (structure.deletedUUIDs.includes(item.uuid)) {
+                console.log('找到需要删除的对象记录:', {
+                  旧UUID: item.uuid,
+                  路径: item.path,
+                  名称: item.name
+                });
+                
                 // 这个对象应该被删除，通过路径查找
                 const obj = findByFlexiblePath(item.path || []);
                 if (obj && obj !== modelRootRef.current) {
                   toDelete.push(obj);
-                  console.log('通过路径找到待删除对象:', obj.name, 'UUID:', obj.uuid, '路径:', item.path);
+                  console.log('✅ 通过路径找到待删除对象:', obj.name, '新UUID:', obj.uuid, '路径:', item.path);
+                } else {
+                  console.log('❌ 路径查找失败，找不到对象:', {
+                    路径: item.path,
+                    查找结果: obj ? '找到但是根对象' : '未找到'
+                  });
                 }
               }
             }
@@ -3045,19 +3058,28 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   }
 
   function findByFlexiblePath(path: string | string[]): THREE.Object3D | undefined {
+    console.log('🔍 查找路径:', path);
+    
     // 处理字符串路径
     if (typeof path === 'string') {
       const direct = findByPath(path);
-      if (direct) return direct;
+      if (direct) {
+        console.log('✅ 字符串路径直接找到:', direct.name);
+        return direct;
+      }
       const segs = path.split('/').filter(Boolean);
+      console.log('🔄 字符串路径转换为段:', segs);
       return findByPathSegments(segs);
     }
     
     // 处理数组路径
     if (Array.isArray(path)) {
-      return findByPathSegments(path.filter(Boolean));
+      const filteredPath = path.filter(Boolean);
+      console.log('🔄 数组路径过滤后:', filteredPath);
+      return findByPathSegments(filteredPath);
     }
     
+    console.log('❌ 无效路径类型');
     return undefined;
   }
   
