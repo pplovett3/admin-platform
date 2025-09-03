@@ -34,10 +34,7 @@ export default function ResourcesPage() {
         const lower = raw.toLowerCase();
         if (!(lower.endsWith('.glb') || lower.includes('.glb?'))) return null;
         const viewerSrc = raw; // 直接使用直链：video.yf-xr.com 或 dl.yf-xr.com
-        return <Space>
-          <Button icon={<EyeOutlined/>} onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(viewerSrc)}`,'_blank')}>查看</Button>
-          <Button type="primary" onClick={()=> window.open(`/admin/three-courseware/editor?src=${encodeURIComponent(viewerSrc)}`,'_blank')}>用三维课件编辑器打开</Button>
-        </Space>;
+        return <Button icon={<EyeOutlined/>} onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(viewerSrc)}`,'_blank')}>查看</Button>;
       })()}
       <Button icon={<DownloadOutlined/>} onClick={()=>authDownload(r.downloadUrl, r.originalName)}>下载</Button>
       <Popconfirm title="确定删除该文件吗？" onConfirm={()=>onDelete(r)}>

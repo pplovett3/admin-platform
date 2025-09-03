@@ -1,85 +1,114 @@
 ## 三维课件编辑器 任务清单（admin-platform）
 
-说明：按里程碑拆分，含前端 Web、后端 Server、AI、Unity 对接与发布。勾选顺序建议按里程碑推进。
+说明：按阶段划分，完成的任务用 ✅ 标记，进行中用 🔄 标记，待开始用 ⏳ 标记。
 
-### M1 基础
+### 阶段一：基础架构与编辑器核心
+#### 前端基础架构
 - [x] Web: 新增导航与路由 `三维课件` → `/admin/three-courseware`
-- [x] Web: 列表页（搜索/上传 GLB/FBX/进入编辑）；课程元数据卡片（基础骨架）
-- [x] Web: 编辑页骨架（三栏：结构树 | 3D 视窗 | 属性/媒体）（占位页）
-- [x] Web: GLB 加载（DRACO/KTX2 支持）、相机对焦、拾取选中、高亮（OutlinePass）
-- [x] Web: GLB 加载（DRACO/KTX2 支持）、相机对焦、拾取选中（基础版）
-- [x] Web: 结构树（遍历 glTF 场景树，选中联动）
-- [x] Web: 标注创建/编辑/删除（标题、摘要，锚点默认包围盒中心）
-- [x] Web: 标注标记点渲染与点击交互（球体占位）
-- [x] Web: 保存/加载 `annotations.json`（路径匹配目标）
-- [x] Web: 标注导入鲁棒性提升（支持过滤 UUID 段、按 `namePath` 还原）
-- [x] Web: 左侧工具按钮组支持自动换行（窄屏不裁切）
-- [x] Server: 上传沿用现有资源管理（模型上传复用，无需新建 API）
-- [ ] Server: FBX→GLB 转换任务（FBX2glTF/Blender 子进程）、任务查询
-- [ ] Server: 课件 CRUD（记录 annotations/timeline/course URL 与版本）
+- [x] Web: 课件列表页面（创建/编辑/删除）
+- [x] Web: 新建课件页面（基础信息）
+- [x] Web: 编辑器页面骨架（三栏：结构树 | 3D 视窗 | 时间线）
 
-### M2 动画与时间线
-- [x] Web: 时间线 UI 基础（相机/显隐/TRS 轨道，刻度与列表）
-- [x] Web: 关键帧操作（增删/时间调整、缓动 linear/easeInOut）
-- [x] Web: 预览插值器（自定义插值），与视窗状态同步
-- [x] Web: 导出/导入 `timeline.json`（v1.1，含 `trsTracks`）
-- [ ] Web: 时间线帧点可拖拽、区间拉伸、复制粘贴（已实现“帧点拖拽”，区间拉伸/复制粘贴未实现）
-- [x] Web: 高亮稳定方案（OutlinePass 与材质描边二选一）
-- [ ] Web: 标注显示轨道（按时间显示/隐藏指定标注）（已支持全局标注显隐关键帧与回放，尚缺逐条标注轨道列表与编辑）
-- [ ] Server: 课件版本化与回滚；打包导出（GLB + JSON + 媒体清单）
+#### 三维编辑器核心
+- [x] Web: GLB 模型加载（DRACO/KTX2 支持）
+- [x] Web: 结构树（遍历 glTF 场景，选中联动，显隐控制）
+- [x] Web: 相机控制（对焦、框选、旋转优化）
+- [x] Web: 对象拾取与高亮（OutlinePass）
+- [x] Web: 变换操控（位置/旋转/缩放）
 
-### M3 AI 与媒体
-- [ ] Web: “生成 AI 讲解”面板，整理层级+标注摘要并调用后端
-- [ ] Server: DeepSeek 集成，提示词模板与 JSON Schema 校验，产出 `course.json`
-- [ ] Web: 播放 `course.json`（镜头聚焦/高亮/媒体展示/字幕）
-- [ ] 可选: 接入 TTS（Edge/讯飞），生成音频与 SRT；播放器与时间线同步
+#### 动画系统
+- [x] Web: 时间线 UI（相机、显隐、TRS 轨道）
+- [x] Web: 关键帧操作（增删改、时间调整）
+- [x] Web: 关键帧多选与批量操作
+- [x] Web: 关键帧复制粘贴（Ctrl+C/V）
+- [x] Web: 动画预览与播放
+- [x] Web: 撤销重做系统
+- [x] Web: 步骤管理（名称、描述、时间点）
 
-### M4 对接与发布
-- [ ] Unity: 使用 glTFast 加载 GLB；解析 annotations/timeline/course JSON
-- [ ] Unity: 生成标注点 Prefab、点击打开 UI、回放时间线（Timeline/Playable 或 DOTween）
-- [ ] Platform: 权限与角色（仅管理员/教研可编辑；其余只读）
-- [ ] Platform: 发布与版本管理，CDN/签名 URL 接入
-- [ ] QA: 性能与稳定性测试（≥50 万面）、FBX 转换失败回退流程
+#### 标注系统
+- [x] Web: 标注创建/编辑/删除（简化版：标题+简介）
+- [x] Web: 标注标记点渲染与交互
+- [x] Web: 标注数据导入导出
+- [x] Web: 简化标注功能（仅保留标题+简介，移除富媒体）
 
-### 工程与基础设施
-- [ ] 前端依赖：three.js/R3F、postprocessing、draco/ktx2 loaders、UI 组件库
-- [ ] 后端依赖：FBX2glTF/Blender、任务队列、对象存储/静态资源服务
-- [ ] 监控与日志：上传/转换/AI 调用日志、异常与告警
-- [ ] 文档：README、数据结构说明、API 文档与示例
+### 阶段二：后端系统与数据持久化
+#### 后端API开发
+- [x] Server: 创建 Courseware 数据模型（MongoDB）
+- [x] Server: 实现课件 CRUD API（创建/读取/更新/删除/列表）
+- [x] Server: 添加课件路由与权限控制
+- [x] Server: 扩展资源 API（模型资源列表、本地上传）
 
-### 预估工作量（T-Shirt）
-- M1: L  | M2: L  | M3: M  | M4: M  | 基建: M
+#### 前后端集成
+- [x] Web: 编辑器与后端API集成（保存/加载课件数据）
+- [x] Web: 实现 courseware.json 数据格式
+- [x] Web: 新建页面添加模型选择功能
+- [x] Web: 平台资源浏览器（个人/公共资源）
+- [x] Web: 本地模型上传功能
 
-### 里程碑验收清单
-- [x] M1：导入/树/标注可用，annotations 保存与重载正常（含无 UUID 名称链匹配）
-- [x] M2：时间线可编辑与预览，timeline 保存与重载正常
-- [ ] M3：AI 生成 `course.json` 并可回放；（可选）TTS 播放与字幕
-- [ ] M4：Unity 端使用同一资产与 JSON 成功回放；平台权限与发布打通
+#### 功能完善
+- [x] Web: 简化标注功能（移除富媒体，仅保留标题+简介）
+- [x] Web: 移除资源管理中的旧编辑入口
+- [ ] Web: 错误处理与用户体验优化
 
-### 下一步开发计划（滚动两周）
+### 阶段三：AI讲课系统（后期开发）
+#### AI课程生成
+- [ ] Server: DeepSeek API 集成
+- [ ] Server: AI课程生成接口（course.json格式）
+- [ ] Web: AI讲课制作页面（独立模块）
+- [ ] Web: 课程脚本编辑器
+- [ ] Web: TTS语音生成集成
 
-1) 收尾 M1（后端能力补齐）
-- [ ] Server: 课件 CRUD 与数据模型（Mongo 集合：coursewares、schemas/校验）
-- [ ] Web: 列表/编辑页对接 CRUD（创建/更新/查询/删除，绑定 annotations.json 与 model URL）
-- [ ] Server: `/api/tools/fbx2glb` 队列与状态轮询；落盘至 NAS/对象存储
-- [ ] Web: 支持上传 FBX 并展示转换状态，完成后自动回填 GLB URL
+#### 课程播放系统
+- [ ] Web: course.json 播放器
+- [ ] Web: 动画与标注联动播放
+- [ ] Web: 字幕与语音同步
+- [ ] Web: VR/数字人集成预留
 
-2) M2 时间线（最小可用版本）
-- [ ] Web: 时间线 UI 骨架（轨道：相机、显隐、高亮、节点 TRS、标注显隐）
-- [ ] Web: 关键帧增删改与拖拽，支持缓动（含线性/平滑）
-- [ ] Web: 播放器与三维联动（相机/显隐/高亮/标注）
-- [ ] Web: 导出/导入 `timeline.json`（与 annotations 关联）
-- [ ] Web: 高亮稳定方案（OutlinePass 或材质描边二选一，可切换）
+### 阶段四：Unity对接与发布
+#### Unity集成
+- [ ] Unity: glTFast加载GLB模型
+- [ ] Unity: 解析courseware.json数据
+- [ ] Unity: 标注点Prefab与交互
+- [ ] Unity: 时间线回放系统
+- [ ] Unity: VR教学大厅集成
 
-3) M3 AI 讲解（DeepSeek 集成）
-- [ ] Server: `/api/ai/course/generate`（提示词模板、JSON Schema 校验，返回 `course.json`）
-- [ ] Web: “生成 AI 讲解”面板（选择片段/时长/语气），触发生成并展示结果
-- [ ] Web: `course.json` 播放（镜头聚焦/高亮/媒体弹窗/字幕）
+#### 平台完善
+- [ ] Platform: 权限与角色管理
+- [ ] Platform: 课件发布与版本控制
+- [ ] Platform: CDN与资源优化
+- [ ] QA: 性能测试与稳定性验证
 
-### 近期可测试内容
-- 导入/导出标注：支持 UUID 变化时基于名称链匹配（`namePath`）自动还原
-- 结构树与拾取选中/对焦/隔离/显示全部：交互链路稳定
-- 左侧按钮组在窄屏自动换行；3D 视窗与右侧面板滚动布局
-- 通过后端代理加载 GLB（携带鉴权头）
+### 当前阶段重点任务
+#### 立即开始
+- [ ] 🔄 实现后端Courseware数据模型
+- [ ] ⏳ 创建课件CRUD API
+- [ ] ⏳ 编辑器数据持久化集成
+
+#### 接下来
+- [ ] ⏳ 模型选择功能开发
+- [ ] ⏳ 标注系统简化
+- [ ] ⏳ 旧入口清理
+
+### 验收标准
+#### 阶段一验收 ✅
+- [x] 三维编辑器功能完整可用
+- [x] 动画系统支持关键帧编辑与预览
+- [x] 标注系统基础功能实现
+
+#### 阶段二验收
+- [ ] 课件可完整保存到数据库
+- [ ] 新建课件支持模型选择
+- [ ] 编辑器数据与后端完全同步
+- [ ] 标注功能符合简化需求
+
+#### 阶段三验收（待规划）
+- [ ] AI课程生成功能可用
+- [ ] 课程播放系统完整
+- [ ] 前端页面分离清晰
+
+#### 阶段四验收（待规划）
+- [ ] Unity成功解析课件数据
+- [ ] 跨平台数据一致性验证
+- [ ] 发布流程完整可用
 
 

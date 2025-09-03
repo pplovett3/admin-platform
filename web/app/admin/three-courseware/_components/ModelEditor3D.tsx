@@ -215,8 +215,9 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch, Dropdown, Segmented, Tooltip, Divider } from 'antd';
-import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
+import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined, SaveOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { getToken } from '@/app/_lib/api';
+import { apiPut } from '@/app/_utils/api';
 import type { UploadProps } from 'antd';
 
 type TreeNode = {
@@ -225,14 +226,12 @@ type TreeNode = {
   children?: TreeNode[];
 };
 
-type AnnotationMedia = { type: 'image'|'video'; src: string };
 type Annotation = {
   id: string;
   targetKey: string; // object.uuid
   targetPath: string; // name path
   anchor: { space: 'local'; offset: [number,number,number] };
   label: { title: string; summary?: string };
-  media: AnnotationMedia[];
 };
 
 type CameraKeyframe = {
@@ -285,7 +284,24 @@ function generateUuid(): string {
   }
 }
 
-export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
+interface CoursewareData {
+  _id: string;
+  name: string;
+  description: string;
+  modelUrl: string;
+  annotations: any[];
+  animations: any[];
+  settings: any;
+  version: number;
+}
+
+interface ModelEditor3DProps {
+  initialUrl?: string;
+  coursewareId?: string;
+  coursewareData?: CoursewareData;
+}
+
+export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData }: ModelEditor3DProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -319,6 +335,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const keyToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   const markersGroupRef = useRef<THREE.Group | null>(null);
   const pendingImportRef = useRef<any | null>(null); // 缓存导入的 JSON，待模型加载后再解析
+  const initialDataLoadedRef = useRef<boolean>(false); // 防止重复加载初始数据
   const [timeline, setTimeline] = useState<TimelineState>({ duration: 10, current: 0, playing: false, cameraKeys: [], visTracks: {}, trsTracks: {}, annotationTracks: {} });
   const lastTickRef = useRef<number>(performance.now());
   const [cameraKeyEasing, setCameraKeyEasing] = useState<'linear'|'easeInOut'>('easeInOut');
@@ -332,6 +349,8 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
   const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
   const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 });
   const [autoKey, setAutoKey] = useState<boolean>(false);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const autoKeyRef = useRef<boolean>(false);
   useEffect(()=>{ autoKeyRef.current = autoKey; }, [autoKey]);
   const trackLabelWidth = 160;
@@ -1311,8 +1330,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
           targetKey: target.uuid,
           targetPath: buildPath(target),
           anchor: { space: 'local', offset: [Number(offset[0]||0), Number(offset[1]||0), Number(offset[2]||0)] },
-          label: { title: String(x?.label?.title || target.name || '未命名'), summary: String(x?.label?.summary || '') },
-          media: Array.isArray(x?.media) ? x.media.filter((m:any)=>m?.src).map((m:any)=>({ type: m.type==='video'?'video':'image', src: String(m.src)})) : []
+          label: { title: String(x?.label?.title || target.name || '未命名'), summary: String(x?.label?.summary || '') }
         });
       });
       setAnnotations(restored);
@@ -1676,8 +1694,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       targetKey: obj.uuid,
       targetPath: path,
       anchor: { space: 'local', offset: [local.x, local.y, local.z] },
-      label: { title: obj.name || '未命名', summary: '' },
-      media: []
+      label: { title: obj.name || '未命名', summary: '' }
     };
     setAnnotations(prev => [...prev, anno]);
     setEditingAnno(anno);
@@ -2019,6 +2036,221 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
     beforeUpload: async (file) => { try { const text = await file.text(); const json = JSON.parse(text); setTimeline(prev => ({ ...prev, duration: Number(json?.duration||prev.duration), cameraKeys: Array.isArray(json?.cameraKeys)? (json.cameraKeys as CameraKeyframe[]) : prev.cameraKeys, visTracks: (json?.visTracks||prev.visTracks) as Record<string, VisibilityKeyframe[]>, trsTracks: (json?.trsTracks||prev.trsTracks) as Record<string, TransformKeyframe[]> })); message.success('时间线已导入'); } catch (e:any) { message.error(e?.message||'导入失败'); } return false; }
   };
 
+  // 保存课件到后端
+  const saveCourseware = async () => {
+    if (!coursewareId) {
+      message.warning('没有课件ID，无法保存');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // 构造保存数据
+      const saveData = {
+        annotations: annotations.map(a => ({
+          id: a.id,
+          nodeKey: a.targetKey,
+          title: a.label.title,
+          description: a.label.summary || '',
+          position: {
+            x: a.anchor.offset[0],
+            y: a.anchor.offset[1], 
+            z: a.anchor.offset[2]
+          }
+        })),
+        animations: [{
+          id: 'main',
+          name: '主动画',
+          description: '主时间线动画',
+          timeline: {
+            duration: timeline.duration,
+            cameraKeys: timeline.cameraKeys.map(k => ({
+              time: k.time,
+              position: k.position,
+              target: k.target,
+              easing: k.easing || 'linear'
+            })),
+            visTracks: Object.entries(timeline.visTracks).map(([nodeKey, keys]) => ({
+              nodeKey,
+              keys: keys.map(k => ({
+                time: k.time,
+                visible: k.value,
+                easing: 'linear'
+              }))
+            })),
+            trsTracks: Object.entries(timeline.trsTracks).map(([nodeKey, keys]) => ({
+              nodeKey,
+              keys: keys.map(k => ({
+                time: k.time,
+                position: k.position,
+                rotation: k.rotationEuler, 
+                scale: k.scale,
+                easing: k.easing || 'linear'
+              }))
+            }))
+          },
+          steps: steps.map(s => ({
+            id: s.id,
+            name: s.name,
+            description: s.name,
+            time: s.time
+          }))
+        }],
+        settings: {
+          cameraPosition: cameraRef.current ? {
+            x: cameraRef.current.position.x,
+            y: cameraRef.current.position.y,
+            z: cameraRef.current.position.z
+          } : undefined,
+          cameraTarget: controlsRef.current ? {
+            x: controlsRef.current.target.x,
+            y: controlsRef.current.target.y,
+            z: controlsRef.current.target.z
+          } : undefined,
+          background: bgColor,
+          lighting: {
+            directional: dirLight,
+            ambient: ambLight,
+            hemisphere: hemiLight
+          }
+        }
+      };
+
+      await apiPut(`/api/coursewares/${coursewareId}`, saveData);
+      setLastSaved(new Date());
+      message.success('课件已保存');
+    } catch (error: any) {
+      console.error('Save courseware error:', error);
+      message.error(error.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 自动保存（每30秒）
+  useEffect(() => {
+    if (!coursewareId) return;
+
+    const interval = setInterval(() => {
+      if (!saving) {
+        saveCourseware();
+      }
+    }, 30000); // 30秒自动保存
+
+    return () => clearInterval(interval);
+  }, [coursewareId, saving]);
+
+  // 快捷键保存（Ctrl+S）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveCourseware();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saveCourseware]);
+
+  // 从 coursewareData 初始化数据
+  useEffect(() => {
+    if (!coursewareData || initialDataLoadedRef.current) return;
+
+    try {
+      // 初始化标注
+      if (coursewareData.annotations && Array.isArray(coursewareData.annotations)) {
+        const restoredAnnotations: Annotation[] = coursewareData.annotations.map(a => ({
+          id: a.id,
+          targetKey: a.nodeKey,
+          targetPath: '', // 这个会在模型加载后重新计算
+          anchor: { space: 'local', offset: [a.position.x, a.position.y, a.position.z] },
+          label: { title: a.title, summary: a.description }
+        }));
+        setAnnotations(restoredAnnotations);
+      }
+
+      // 初始化动画和时间线
+      if (coursewareData.animations && Array.isArray(coursewareData.animations) && coursewareData.animations[0]) {
+        const mainAnimation = coursewareData.animations[0];
+        if (mainAnimation.timeline) {
+          const tl = mainAnimation.timeline;
+          
+          // 转换 visTracks 和 trsTracks 格式
+          const visTracks: Record<string, VisibilityKeyframe[]> = {};
+          if (Array.isArray(tl.visTracks)) {
+            tl.visTracks.forEach((track: any) => {
+              if (track.nodeKey && Array.isArray(track.keys)) {
+                visTracks[track.nodeKey] = track.keys.map((k: any) => ({
+                  time: k.time,
+                  value: k.visible
+                }));
+              }
+            });
+          }
+
+          const trsTracks: Record<string, TransformKeyframe[]> = {};
+          if (Array.isArray(tl.trsTracks)) {
+            tl.trsTracks.forEach((track: any) => {
+              if (track.nodeKey && Array.isArray(track.keys)) {
+                trsTracks[track.nodeKey] = track.keys.map((k: any) => ({
+                  time: k.time,
+                  position: k.position,
+                  rotationEuler: k.rotation,
+                  scale: k.scale,
+                  easing: k.easing || 'linear'
+                }));
+              }
+            });
+          }
+
+          setTimeline(prev => ({
+            ...prev,
+            duration: tl.duration || 10,
+            cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
+            visTracks,
+            trsTracks
+          }));
+        }
+
+        // 初始化步骤
+        if (mainAnimation.steps && Array.isArray(mainAnimation.steps)) {
+          setSteps(mainAnimation.steps.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            time: s.time
+          })));
+        }
+      }
+
+      // 初始化设置
+      if (coursewareData.settings) {
+        const settings = coursewareData.settings;
+        if (settings.background) {
+          setBgColor(settings.background);
+        }
+        if (settings.lighting) {
+          const lighting = settings.lighting;
+          if (lighting.directional) {
+            setDirLight(lighting.directional);
+          }
+          if (lighting.ambient) {
+            setAmbLight(lighting.ambient);
+          }
+          if (lighting.hemisphere) {
+            setHemiLight(lighting.hemisphere);
+          }
+        }
+      }
+
+      initialDataLoadedRef.current = true;
+      console.log('课件数据已初始化');
+    } catch (error) {
+      console.error('初始化课件数据失败:', error);
+      message.error('初始化课件数据失败');
+    }
+  }, [coursewareData]);
+
   // 设置弹窗
   const SettingsModal = () => (
     <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} destroyOnClose={false} forceRender getContainer={false} transitionName="" maskTransitionName="">
@@ -2149,8 +2381,7 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
         id: a.id,
         target: { path: a.targetPath, namePath: (() => { const obj = keyToObject.current.get(a.targetKey); return obj ? buildNamePath(obj) : undefined; })() },
         anchor: a.anchor,
-        label: a.label,
-        media: a.media
+        label: a.label
       }))
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2294,6 +2525,21 @@ export default function ModelEditor3D({ initialUrl }: { initialUrl?: string }) {
       </div>} bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
         extra={(
           <Space>
+            {coursewareId && (
+              <>
+                <Tooltip title={lastSaved ? `上次保存: ${lastSaved.toLocaleTimeString()}` : '点击保存 (Ctrl+S)'}>
+                  <Button 
+                    size="small" 
+                    icon={saving ? <ClockCircleOutlined spin /> : <SaveOutlined />} 
+                    onClick={saveCourseware}
+                    loading={saving}
+                    type={lastSaved ? 'default' : 'primary'}
+                  >
+                    {saving ? '保存中' : '保存'}
+                  </Button>
+                </Tooltip>
+              </>
+            )}
             <Button size="small" icon={<SettingOutlined />} onClick={()=>setSettingsOpen(true)}>设置</Button>
           </Space>
         )}
@@ -2749,10 +2995,18 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
       onOk({ ...value, label: { title: v.title, summary: v.summary } });
     }} destroyOnClose>
       <Form layout="vertical" form={form} preserve={false}>
-        <Form.Item name="title" label="标题" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="summary" label="简介"><Input.TextArea rows={4} /></Form.Item>
+        <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标注标题' }]}>
+          <Input placeholder="例如：发动机组件" />
+        </Form.Item>
+        <Form.Item name="summary" label="简介">
+          <Input.TextArea 
+            rows={4} 
+            placeholder="简要描述此标注内容的作用、特点或注意事项..." 
+            showCount 
+            maxLength={500}
+          />
+        </Form.Item>
       </Form>
-      {/* 媒体资源编辑可后续补充：此处先保留结构 */}
     </Modal>
   );
 }
