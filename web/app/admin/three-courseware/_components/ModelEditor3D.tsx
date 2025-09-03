@@ -251,7 +251,7 @@ function IconShowAll(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
@@ -1820,10 +1820,25 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   }
 
   function deleteNode(key: string) {
-    const o = keyToObject.current.get(key); if (!o) return; if (o === modelRootRef.current) return;
-    const parent = o.parent as THREE.Object3D; parent.remove(o);
+    const o = keyToObject.current.get(key); 
+    if (!o) return; 
+    if (o === modelRootRef.current) return;
+    
+    console.log('删除对象:', o.name, o.uuid);
+    
+    const parent = o.parent as THREE.Object3D; 
+    parent.remove(o);
+    
+    // 重建树结构（会自动清理并重建 keyToObject 映射）
     rebuildTree();
-    setSelectedSet(new Set()); setSelectedKey(undefined); syncHighlight(); setPrsTick(v=>v+1);
+    
+    // 清除选择状态
+    setSelectedSet(new Set()); 
+    setSelectedKey(undefined); 
+    syncHighlight(); 
+    setPrsTick(v=>v+1);
+    
+    console.log('对象删除完成，当前节点数:', Array.from(keyToObject.current.keys()).length);
   }
 
   function handleNodeAction(action: string, key: string) {
@@ -1945,7 +1960,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return group;
   }
 
-  function refreshMarkers() {
+  const refreshMarkers = useCallback(() => {
     const group = ensureMarkers();
     const camera = cameraRef.current;
     if (!camera) return;
@@ -2084,9 +2099,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       group.add(annotationGroup);
     });
-  }
+  }, [annotations, labelScale]);
 
-  useEffect(() => { refreshMarkers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [annotations, selectedKey, labelScale]);
+  useEffect(() => { refreshMarkers(); }, [refreshMarkers, selectedKey]);
   
   // 相机变化时更新标注位置
   useEffect(() => {
@@ -2110,7 +2125,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         clearTimeout((handleCameraChange as any).timeout);
       }
     };
-  }, []);
+  }, [refreshMarkers]);
 
   // 标注位置选择状态
   const [isAnnotationPlacing, setIsAnnotationPlacing] = useState(false);
@@ -2908,10 +2923,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
   }
 
-  function findByFlexiblePath(path: string): THREE.Object3D | undefined {
-    const direct = findByPath(path);
-    if (direct) return direct;
-    const segs = String(path).split('/').filter(Boolean);
+  function findByFlexiblePath(path: string | string[]): THREE.Object3D | undefined {
+    // 处理字符串路径
+    if (typeof path === 'string') {
+      const direct = findByPath(path);
+      if (direct) return direct;
+      const segs = path.split('/').filter(Boolean);
+      return findByPathSegments(segs);
+    }
+    
+    // 处理数组路径
+    if (Array.isArray(path)) {
+      return findByPathSegments(path.filter(Boolean));
+    }
+    
+    return undefined;
+  }
+  
+  function findByPathSegments(segs: string[]): THREE.Object3D | undefined {
     const nameSegs = segs.filter(s => !isUuidLike(s));
     if (nameSegs.length === 0) return undefined;
     const leafName = nameSegs[nameSegs.length - 1];
