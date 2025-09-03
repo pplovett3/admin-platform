@@ -278,7 +278,12 @@ type Annotation = {
   targetKey: string; // object.uuid
   targetPath: string; // name path
   anchor: { space: 'local'; offset: [number,number,number] };
-  label: { title: string; summary?: string };
+  label: { 
+    title: string; 
+    summary?: string;
+    // 标签相对于标注点的偏移量（在创建时固定）
+    offset?: [number, number, number];
+  };
 };
 
 type CameraKeyframe = {
@@ -1482,6 +1487,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             
             if (toDelete.length > 0) {
               console.log('恢复时删除了', toDelete.length, '个对象');
+              
+              // 删除后需要重新构建映射
+              uuidToObject.clear();
+              const rebuildMapping = (obj: THREE.Object3D) => {
+                uuidToObject.set(obj.uuid, obj);
+                obj.children.forEach(rebuildMapping);
+              };
+              if (modelRootRef.current) rebuildMapping(modelRootRef.current);
             }
           }
           
@@ -2014,11 +2027,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       pointMesh.userData.annotationId = a.id; // 确保点击检测
       annotationGroup.add(pointMesh);
       
-      // 2. 计算标签位置（固定偏移，面向相机）
-      const cameraPos = camera.position.clone();
-      const direction = cameraPos.clone().sub(world).normalize();
-      const labelOffset = 0.2; // 增大标签距离
-      const labelPos = world.clone().add(direction.multiplyScalar(labelOffset));
+      // 2. 计算标签位置（使用保存的固定偏移量）
+      let labelPos;
+      if (a.label.offset) {
+        // 使用保存的偏移量（相对于标注点的本地坐标偏移）
+        const localLabelPos = new THREE.Vector3(
+          a.anchor.offset[0] + a.label.offset[0],
+          a.anchor.offset[1] + a.label.offset[1], 
+          a.anchor.offset[2] + a.label.offset[2]
+        );
+        target.updateWorldMatrix(true, true);
+        labelPos = localLabelPos.clone().applyMatrix4(target.matrixWorld);
+      } else {
+        // 兼容旧版本：动态计算偏移（面向相机）
+        const cameraPos = camera.position.clone();
+        const direction = cameraPos.clone().sub(world).normalize();
+        const labelOffset = 0.2;
+        labelPos = world.clone().add(direction.multiplyScalar(labelOffset));
+      }
       
       // 3. 创建连接线
       const lineGeom = new THREE.BufferGeometry().setFromPoints([world, labelPos]);
@@ -2207,12 +2233,35 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const localPos = placingAnnotationTargetRef.current.worldToLocal(intersectionPoint.clone());
     const path = buildPath(placingAnnotationTargetRef.current);
     
+    // 计算标签的固定偏移量（基于当前相机位置）
+    const camera = cameraRef.current;
+    let labelOffset: [number, number, number] = [0.2, 0.1, 0]; // 默认偏移
+    if (camera) {
+      const worldPos = intersectionPoint.clone();
+      const cameraPos = camera.position.clone();
+      const direction = cameraPos.clone().sub(worldPos).normalize();
+      const labelDistance = 0.2; // 标签距离
+      const labelWorldPos = worldPos.clone().add(direction.multiplyScalar(labelDistance));
+      
+      // 将标签的世界坐标转换为目标对象的本地坐标偏移
+      const labelLocalPos = placingAnnotationTargetRef.current.worldToLocal(labelWorldPos);
+      labelOffset = [
+        labelLocalPos.x - localPos.x,
+        labelLocalPos.y - localPos.y, 
+        labelLocalPos.z - localPos.z
+      ] as [number, number, number];
+    }
+    
     const anno: Annotation = {
       id: generateUuid(),
       targetKey: placingAnnotationTargetRef.current.uuid,
       targetPath: path,
       anchor: { space: 'local', offset: [localPos.x, localPos.y, localPos.z] },
-      label: { title: placingAnnotationTargetRef.current.name || '未命名', summary: '' }
+      label: { 
+        title: placingAnnotationTargetRef.current.name || '未命名', 
+        summary: '',
+        offset: labelOffset // 保存固定的标签偏移量
+      }
     };
     
     setAnnotations(prev => [...prev, anno]);
@@ -2619,7 +2668,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const saveData = {
         annotations: annotations.map(a => {
           const obj = keyToObject.current.get(a.targetKey);
-          return {
+          const saveData: any = {
             id: a.id,
             nodeKey: obj ? buildPath(obj) : a.targetKey, // 保存路径而不是UUID
             title: a.label.title,
@@ -2630,6 +2679,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               z: a.anchor.offset[2]
             }
           };
+          
+          // 保存标签偏移量（如果存在）
+          if (a.label.offset) {
+            saveData.labelOffset = {
+              x: a.label.offset[0],
+              y: a.label.offset[1],
+              z: a.label.offset[2]
+            };
+          }
+          
+          return saveData;
         }),
         animations: validClips.map(clip => ({
           id: clip.id,
@@ -2754,10 +2814,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             position: a.position, // 新格式：直接使用position对象
             title: a.title,
             description: a.description,
+            labelOffset: a.labelOffset, // 标签偏移量
             // 兼容老格式
             target: { path: a.nodeKey }, 
             anchor: { offset: [a.position?.x || 0, a.position?.y || 0, a.position?.z || 0] },
-            label: { title: a.title, summary: a.description }
+            label: { 
+              title: a.title, 
+              summary: a.description,
+              offset: a.labelOffset ? [a.labelOffset.x, a.labelOffset.y, a.labelOffset.z] : undefined
+            }
           })),
           // 包含模型结构数据
           modelStructure: coursewareData.modelStructure || (coursewareData as any).settings?.modelStructure
