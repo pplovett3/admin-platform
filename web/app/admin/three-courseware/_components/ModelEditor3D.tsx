@@ -1488,15 +1488,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             if (toDelete.length > 0) {
               console.log('恢复时删除了', toDelete.length, '个对象');
               console.log('删除记录更新前:', Array.from(deletedObjectsRef.current));
-              
-              // 确保删除记录包含所有已删除的UUID
-              structure.deletedUUIDs.forEach((uuid: string) => {
-                deletedObjectsRef.current.add(uuid);
-              });
-              
-              console.log('删除记录更新后:', Array.from(deletedObjectsRef.current));
-              
-              // 删除后需要重新构建映射
+            }
+            
+            // 无论是否有对象被删除，都要确保删除记录正确
+            console.log('从数据恢复删除记录:', structure.deletedUUIDs);
+            deletedObjectsRef.current.clear(); // 先清空
+            structure.deletedUUIDs.forEach((uuid: string) => {
+              deletedObjectsRef.current.add(uuid);
+            });
+            console.log('删除记录更新后:', Array.from(deletedObjectsRef.current));
+            
+            // 重新构建对象映射
+            if (toDelete.length > 0) {
               uuidToObject.clear();
               keyToObject.current.clear(); // 也清理全局映射
               const rebuildMapping = (obj: THREE.Object3D) => {
@@ -2057,11 +2060,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           world.z + a.label.offset[2]
         );
       } else {
-        // 兼容旧版本：动态计算偏移（面向相机）
-        const cameraPos = camera.position.clone();
-        const direction = cameraPos.clone().sub(world).normalize();
-        const labelOffset = 0.2;
-        labelPos = world.clone().add(direction.multiplyScalar(labelOffset));
+        // 对于没有偏移的旧标注，给一个固定的默认偏移
+        labelPos = new THREE.Vector3(
+          world.x + 0.2, // 固定X偏移
+          world.y + 0.1, // 固定Y偏移  
+          world.z + 0.0  // 固定Z偏移
+        );
+        console.warn('标注缺少偏移信息，使用默认固定偏移:', a.id);
       }
       
       // 3. 创建连接线
@@ -2129,37 +2134,27 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       context.fillStyle = 'white';
       context.fillText(text, canvas.width / 2, canvas.height / 2);
       
-      // 创建固定的3D标签（不会朝向相机）
+      // 创建sprite（始终面向相机，但位置固定）
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
-      
-      // 使用PlaneGeometry创建固定平面
-      const fixedScale = 0.002 * labelScale; // 固定基础缩放 * 用户设置
-      const labelWidth = canvas.width * fixedScale;
-      const labelHeight = canvas.height * fixedScale;
-      
-      const geometry = new THREE.PlaneGeometry(labelWidth, labelHeight);
-      const material = new THREE.MeshBasicMaterial({ 
+      const spriteMat = new THREE.SpriteMaterial({ 
         map: texture,
         transparent: true,
-        depthTest: false,
-        side: THREE.DoubleSide // 双面显示
+        depthTest: false
       });
+      const sprite = new THREE.Sprite(spriteMat);
       
-      const labelMesh = new THREE.Mesh(geometry, material);
-      labelMesh.position.copy(labelPos);
+      // 使用完全固定的位置（保存时的绝对位置）
+      sprite.position.copy(labelPos);
       
-      // 固定朝向（可以设置一个固定的旋转，比如朝向Y轴）
-      labelMesh.lookAt(
-        labelPos.x,
-        labelPos.y + 1, // 朝向Y轴上方
-        labelPos.z
-      );
+      // 使用固定大小，不随距离变化
+      const fixedScale = 0.002 * labelScale; // 固定基础缩放 * 用户设置
+      sprite.scale.set(canvas.width * fixedScale, canvas.height * fixedScale, 1);
       
-      labelMesh.renderOrder = 1001;
-      labelMesh.userData.annotationId = a.id;
-      labelMesh.userData.clickable = true;
-      annotationGroup.add(labelMesh);
+      sprite.renderOrder = 1001;
+      sprite.userData.annotationId = a.id;
+      sprite.userData.clickable = true;
+      annotationGroup.add(sprite);
       
       group.add(annotationGroup);
     });
