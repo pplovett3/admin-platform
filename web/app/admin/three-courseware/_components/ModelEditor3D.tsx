@@ -841,19 +841,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   useEffect(()=>{ selectionRef.current = selection; }, [selection]);
   useEffect(()=>{ activeTrackIdRef.current = activeTrackId; }, [activeTrackId]);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('three_courseware_clips');
-      if (raw) {
-        const arr = JSON.parse(raw) as Clip[];
-        if (Array.isArray(arr)) { setClips(arr); setActiveClipId(arr[0]?.id || null); if (arr[0]?.timeline) setTimeline(arr[0].timeline); }
-      }
-    } catch {}
-  }, []);
+  // 动画数据现在不使用localStorage，而是通过课件数据管理
+  // useEffect(() => {
+  //   try {
+  //     const raw = localStorage.getItem('three_courseware_clips');
+  //     if (raw) {
+  //       const arr = JSON.parse(raw) as Clip[];
+  //       if (Array.isArray(arr)) { setClips(arr); setActiveClipId(arr[0]?.id || null); if (arr[0]?.timeline) setTimeline(arr[0].timeline); }
+  //     }
+  //   } catch {}
+  // }, []);
 
-  useEffect(() => {
-    try { localStorage.setItem('three_courseware_clips', JSON.stringify(clips)); } catch {}
-  }, [clips]);
+  // useEffect(() => {
+  //   try { localStorage.setItem('three_courseware_clips', JSON.stringify(clips)); } catch {}
+  // }, [clips]);
 
   // 依据模式/选中对象/坐标系，统一管理 TransformControls 的挂载与可见
   useEffect(() => {
@@ -878,7 +879,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   const saveClip = () => {
     if (!activeClipId) return message.warning('请先选择或新建动画');
-    setClips(prev => prev.map(c => c.id === activeClipId ? { ...c, timeline: JSON.parse(JSON.stringify(timeline)) } : c));
+    // 更新当前活动动画的timeline数据
+    setClips(prev => prev.map(c => c.id === activeClipId ? { 
+      ...c, 
+      timeline: {
+        ...JSON.parse(JSON.stringify(timeline)),
+        steps: steps // 同时更新steps
+      }
+    } : c));
     message.success('动画已保存');
   };
   
@@ -1550,6 +1558,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
     
+    console.log('onPointerDown触发，标注模式:', isAnnotationPlacing, '目标对象:', placingAnnotationTarget?.name);
+    
     // 记录初始位置，用于区分点击和拖拽
     const startX = event.clientX;
     const startY = event.clientY;
@@ -2064,7 +2074,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       return;
     }
     const obj = keyToObject.current.get(selectedKey);
-    if (!obj) return;
+    if (!obj) {
+      message.error('未找到选中的对象');
+      return;
+    }
+    
+
     
     // 进入标注位置选择模式
     setIsAnnotationPlacing(true);
@@ -2511,19 +2526,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             }
           };
         }),
-        animations: [{
-          id: 'main',
-          name: '主动画',
-          description: '主时间线动画',
+        animations: clips.map(clip => ({
+          id: clip.id,
+          name: clip.name,
+          description: clip.description || '',
           timeline: {
-            duration: timeline.duration,
-            cameraKeys: timeline.cameraKeys.map(k => ({
+            duration: clip.timeline.duration,
+            cameraKeys: clip.timeline.cameraKeys.map(k => ({
               time: k.time,
               position: k.position,
               target: k.target,
               easing: k.easing || 'linear'
             })),
-            visTracks: Object.entries(timeline.visTracks).map(([nodeKey, keys]) => {
+            visTracks: Object.entries(clip.timeline.visTracks || {}).map(([nodeKey, keys]) => {
               const obj = keyToObject.current.get(nodeKey);
               return {
                 nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
@@ -2534,7 +2549,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 }))
               };
             }),
-            trsTracks: Object.entries(timeline.trsTracks).map(([nodeKey, keys]) => {
+            trsTracks: Object.entries(clip.timeline.trsTracks || {}).map(([nodeKey, keys]) => {
               const obj = keyToObject.current.get(nodeKey);
               return {
                 nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
@@ -2554,7 +2569,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             description: s.name,
             time: s.time
           }))
-        }],
+        })),
         settings: {
           cameraPosition: cameraRef.current ? {
             x: cameraRef.current.position.x,
@@ -2649,14 +2664,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
 
       // 初始化动画和时间线（延迟到模型加载后处理）
-      if (coursewareData.animations && Array.isArray(coursewareData.animations) && coursewareData.animations[0]) {
-        const mainAnimation = coursewareData.animations[0];
-        if (mainAnimation.timeline) {
+      if (coursewareData.animations && Array.isArray(coursewareData.animations)) {
+        // 加载所有动画到clips
+        const loadedClips: Clip[] = coursewareData.animations.map(anim => ({
+          id: anim.id,
+          name: anim.name,
+          description: anim.description || '',
+          timeline: anim.timeline
+        }));
+        setClips(loadedClips);
+        
+        // 设置第一个动画为活动动画
+        if (loadedClips.length > 0) {
+          setActiveClipId(loadedClips[0].id);
+          
           // 存储时间线数据到pending中
           if (!pendingImportRef.current) pendingImportRef.current = {};
-          pendingImportRef.current.timeline = mainAnimation.timeline;
-          pendingImportRef.current.steps = mainAnimation.steps;
+          pendingImportRef.current.timeline = loadedClips[0].timeline;
+          pendingImportRef.current.steps = coursewareData.animations[0]?.steps || [];
         }
+      } else {
+        // 如果没有动画数据，清空clips
+        setClips([]);
+        setActiveClipId('');
       }
 
       // 初始化设置
@@ -3052,6 +3082,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                     <Flex vertical gap={8}>
                       <div style={{ color: '#1890ff', fontWeight: 'bold' }}>
                         📍 请点击对象表面选择标注位置
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        目标对象: {placingAnnotationTarget?.name || '未知'}
                       </div>
                       <Button danger onClick={cancelAnnotationPlacing}>取消选择位置</Button>
                     </Flex>

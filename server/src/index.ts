@@ -91,7 +91,8 @@ async function bootstrap() {
     maxAge: 86400
   };
   app.use(cors(corsOptions));
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
   // 处理预检请求：显式允许所有路径的 OPTIONS（Express 5 推荐使用正则通配）
   app.options(/.*/, cors(corsOptions));
 
