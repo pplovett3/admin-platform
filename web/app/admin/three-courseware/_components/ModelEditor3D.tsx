@@ -1443,9 +1443,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const pending = pendingImportRef.current;
     if (!pending) return;
     try {
-      // 首先恢复模型结构（重命名、可见性、层级关系等）
-      if (pending.modelStructure && Array.isArray(pending.modelStructure)) {
-        console.log('开始恢复模型结构，共', pending.modelStructure.length, '个节点');
+      // 首先恢复模型结构（重命名、可见性、删除等）
+      if (pending.modelStructure) {
+        const structure = pending.modelStructure;
+        
+        // 处理新格式（包含objects和deletedUUIDs）
+        if (structure.objects && Array.isArray(structure.objects)) {
+          console.log('开始恢复模型结构，共', structure.objects.length, '个对象,', 
+                     (structure.deletedUUIDs || []).length, '个已删除对象');
         
         // 第一步：建立UUID到对象的映射
         const uuidToObject = new Map<string, THREE.Object3D>();
@@ -1455,51 +1460,53 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         };
         if (modelRootRef.current) traverseForMapping(modelRootRef.current);
         
-        // 第二步：恢复基本属性（名称、可见性）
-        pending.modelStructure.forEach((item: any) => {
-          const obj = uuidToObject.get(item.uuid) || findByFlexiblePath(item.path || []);
-          if (obj && item.name !== undefined) {
-            obj.name = item.name;
-            if (item.visible !== undefined) obj.visible = item.visible;
-          }
-        });
-        
-        // 第三步：恢复层级关系（如果保存了父子关系信息）
-        const restoreHierarchy = () => {
-          const changes = [];
-          for (const item of pending.modelStructure) {
-            const obj = uuidToObject.get(item.uuid);
-            const targetParent = item.parentUuid ? uuidToObject.get(item.parentUuid) : modelRootRef.current;
+          // 第二步：删除应该被删除的对象
+          if (structure.deletedUUIDs && Array.isArray(structure.deletedUUIDs)) {
+            const toDelete = [];
+            for (const deletedUUID of structure.deletedUUIDs) {
+              const obj = uuidToObject.get(deletedUUID);
+              if (obj && obj !== modelRootRef.current) {
+                toDelete.push(obj);
+                // 更新删除记录
+                deletedObjectsRef.current.add(deletedUUID);
+              }
+            }
             
-            if (obj && targetParent && obj.parent !== targetParent) {
-              // 需要移动对象到新的父级
-              changes.push({ obj, newParent: targetParent, targetIndex: item.indexInParent || 0 });
+            // 执行删除
+            toDelete.forEach(obj => {
+              if (obj.parent) {
+                obj.parent.remove(obj);
+                console.log('恢复时删除对象:', obj.name, obj.uuid);
+              }
+            });
+            
+            if (toDelete.length > 0) {
+              console.log('恢复时删除了', toDelete.length, '个对象');
             }
           }
           
-          // 执行层级变更
-          changes.forEach(({ obj, newParent, targetIndex }) => {
-            // 从原父级移除
-            if (obj.parent) {
-              obj.parent.remove(obj);
-            }
-            // 添加到新父级的指定位置
-            if (targetIndex >= 0 && targetIndex < newParent.children.length) {
-              newParent.children.splice(targetIndex, 0, obj);
-              obj.parent = newParent;
-            } else {
-              newParent.add(obj);
+          // 第三步：恢复剩余对象的属性（名称、可见性）
+          structure.objects.forEach((item: any) => {
+            const obj = uuidToObject.get(item.uuid) || findByFlexiblePath(item.path || []);
+            if (obj && item.name !== undefined) {
+              obj.name = item.name;
+              if (item.visible !== undefined) obj.visible = item.visible;
             }
           });
           
-          if (changes.length > 0) {
-            console.log('恢复了', changes.length, '个对象的层级关系');
-          }
-        };
+        } else if (Array.isArray(structure)) {
+          // 兼容旧格式
+          console.log('恢复旧格式模型结构，共', structure.length, '个节点');
+          structure.forEach((item: any) => {
+            const obj = findByFlexiblePath(item.path || []);
+            if (obj && item.name !== undefined) {
+              obj.name = item.name;
+              if (item.visible !== undefined) obj.visible = item.visible;
+            }
+          });
+        }
         
-        restoreHierarchy();
-        
-        // 重新构建树结构
+        // 重建树结构
         rebuildTree();
         console.log('模型结构恢复完成');
       }
@@ -1825,6 +1832,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (o === modelRootRef.current) return;
     
     console.log('删除对象:', o.name, o.uuid);
+    
+    // 记录被删除的对象UUID
+    deletedObjectsRef.current.add(o.uuid);
     
     const parent = o.parent as THREE.Object3D; 
     parent.remove(o);
@@ -2547,9 +2557,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     beforeUpload: async (file) => { try { const text = await file.text(); const json = JSON.parse(text); setTimeline(prev => ({ ...prev, duration: Number(json?.duration||prev.duration), cameraKeys: Array.isArray(json?.cameraKeys)? (json.cameraKeys as CameraKeyframe[]) : prev.cameraKeys, visTracks: (json?.visTracks||prev.visTracks) as Record<string, VisibilityKeyframe[]>, trsTracks: (json?.trsTracks||prev.trsTracks) as Record<string, TransformKeyframe[]> })); message.success('时间线已导入'); } catch (e:any) { message.error(e?.message||'导入失败'); } return false; }
   };
 
-  // 构建模型结构信息（保存重命名、可见性、层级关系等）
+  // 跟踪被删除的对象UUID
+  const deletedObjectsRef = useRef<Set<string>>(new Set());
+  
+  // 构建模型结构信息（包含删除记录）
   const buildModelStructure = () => {
-    const structure: any[] = [];
+    const structure: any = {
+      objects: [],
+      deletedUUIDs: Array.from(deletedObjectsRef.current)
+    };
+    
     const root = modelRootRef.current;
     if (!root) return structure;
     
@@ -2559,24 +2576,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       const currentPath = [...parentPath, obj.name || 'unnamed'];
       
-      // 保存必要的信息，包括父子关系
-      structure.push({
+      // 保存必要的信息
+      structure.objects.push({
         path: currentPath,
         uuid: obj.uuid,
         name: obj.name,
         visible: obj.visible,
-        type: obj.type,
-        parentUuid: obj.parent ? obj.parent.uuid : null,
-        childrenUuids: obj.children.map(child => child.uuid),
-        // 保存在父对象中的索引位置，用于恢复顺序
-        indexInParent: obj.parent ? obj.parent.children.indexOf(obj) : 0
+        type: obj.type
       });
       
       obj.children.forEach(child => traverse(child, currentPath, depth + 1));
     };
     
     traverse(root);
-    console.log('模型结构数据大小:', structure.length, '个节点');
+    console.log('模型结构数据:', {
+      当前对象: structure.objects.length,
+      已删除对象: structure.deletedUUIDs.length,
+      '总计原始对象': structure.objects.length + structure.deletedUUIDs.length
+    });
     return structure;
   };
 
