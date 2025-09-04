@@ -1492,14 +1492,36 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
       // 在层级处理和结构树生成完成后，转换GLB内置动画
       if (originalAnimations && originalAnimations.length > 0) {
-        // 如果当前没有时间线数据，则从GLB动画生成
-        if (!pendingImportRef.current?.timeline) {
-          // 使用最新的keyToObject映射来确保UUID一致性
-          const glbTimeline = convertGLBAnimationsToTimelineWithMapping(originalAnimations, root, keyToObject.current);
+        // 为每个GLB动画创建clips
+        const glbClips: Clip[] = [];
+        for (let i = 0; i < originalAnimations.length; i++) {
+          const animation = originalAnimations[i];
+          const glbTimeline = convertGLBAnimationsToTimelineWithMapping([animation], root, keyToObject.current);
           if (glbTimeline) {
+            const clipId = generateUuid();
+            const clipName = animation.name || `GLB动画${i + 1}`;
+            glbClips.push({
+              id: clipId,
+              name: clipName,
+              description: `从GLB导入的动画: ${clipName}`,
+              timeline: glbTimeline
+            });
+          }
+        }
+        
+        if (glbClips.length > 0) {
+          console.log('✨ 从GLB创建动画clips:', glbClips.map(c => ({ name: c.name, duration: c.timeline.duration })));
+          
+          // 添加到clips列表
+          setClips(prev => [...glbClips, ...prev]);
+          
+          // 如果当前没有时间线数据，使用第一个GLB动画作为默认
+          if (!pendingImportRef.current?.timeline) {
             if (!pendingImportRef.current) pendingImportRef.current = {};
-            pendingImportRef.current.timeline = glbTimeline;
-            console.log('✨ 从GLB动画生成时间线:', glbTimeline);
+            pendingImportRef.current.timeline = glbClips[0].timeline;
+            
+            // 设置第一个GLB动画为活动动画
+            setTimeout(() => setActiveClipId(glbClips[0].id), 100);
           }
         }
       }
@@ -3222,12 +3244,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       s.add(exportRoot);
       const exportTarget: THREE.Scene = s;
       
-      // 将当前时间线转换为动画并添加到场景
-      const animations = convertTimelineToAnimationClips(timelineRef.current, exportRoot);
-      if (animations.length > 0) {
+      // 将所有clips转换为动画并添加到场景
+      const allAnimations: THREE.AnimationClip[] = [];
+      
+      // 1. 导出所有clips中的动画
+      for (const clip of clips) {
+        const clipAnimations = convertTimelineToAnimationClips(clip.timeline, exportRoot);
+        for (const anim of clipAnimations) {
+          // 使用clip的名称作为动画名称
+          anim.name = clip.name;
+          allAnimations.push(anim);
+        }
+      }
+      
+      // 2. 如果没有clips但有当前时间线，也导出当前时间线
+      if (allAnimations.length === 0) {
+        const currentAnimations = convertTimelineToAnimationClips(timelineRef.current, exportRoot);
+        allAnimations.push(...currentAnimations);
+      }
+      
+      if (allAnimations.length > 0) {
         // 将动画添加到场景的 animations 属性
-        (exportTarget as any).animations = animations;
-        console.log('✨ 添加动画到GLB:', animations.map(clip => ({
+        (exportTarget as any).animations = allAnimations;
+        console.log('✨ 添加所有动画到GLB:', allAnimations.map(clip => ({
           name: clip.name,
           duration: clip.duration,
           tracks: clip.tracks.length
@@ -3248,7 +3287,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           (error) => reject(error),
           { 
             binary: true, // 导出为GLB格式
-            animations: animations // 确保动画被包含
+            animations: allAnimations // 确保所有动画被包含
           }
         );
       });
