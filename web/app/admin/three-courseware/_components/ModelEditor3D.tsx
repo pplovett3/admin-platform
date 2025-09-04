@@ -1446,6 +1446,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         }
       }
 
+      // 继续剥离仅作为包裹的空容器（Group/Object3D 且仅一个子节点），并将父变换烘焙到子节点
+      const isTrivialContainer = (o: THREE.Object3D) => {
+        const hasMesh = (o as any).isMesh || (o as any).geometry || (o as any).material;
+        return !hasMesh && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
+      };
+      let guard = 0; // 防止无限循环
+      while (isTrivialContainer(root) && guard++ < 8) {
+        const child = root.children[0];
+        // 将父的本地变换应用到子节点
+        child.applyMatrix4(root.matrix);
+        child.updateMatrixWorld(true);
+        // 提升子节点为新的根
+        root = child;
+      }
+
       modelRootRef.current = root;
       scene.add(root);
       setModelName(root.name || '模型');
@@ -2708,8 +2723,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 始终导出为一个包含模型克隆的 Scene，避免 GLTFExporter 注入 AuxScene
       const source = modelRootRef.current;
       const s = new THREE.Scene();
-      const cloneRoot = source.clone(true);
-      s.add(cloneRoot);
+      let exportRoot: THREE.Object3D = source.clone(true);
+      // 若克隆根是“空容器”且只有一个子节点，则下钻，避免导出时再次包裹 Object3D
+      const isTrivial = (o: THREE.Object3D) => {
+        const hasMesh = (o as any).isMesh || (o as any).geometry || (o as any).material;
+        return !hasMesh && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
+      };
+      let pass = 0;
+      while (isTrivial(exportRoot) && pass++ < 8) {
+        exportRoot = exportRoot.children[0];
+      }
+      s.add(exportRoot);
       const exportTarget: THREE.Scene = s;
       
       // 导出为GLB格式
