@@ -1427,6 +1427,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         root = gltf.scene || gltf.scenes[0];
       }
       
+      // 避免嵌套 Scene 层级（导出时会产生 AuxScene 包裹），将 Scene 子节点提升到自建容器下
+      if ((root as any).isScene) {
+        const container = new THREE.Group();
+        container.name = root.name || '模型';
+        const children = [...root.children];
+        children.forEach((child) => {
+          container.add(child);
+        });
+        root = container;
+      }
+
       modelRootRef.current = root;
       scene.add(root);
       setModelName(root.name || '模型');
@@ -2669,6 +2680,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   
   // GLB导出器
   const exporterRef = useRef<GLTFExporter | null>(null);
+  const lastUploadedFileIdRef = useRef<string | null>(null);
   
   // 初始化导出器
   useEffect(() => {
@@ -2685,13 +2697,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     try {
       console.log('开始导出当前模型状态为GLB...');
       
-      // 克隆模型以避免影响当前场景
-      const clonedModel = modelRootRef.current.clone(true);
+      // 始终导出为一个包含模型克隆的 Scene，避免 GLTFExporter 注入 AuxScene
+      const source = modelRootRef.current;
+      const s = new THREE.Scene();
+      const cloneRoot = source.clone(true);
+      s.add(cloneRoot);
+      const exportTarget: THREE.Scene = s;
       
       // 导出为GLB格式
       const result = await new Promise<ArrayBuffer>((resolve, reject) => {
         exporterRef.current!.parse(
-          clonedModel,
+          exportTarget,
           (gltf) => {
             if (gltf instanceof ArrayBuffer) {
               resolve(gltf);
@@ -2781,6 +2797,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           console.log('⬆️ 上传修改后的模型文件...');
           const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
           const token = (typeof getToken === 'function' ? getToken() : localStorage.getItem('token')) as string | null;
+
+          // 若存在旧文件，先删除，确保资源中只有一个当前版本
+          try {
+            const prev = (lastUploadedFileIdRef.current
+              ? `/api/files/${lastUploadedFileIdRef.current}/download`
+              : (coursewareData?.modifiedModelUrl || '')) as string;
+            const idMatch = prev.match(/\/api\/files\/([a-f0-9]{24})\//i);
+            const prevId = idMatch ? idMatch[1] : null;
+            if (prevId) {
+              await fetch(`${baseUrl}/api/files/${prevId}`, {
+                method: 'DELETE',
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined
+              });
+            }
+          } catch (e) { console.warn('删除旧模型文件失败（忽略）：', e); }
+
           const uploadResponse = await fetch(`${baseUrl}/api/files/upload`, {
             method: 'POST',
             body: formData,
@@ -2792,6 +2824,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             // 兼容后端返回的字段名（downloadUrl 或 url）
             modifiedModelUrl = uploadResult.downloadUrl || uploadResult.url;
             console.log('✅ 模型文件上传成功:', modifiedModelUrl);
+            try {
+              const m = String(modifiedModelUrl||'').match(/\/api\/files\/([a-f0-9]{24})\//i);
+              lastUploadedFileIdRef.current = m ? m[1] : null;
+            } catch {}
           } else {
             console.error('❌ 模型文件上传失败');
             throw new Error('模型文件上传失败');
@@ -2906,6 +2942,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       console.log('最终保存数据大小:', JSON.stringify(saveData).length, '字符');
 
       await apiPut(`/api/coursewares/${coursewareId}`, saveData);
+      // 成功保存后，更新本地上一次上传记录
+      try {
+        if (modifiedModelUrl) {
+          const m = String(modifiedModelUrl||'').match(/\/api\/files\/([a-f0-9]{24})\//i);
+          lastUploadedFileIdRef.current = m ? m[1] : lastUploadedFileIdRef.current;
+        }
+      } catch {}
       setLastSaved(new Date());
       message.success('课件已保存');
     } catch (error: any) {
@@ -3363,6 +3406,44 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               </>
             )}
             <Button size="small" icon={<SettingOutlined />} onClick={()=>setSettingsOpen(true)}>设置</Button>
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'export-glb',
+                    label: '导出 GLB',
+                    onClick: async () => {
+                      const blob = await exportCurrentModelAsGLB();
+                      if (!blob) { message.error('导出失败'); return; }
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = `${coursewareName||'模型'}.glb`;
+                      a.click();
+                      URL.revokeObjectURL(a.href);
+                    }
+                  },
+                  {
+                    key: 'export-png',
+                    label: '导出 PNG 截图',
+                    onClick: async () => {
+                      const renderer = rendererRef.current;
+                      if (!renderer) { message.error('渲染器未初始化'); return; }
+                      renderer.render(sceneRef.current!, cameraRef.current!);
+                      rendererRef.current!.domElement.toBlob((blob)=>{
+                        if (!blob) { message.error('截图失败'); return; }
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `${coursewareName||'视图'}.png`;
+                        a.click();
+                        URL.revokeObjectURL(a.href);
+                      });
+                    }
+                  }
+                ]
+              }}
+            >
+              <Button size="small">导出</Button>
+            </Dropdown>
           </Space>
         )}
       >

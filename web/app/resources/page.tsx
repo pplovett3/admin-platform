@@ -55,12 +55,13 @@ export default function ResourcesPage() {
     try {
       setLoading(true);
       const qs = new URLSearchParams({ type: type||"", q }).toString();
+      const shouldHideEditorSaved = (name: string) => /^(courseware-).*(-modified\.glb)$/i.test(name || '');
       if (active === "mine") {
         const resp = await authFetch<{ rows: FileRow[] }>(`/api/files/mine?${qs}`);
-        setRows(resp.rows);
+        setRows((resp.rows||[]).filter(r=>!shouldHideEditorSaved(r.originalName||'')));
       } else {
         const resp = await authFetch<{ rows: FileRow[] }>(`/api/files/public?${qs}`);
-        setRows(resp.rows);
+        setRows((resp.rows||[]).filter(r=>!shouldHideEditorSaved(r.originalName||'')));
       }
     } catch (e:any) {
       message.error(e?.message||"加载失败");
