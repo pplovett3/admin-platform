@@ -943,8 +943,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 只有在成功创建新动画时才关闭弹窗
     if (editingAnimation) {
-      setAnimationModalOpen(false);
-      setEditingAnimation(null);
+    setAnimationModalOpen(false);
+    setEditingAnimation(null);
     }
   };
   
@@ -1459,7 +1459,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             if (o.geometry && typeof o.geometry.dispose === 'function') {
               o.geometry.dispose();
             }
-            if (o.material) {
+          if (o.material) {
               if (Array.isArray(o.material)) {
                 o.material.forEach((m: any) => {
                   if (m && typeof m.dispose === 'function') m.dispose();
@@ -1567,8 +1567,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               });
             }
             
-            // 清除pending数据
+            // 清除pending数据，防止被传统恢复逻辑覆盖
             delete pendingImportRef.current.animationMetadata;
+            delete pendingImportRef.current.allAnimations;
+            console.log('🧹 已清理GLB动画的pending数据，防止被覆盖');
           } else {
             // 添加原始动画到clips列表
             setClips(prev => [...gltfClips, ...prev]);
@@ -1631,8 +1633,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               });
             }
             
-            // 清除pending数据
+            // 清除pending数据，防止被传统恢复逻辑覆盖
             delete pendingImportRef.current.animationMetadata;
+            delete pendingImportRef.current.allAnimations;
+            console.log('🧹 已清理GLB动画的pending数据，防止被覆盖');
           } else {
             // 添加原始动画到clips列表
             setClips(prev => [...gltfClips, ...prev]);
@@ -1898,9 +1902,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       });
       setAnnotations(restored);
       
-      // 处理所有动画数据的时间线恢复
-      if (pending.allAnimations && Array.isArray(pending.allAnimations)) {
-        console.log('开始恢复所有动画数据，共', pending.allAnimations.length, '个动画');
+      // 🎬 处理动画数据恢复 - 但如果已经从GLB加载则跳过
+      if (pending.allAnimations && Array.isArray(pending.allAnimations) && !pending.animationMetadata) {
+        console.log('开始恢复传统格式动画数据，共', pending.allAnimations.length, '个动画');
         
         // 恢复所有动画的时间线，重新映射UUID
         const restoredClips: Clip[] = pending.allAnimations.map((anim: any) => {
@@ -3095,7 +3099,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   useEffect(() => {
     exporterRef.current = new GLTFExporter();
   }, []);
-
+  
   // 🎬 将自定义动画转换为THREE.AnimationClip
   const convertTimelineToAnimationClip = (clip: Clip, rootObject: THREE.Object3D): THREE.AnimationClip | null => {
     try {
@@ -3222,6 +3226,126 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   };
 
+  // 🔄 从THREE.AnimationClip解析轨道数据为编辑器格式
+  const parseAnimationClipToTracks = (clip: THREE.AnimationClip, rootObject: THREE.Object3D) => {
+    const visTracks: Record<string, VisibilityKeyframe[]> = {};
+    const trsTracks: Record<string, TransformKeyframe[]> = {};
+    
+    console.log(`  🔍 解析动画轨道: ${clip.name} (${clip.tracks.length}个轨道)`);
+    
+    clip.tracks.forEach(track => {
+      const trackName = track.name;
+      const times = track.times;
+      const values = track.values;
+      
+      console.log(`    📊 轨道: ${trackName}, 类型: ${track.constructor.name}`);
+      
+      // 解析轨道名称，获取对象路径和属性
+      const parts = trackName.split('.');
+      const property = parts.pop(); // 最后一部分是属性
+      const objectPath = parts.join('.'); // 前面是对象路径
+      
+      // 根据路径查找对象
+      let targetObject: THREE.Object3D | null = null;
+      rootObject.traverse((obj: THREE.Object3D) => {
+        if (buildPath(obj) === objectPath || obj.name === objectPath) {
+          targetObject = obj;
+        }
+      });
+      
+      if (!targetObject) {
+        console.warn(`    ⚠️ 未找到目标对象: ${objectPath}`);
+        return;
+      }
+      
+      const targetUuid = (targetObject as THREE.Object3D).uuid;
+      
+      // 根据属性类型处理数据
+      switch (property) {
+        case 'visible':
+          // 可见性轨道
+          const visKeys: VisibilityKeyframe[] = [];
+          for (let i = 0; i < times.length; i++) {
+            visKeys.push({
+              time: times[i],
+              value: values[i] > 0.5 // 数值转布尔
+            });
+          }
+          visTracks[targetUuid] = visKeys;
+          console.log(`      👁️ 可见性关键帧: ${visKeys.length}个`);
+          break;
+          
+        case 'position':
+          // 位置轨道
+          if (!trsTracks[targetUuid]) trsTracks[targetUuid] = [];
+          for (let i = 0; i < times.length; i++) {
+            const existing = trsTracks[targetUuid].find(k => k.time === times[i]);
+            if (existing) {
+              existing.position = [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]];
+            } else {
+              trsTracks[targetUuid].push({
+                time: times[i],
+                position: [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]]
+              });
+            }
+          }
+          console.log(`      📍 位置关键帧: ${times.length}个`);
+          break;
+          
+        case 'quaternion':
+          // 旋转轨道 (四元数转欧拉角)
+          if (!trsTracks[targetUuid]) trsTracks[targetUuid] = [];
+          for (let i = 0; i < times.length; i++) {
+            const quat = new THREE.Quaternion(
+              values[i * 4], values[i * 4 + 1], values[i * 4 + 2], values[i * 4 + 3]
+            );
+            const euler = new THREE.Euler().setFromQuaternion(quat);
+            
+            const existing = trsTracks[targetUuid].find(k => k.time === times[i]);
+            if (existing) {
+              existing.rotationEuler = [euler.x, euler.y, euler.z];
+            } else {
+              trsTracks[targetUuid].push({
+                time: times[i],
+                rotationEuler: [euler.x, euler.y, euler.z]
+              });
+            }
+          }
+          console.log(`      🔄 旋转关键帧: ${times.length}个`);
+          break;
+          
+        case 'scale':
+          // 缩放轨道
+          if (!trsTracks[targetUuid]) trsTracks[targetUuid] = [];
+          for (let i = 0; i < times.length; i++) {
+            const existing = trsTracks[targetUuid].find(k => k.time === times[i]);
+            if (existing) {
+              existing.scale = [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]];
+            } else {
+              trsTracks[targetUuid].push({
+                time: times[i],
+                scale: [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]]
+              });
+            }
+          }
+          console.log(`      📏 缩放关键帧: ${times.length}个`);
+          break;
+      }
+    });
+    
+    // 对所有轨道按时间排序
+    Object.values(trsTracks).forEach(track => {
+      track.sort((a, b) => a.time - b.time);
+    });
+    Object.values(visTracks).forEach(track => {
+      track.sort((a, b) => a.time - b.time);
+    });
+    
+    console.log(`  ✅ 解析完成: ${Object.keys(visTracks).length}个可见性轨道, ${Object.keys(trsTracks).length}个变换轨道`);
+    
+    return { visTracks, trsTracks };
+  };
+
   // 🔄 从GLB动画数据重建编辑器动画
   const loadAnimationsFromGLB = (gltfAnimations: THREE.AnimationClip[], animationMetadata: any[]) => {
     console.log('🔄 从GLB重建动画数据...');
@@ -3237,6 +3361,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       console.log(`  📁 加载动画: ${clip.name} (${metadata.isOriginal ? '原始' : '自定义'})`);
       
+      // 解析动画轨道数据
+      const { visTracks, trsTracks } = parseAnimationClipToTracks(clip, modelRootRef.current!);
+      
       // 创建编辑器动画对象
       const editorClip: Clip = {
         id: metadata.id,
@@ -3247,8 +3374,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           current: 0,
           playing: false,
           cameraKeys: [],
-          visTracks: {},
-          trsTracks: {},
+          visTracks,
+          trsTracks,
           annotationTracks: {},
           // 标记动画类型
           gltfAnimation: {
@@ -3306,9 +3433,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         animationsToExport.push(...originalAnimationsRef.current);
       }
 
-      // 转换并添加自定义动画
-      const customAnimations = clips.filter(clip => !clip.timeline.gltfAnimation);
+      // 转换并添加自定义动画 (包括没有gltfAnimation标记的和明确标记为非原始的)
+      const customAnimations = clips.filter(clip => 
+        !clip.timeline.gltfAnimation || 
+        !clip.timeline.gltfAnimation.isOriginal
+      );
       console.log(`🎨 处理自定义动画: ${customAnimations.length}个`);
+      console.log(`📊 动画分类详情:`, clips.map(c => ({
+        name: c.name,
+        hasGltfAnimation: !!c.timeline.gltfAnimation,
+        isOriginal: c.timeline.gltfAnimation?.isOriginal,
+        isCustom: !c.timeline.gltfAnimation || !c.timeline.gltfAnimation.isOriginal
+      })));
       
       for (const clip of customAnimations) {
         const animationClip = convertTimelineToAnimationClip(clip, exportRoot);
@@ -3371,7 +3507,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // 🎬 检测是否有动画变化需要重新导出GLB
   const hasAnimationChanges = (): boolean => {
     // 如果有自定义动画，需要导出
-    const customAnimations = clips.filter(clip => !clip.timeline.gltfAnimation?.isOriginal);
+    const customAnimations = clips.filter(clip => 
+      !clip.timeline.gltfAnimation || 
+      !clip.timeline.gltfAnimation.isOriginal
+    );
     return customAnimations.length > 0;
   };
 
@@ -3524,7 +3663,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           name: clip.name,
           description: clip.description || '',
           isOriginal: !!clip.timeline.gltfAnimation?.isOriginal,
-          duration: clip.timeline.duration,
+            duration: clip.timeline.duration,
           // 只保存步骤信息，动画轨道数据在GLB中
           steps: steps.map(s => ({
             id: s.id,
@@ -3660,10 +3799,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           console.log('💾 从数据库加载传统动画格式');
           
           // 传统方式：从数据库加载动画（兼容旧版本）
-          const loadedClips: Clip[] = coursewareData.animations.map(anim => ({
+        const loadedClips: Clip[] = coursewareData.animations.map(anim => ({
             id: anim.id || generateUuid(),
             name: anim.name || '未命名动画',
-            description: anim.description || '',
+          description: anim.description || '',
             timeline: anim.timeline || { duration: anim.duration || 10, current: 0, playing: false, cameraKeys: [], visTracks: {}, trsTracks: {}, annotationTracks: {} }
           }));
           
@@ -3685,11 +3824,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             setActiveClipId(uniqueClips[0].id);
             
             // 存储完整的动画数据到pending中
-            if (!pendingImportRef.current) pendingImportRef.current = {};
+          if (!pendingImportRef.current) pendingImportRef.current = {};
             pendingImportRef.current.allAnimations = uniqueClips;
             pendingImportRef.current.activeAnimationId = uniqueClips[0].id;
             pendingImportRef.current.timeline = uniqueClips[0].timeline;
-            pendingImportRef.current.steps = coursewareData.animations[0]?.steps || [];
+          pendingImportRef.current.steps = coursewareData.animations[0]?.steps || [];
           }
         }
       } else {
