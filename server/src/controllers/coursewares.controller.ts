@@ -321,8 +321,9 @@ export async function getAvailableModels(req: Request, res: Response) {
         .lean()
     ]);
 
-    // 合并并格式化结果
-    const allModels = [...personalModels, ...publicModels];
+    // 合并并格式化结果（过滤掉编辑器自动保存的临时 GLB：courseware-*-modified.glb）
+    const shouldHideEditorSaved = (name: string) => /^(courseware-).*(-modified\.glb)$/i.test(name || '');
+    const allModels = [...personalModels, ...publicModels].filter((m: any) => !shouldHideEditorSaved(m.originalName || ''));
     const formattedModels = allModels.map((model: any) => ({
       id: model._id,
       name: model.originalName,

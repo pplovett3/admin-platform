@@ -1427,15 +1427,23 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         root = gltf.scene || gltf.scenes[0];
       }
       
-      // 避免嵌套 Scene 层级（导出时会产生 AuxScene 包裹），将 Scene 子节点提升到自建容器下
+      // 规整根节点：
+      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现“Object3D/Group”套层
+      // 2) 若为 Scene 且有多个子节点，则合并到一个 Group 中作为导入根
       if ((root as any).isScene) {
-        const container = new THREE.Group();
-        container.name = root.name || '模型';
-        const children = [...root.children];
-        children.forEach((child) => {
-          container.add(child);
-        });
-        root = container;
+        let candidate: THREE.Object3D = root;
+        while ((candidate as any).isScene && candidate.children && candidate.children.length === 1) {
+          candidate = candidate.children[0];
+        }
+        if ((candidate as any).isScene) {
+          const container = new THREE.Group();
+          container.name = root.name || '模型';
+          const children = [...candidate.children];
+          children.forEach((child) => container.add(child));
+          root = container;
+        } else {
+          root = candidate;
+        }
       }
 
       modelRootRef.current = root;
