@@ -2779,8 +2779,30 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   function convertGLBAnimationsToTimeline(animations: THREE.AnimationClip[], rootObject: THREE.Object3D): TimelineState | null {
     if (!animations.length) return null;
     
+    // 建立更全面的对象映射：按名称和层级路径
     const objMap = new Map<string, THREE.Object3D>();
-    rootObject.traverse(obj => objMap.set(obj.name, obj));
+    const objByPath = new Map<string, THREE.Object3D>();
+    
+    rootObject.traverse(obj => {
+      if (obj.name) {
+        objMap.set(obj.name, obj);
+        
+        // 同时建立层级路径映射
+        const path = [];
+        let current = obj;
+        while (current && current !== rootObject) {
+          if (current.name) path.unshift(current.name);
+          current = current.parent as THREE.Object3D;
+        }
+        const fullPath = path.join('/');
+        if (fullPath) objByPath.set(fullPath, obj);
+      }
+    });
+    
+    console.log('🔍 可用对象映射:', {
+      byName: Array.from(objMap.keys()),
+      byPath: Array.from(objByPath.keys())
+    });
     
     // 取第一个动画作为主要动画源
     const clip = animations[0];
@@ -2794,14 +2816,46 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 遍历所有轨道
     for (const track of clip.tracks) {
-      const nodeName = track.name.split('.')[0]; // 提取节点名 (去掉属性后缀)
-      const property = track.name.split('.').pop(); // 提取属性名
-      const targetObj = objMap.get(nodeName);
+      const trackName = track.name;
+      const property = trackName.split('.').pop(); // 提取属性名
+      let nodeName = trackName.substring(0, trackName.lastIndexOf('.')); // 提取节点名/路径
+      
+      console.log('🎬 处理动画轨道:', { trackName, nodeName, property });
+      
+      // 尝试多种方式查找目标对象
+      let targetObj: THREE.Object3D | undefined;
+      
+      // 1. 直接按名称查找
+      targetObj = objMap.get(nodeName);
+      
+      // 2. 如果没找到，尝试按路径查找
+      if (!targetObj) {
+        targetObj = objByPath.get(nodeName);
+      }
+      
+      // 3. 如果仍没找到，尝试模糊匹配（去掉数字后缀等）
+      if (!targetObj) {
+        const cleanName = nodeName.replace(/\.\d+$/, '').replace(/_\d+$/, '');
+        targetObj = objMap.get(cleanName);
+      }
+      
+      // 4. 最后尝试部分匹配
+      if (!targetObj) {
+        for (const [name, obj] of objMap) {
+          if (name.includes(nodeName) || nodeName.includes(name)) {
+            targetObj = obj;
+            console.log('📍 模糊匹配找到对象:', name, '←', nodeName);
+            break;
+          }
+        }
+      }
       
       if (!targetObj) {
-        console.warn('GLB动画轨道找不到目标对象:', nodeName);
+        console.warn('⚠️ GLB动画轨道找不到目标对象:', nodeName, '在轨道:', trackName);
         continue;
       }
+      
+      console.log('✅ 找到动画目标:', targetObj.name, 'UUID:', targetObj.uuid);
       
       const uuid = targetObj.uuid;
       if (!timeline.trsTracks![uuid]) {
