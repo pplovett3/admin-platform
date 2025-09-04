@@ -1433,7 +1433,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       
       // 规整根节点：
-      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现“Object3D/Group”套层
+      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现"Object3D/Group"套层
       // 2) 若为 Scene 且有多个子节点，则合并到一个 Group 中作为导入根
       if ((root as any).isScene) {
         let candidate: THREE.Object3D = root;
@@ -1915,6 +1915,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     };
     nodes.push(makeNode(root));
     setTreeData(nodes);
+    structureDirtyRef.current = true;
   }
 
   function groupNodes(nodeKeys: string[]) {
@@ -1924,6 +1925,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const grp = new THREE.Group(); grp.name = `组${Math.floor(Math.random()*1000)}`; parent.add(grp); grp.updateMatrixWorld(true);
     objs.forEach(o => { const mw = o.matrixWorld.clone(); grp.add(o); o.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(grp.matrixWorld).invert(); o.matrix.copy(inv.multiply(mw)); o.matrix.decompose(o.position, o.quaternion, o.scale); });
     rebuildTree();
+    structureDirtyRef.current = true;
     setSelectedSet(new Set([grp.uuid])); setSelectedKey(grp.uuid); syncHighlight(); setPrsTick(v=>v+1);
   }
 
@@ -1934,6 +1936,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     kids.forEach(k => { const mw = (k as any).matrixWorld.clone(); parent.add(k as any); (k as any).updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(parent.matrixWorld).invert(); (k as any).matrix.copy(inv.multiply(mw)); (k as any).matrix.decompose((k as any).position, (k as any).quaternion, (k as any).scale); });
     parent.remove(o);
     rebuildTree();
+    structureDirtyRef.current = true;
     setSelectedSet(new Set(kids.map(k => k.uuid))); setSelectedKey(kids[0]?.uuid); syncHighlight(); setPrsTick(v=>v+1);
   }
 
@@ -1952,6 +1955,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 重建树结构（会自动清理并重建 keyToObject 映射）
     rebuildTree();
+    structureDirtyRef.current = true;
     
     // 清除选择状态
     setSelectedSet(new Set()); 
@@ -2705,6 +2709,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   // 跟踪被删除的对象UUID
   const deletedObjectsRef = useRef<Set<string>>(new Set());
+  // 跟踪结构变动（重命名/层级调整/打组解组等）
+  const structureDirtyRef = useRef<boolean>(false);
   
   // GLB导出器
   const exporterRef = useRef<GLTFExporter | null>(null);
@@ -2729,7 +2735,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const source = modelRootRef.current;
       const s = new THREE.Scene();
       let exportRoot: THREE.Object3D = source.clone(true);
-      // 若克隆根是“空容器”且只有一个子节点，则下钻，避免导出时再次包裹 Object3D
+      // 若克隆根是"空容器"且只有一个子节点，则下钻，避免导出时再次包裹 Object3D
       const isTrivial = (o: THREE.Object3D) => {
         const hasMesh = (o as any).isMesh || (o as any).geometry || (o as any).material;
         return !hasMesh && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
@@ -2769,7 +2775,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   
   // 检测是否有结构变化（删除、重命名、层级调整）
   const hasStructureChanges = (): boolean => {
-    return deletedObjectsRef.current.size > 0; // 简化：主要检测删除操作
+    return deletedObjectsRef.current.size > 0 || structureDirtyRef.current === true;
   };
   
   // 构建模型结构信息（包含删除记录）
@@ -2882,6 +2888,62 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       });
       
       // 构造保存数据
+      // 兼容旧/新时间线结构，统一导出为 nodeKey 轨道数组形式
+      const makeVisTracksOut = (tl: any) => {
+        const vt = tl?.visTracks;
+        if (Array.isArray(vt)) {
+          // 旧格式：[{ nodeKey, keys: [{time, visible}]}]
+          return vt.map((track: any) => {
+            const target = findByFlexiblePath(track.nodeKey);
+            const nodeKeyPath = target ? buildPath(target) : track.nodeKey;
+            const keys = Array.isArray(track.keys) ? track.keys.map((k: any) => ({ time: k.time, visible: k.visible, easing: 'linear' })) : [];
+            return { nodeKey: nodeKeyPath, keys };
+          });
+        }
+        // 新格式：Record<uuid,nodeKeys[]>
+        const entries = Object.entries(vt || {}) as [string, any[]][];
+        return entries.map(([nodeKey, keys]) => {
+          const obj = keyToObject.current.get(nodeKey);
+          return {
+            nodeKey: obj ? buildPath(obj) : nodeKey,
+            keys: Array.isArray(keys) ? keys.map(k => ({ time: k.time, visible: k.value, easing: 'linear' })) : []
+          };
+        });
+      };
+      const makeTrsTracksOut = (tl: any) => {
+        const tt = tl?.trsTracks;
+        if (Array.isArray(tt)) {
+          // 旧格式：[{ nodeKey, keys: [{time, position, rotation, scale}]}]
+          return tt.map((track: any) => {
+            const target = findByFlexiblePath(track.nodeKey);
+            const nodeKeyPath = target ? buildPath(target) : track.nodeKey;
+            const keys = Array.isArray(track.keys) ? track.keys.map((k: any) => ({
+              time: k.time,
+              position: k.position,
+              rotation: k.rotation,
+              scale: k.scale,
+              easing: k.easing || 'linear'
+            })) : [];
+            return { nodeKey: nodeKeyPath, keys };
+          });
+        }
+        // 新格式：Record<uuid, TransformKeyframe[]>
+        const entries = Object.entries(tt || {}) as [string, any[]][];
+        return entries.map(([nodeKey, keys]) => {
+          const obj = keyToObject.current.get(nodeKey);
+          return {
+            nodeKey: obj ? buildPath(obj) : nodeKey,
+            keys: Array.isArray(keys) ? keys.map(k => ({
+              time: k.time,
+              position: k.position,
+              rotation: k.rotationEuler,
+              scale: k.scale,
+              easing: k.easing || 'linear'
+            })) : []
+          };
+        });
+      };
+
       const saveData = {
         annotations: annotations.map(a => {
           const obj = keyToObject.current.get(a.targetKey);
@@ -2913,37 +2975,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           name: clip.name,
           description: clip.description || '',
           timeline: {
-            duration: clip.timeline.duration,
-            cameraKeys: clip.timeline.cameraKeys.map(k => ({
+            duration: clip.timeline?.duration ?? timelineRef.current.duration,
+            cameraKeys: Array.isArray(clip.timeline?.cameraKeys) ? clip.timeline.cameraKeys.map(k => ({
               time: k.time,
               position: k.position,
               target: k.target,
               easing: k.easing || 'linear'
-            })),
-            visTracks: Object.entries(clip.timeline.visTracks || {}).map(([nodeKey, keys]) => {
-              const obj = keyToObject.current.get(nodeKey);
-              return {
-                nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
-                keys: keys.map(k => ({
-                  time: k.time,
-                  visible: k.value,
-                  easing: 'linear'
-                }))
-              };
-            }),
-            trsTracks: Object.entries(clip.timeline.trsTracks || {}).map(([nodeKey, keys]) => {
-              const obj = keyToObject.current.get(nodeKey);
-              return {
-                nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
-                keys: keys.map(k => ({
-                  time: k.time,
-                  position: k.position,
-                  rotation: k.rotationEuler, 
-                  scale: k.scale,
-                  easing: k.easing || 'linear'
-                }))
-              };
-            })
+            })) : [],
+            visTracks: makeVisTracksOut(clip.timeline),
+            trsTracks: makeTrsTracksOut(clip.timeline)
           },
           steps: steps.map(s => ({
             id: s.id,
@@ -2986,6 +3026,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           lastUploadedFileIdRef.current = m ? m[1] : lastUploadedFileIdRef.current;
         }
       } catch {}
+      // 清除结构变更标记
+      structureDirtyRef.current = false;
+      deletedObjectsRef.current.clear();
       setLastSaved(new Date());
       message.success('课件已保存');
     } catch (error: any) {
@@ -3895,7 +3938,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
       <SettingsModal />
-      <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
+      <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); structureDirtyRef.current = true; setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
         <Form layout="vertical" form={renameForm} preserve={false}>
           <Form.Item name="name" label="名称" rules={[{ required:true, message:'请输入名称' }]}>
             <Input />
