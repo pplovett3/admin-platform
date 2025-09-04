@@ -1111,7 +1111,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const keys = [...prev.cameraKeys];
         const eps = 1e-3; const i = keys.findIndex(k => Math.abs(k.time - prev.current) < eps);
         const camera = cameraRef.current!; const ctrl = controlsRef.current!;
-        const rec: CameraKeyframe = { time: prev.current, position: [camera.position.x, camera.position.y, camera.position.z], target: [ctrl.target.x, ctrl.target.y, ctrl.target.z], easing: cameraKeyEasing };
+        const rec: CameraKeyframe = { time: prev.current, position: [camera.position.x, camera.position.y, camera.position.z] as [number,number,number], target: [ctrl.target.x, ctrl.target.y, ctrl.target.z] as [number,number,number], easing: cameraKeyEasing };
         if (i < 0) keys.push(rec); else keys[i] = { ...keys[i], position: rec.position, target: rec.target };
         keys.sort((a,b)=>a.time-b.time);
         return { ...prev, cameraKeys: keys };
@@ -1253,6 +1253,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   function applyTimelineAt(t: number) {
     const tl = timelineRef.current;
+    const isVec3 = (v: any): v is [number, number, number] => Array.isArray(v) && v.length === 3 && v.every((x:any)=> typeof x === 'number' && isFinite(x));
     // camera
     const camKeys = [...(tl.cameraKeys||[])].sort((a,b)=>a.time-b.time);
     if (camKeys.length > 0) {
@@ -1271,15 +1272,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // easeInOutCubic
         s = s < 0.5 ? 4 * s * s * s : 1 - Math.pow(-2 * s + 2, 3) / 2;
       }
+      const pos0 = isVec3(k0.position) ? k0.position : [camera.position.x, camera.position.y, camera.position.z] as [number,number,number];
+      const pos1 = isVec3(k1.position) ? k1.position : pos0;
+      const tar0 = isVec3(k0.target) ? k0.target : [controls.target.x, controls.target.y, controls.target.z] as [number,number,number];
+      const tar1 = isVec3(k1.target) ? k1.target : tar0;
       const pos: [number,number,number] = [
-        lerp(k0.position[0], k1.position[0], s),
-        lerp(k0.position[1], k1.position[1], s),
-        lerp(k0.position[2], k1.position[2], s)
+        lerp(pos0[0], pos1[0], s),
+        lerp(pos0[1], pos1[1], s),
+        lerp(pos0[2], pos1[2], s)
       ];
       const tar: [number,number,number] = [
-        lerp(k0.target[0], k1.target[0], s),
-        lerp(k0.target[1], k1.target[1], s),
-        lerp(k0.target[2], k1.target[2], s)
+        lerp(tar0[0], tar1[0], s),
+        lerp(tar0[1], tar1[1], s),
+        lerp(tar0[2], tar1[2], s)
       ];
       camera.position.set(pos[0], pos[1], pos[2]);
       controls.target.set(tar[0], tar[1], tar[2]);
@@ -1310,21 +1315,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       let s = Math.max(0, Math.min(1, (k1.time === k0.time) ? 0 : (t - k0.time) / (k1.time - k0.time)));
       const ease = k0.easing || 'easeInOut';
       if (ease === 'easeInOut') s = s < 0.5 ? 4 * s * s * s : 1 - Math.pow(-2 * s + 2, 3) / 2;
-      if (k0.position && k1.position) {
+      if (isVec3(k0.position) && isVec3(k1.position)) {
         obj.position.set(
           lerp(k0.position[0], k1.position[0], s),
           lerp(k0.position[1], k1.position[1], s),
           lerp(k0.position[2], k1.position[2], s)
         );
       }
-      if (k0.rotationEuler && k1.rotationEuler) {
+      if (isVec3(k0.rotationEuler) && isVec3(k1.rotationEuler)) {
         obj.rotation.set(
           lerp(k0.rotationEuler[0], k1.rotationEuler[0], s),
           lerp(k0.rotationEuler[1], k1.rotationEuler[1], s),
           lerp(k0.rotationEuler[2], k1.rotationEuler[2], s)
         );
       }
-      if (k0.scale && k1.scale) {
+      if (isVec3(k0.scale) && isVec3(k1.scale)) {
         obj.scale.set(
           lerp(k0.scale[0], k1.scale[0], s),
           lerp(k0.scale[1], k1.scale[1], s),
