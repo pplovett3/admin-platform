@@ -3114,7 +3114,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         if (!targetObject || keyframes.length === 0) return;
 
         // 构建对象路径用于动画轨道命名
-        const objectName = buildPath(targetObject);
+        const objectName = buildNamePath(targetObject) || targetObject.name || '';
 
         console.log(`  📍 处理对象: ${objectName} (${keyframes.length}个关键帧)`);
 
@@ -3189,20 +3189,37 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const targetObject = keyToObject.current.get(nodeUuid);
         if (!targetObject || keyframes.length === 0) return;
 
-        const objectName = buildPath(targetObject);
+        const objectName = buildNamePath(targetObject) || targetObject.name || '';
 
         console.log(`  👁️ 处理可见性: ${objectName} (${keyframes.length}个关键帧)`);
 
         const sortedKeys = [...keyframes].sort((a, b) => a.time - b.time);
         const times = sortedKeys.map(k => k.time);
-        const values = sortedKeys.map(k => k.value ? 1 : 0); // 转换为数值
 
-        const visibilityTrack = new THREE.NumberKeyframeTrack(
-          `${objectName}.visible`,
-          times,
-          values
-        );
-        tracks.push(visibilityTrack);
+        // glTF 不支持 .visible 轨道。将可见性映射为缩放（仅在没有缩放关键帧时使用）。
+        const hasScaleKeys = (timeline.trsTracks?.[nodeUuid] || []).some(k => !!k.scale);
+        if (!hasScaleKeys) {
+          const baseScale = targetObject.scale;
+          const scales: number[] = [];
+          sortedKeys.forEach(k => {
+            if (k.value) {
+              // 可见：使用对象原始缩放
+              scales.push(baseScale.x, baseScale.y, baseScale.z);
+            } else {
+              // 不可见：缩放到极小值（避免0导致除0或阴影异常）
+              const s = 1e-3;
+              scales.push(s, s, s);
+            }
+          });
+          const scaleTrackFromVisibility = new THREE.VectorKeyframeTrack(
+            `${objectName}.scale`,
+            times,
+            scales
+          );
+          tracks.push(scaleTrackFromVisibility);
+        } else {
+          console.log('  ⚠️ 该对象已有缩放关键帧，跳过可见性→缩放映射以避免冲突');
+        }
       });
 
       // 3. 创建AnimationClip
@@ -3245,10 +3262,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const property = parts.pop(); // 最后一部分是属性
       const objectPath = parts.join('.'); // 前面是对象路径
       
-      // 根据路径查找对象
+      // 根据路径查找对象（使用名称路径匹配，避免UUID导致的不稳定）
       let targetObject: THREE.Object3D | null = null;
       rootObject.traverse((obj: THREE.Object3D) => {
-        if (buildPath(obj) === objectPath || obj.name === objectPath) {
+        const namePath = buildNamePath(obj);
+        if (namePath === objectPath || obj.name === objectPath) {
           targetObject = obj;
         }
       });
@@ -3263,17 +3281,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 根据属性类型处理数据
       switch (property) {
         case 'visible':
-          // 可见性轨道
-          const visKeys: VisibilityKeyframe[] = [];
-          for (let i = 0; i < times.length; i++) {
-            visKeys.push({
-              time: times[i],
-              value: values[i] > 0.5 // 数值转布尔
-            });
+          // 可见性轨道（从GLB中一般不会出现；若出现则解析为可见性布尔，供编辑器显示用）
+          {
+            const visKeys: VisibilityKeyframe[] = [];
+            for (let i = 0; i < times.length; i++) {
+              visKeys.push({
+                time: times[i],
+                value: (values as any)[i] > 0.5
+              });
+            }
+            visTracks[targetUuid] = visKeys;
+            console.log(`      👁️ 可见性关键帧: ${visKeys.length}个`);
+            break;
           }
-          visTracks[targetUuid] = visKeys;
-          console.log(`      👁️ 可见性关键帧: ${visKeys.length}个`);
-          break;
           
         case 'position':
           // 位置轨道
