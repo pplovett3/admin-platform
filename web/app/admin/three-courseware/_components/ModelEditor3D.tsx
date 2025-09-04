@@ -1282,8 +1282,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       if (!prev.playing) { 
         controls?.update(); 
         // 即使不播放也要更新GLTF mixer以保持时间同步
-        if (prev.gltfAnimation?.mixer) {
-          prev.gltfAnimation.mixer.setTime(prev.current || 0);
+        if (prev.gltfAnimation?.mixer && prev.gltfAnimation?.action) {
+          prev.gltfAnimation.action.time = prev.current || 0;
           prev.gltfAnimation.mixer.update(0);
         }
         return prev; 
@@ -1322,18 +1322,35 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // 创建动画动作
         tl.gltfAnimation.action = mixer.clipAction(clip);
         tl.gltfAnimation.action.setLoop(THREE.LoopRepeat, Infinity);
+        tl.gltfAnimation.action.clampWhenFinished = true;
       }
       
       // 设置动画时间
-      mixer.setTime(t);
-      mixer.update(0); // 强制更新到指定时间
-      
-      if (tl.playing && tl.gltfAnimation.action) {
-        if (!tl.gltfAnimation.action.isRunning()) {
-          tl.gltfAnimation.action.play();
+      if (tl.gltfAnimation.action) {
+        // 确保动画已启用
+        tl.gltfAnimation.action.enabled = true;
+        
+        // 如果动画正在播放
+        if (tl.playing) {
+          if (!tl.gltfAnimation.action.isRunning()) {
+            tl.gltfAnimation.action.reset();
+            tl.gltfAnimation.action.play();
+          }
+          tl.gltfAnimation.action.paused = false;
+          // 设置到指定时间
+          tl.gltfAnimation.action.time = t;
+        } else {
+          // 暂停但保持在指定时间
+          tl.gltfAnimation.action.paused = true;
+          tl.gltfAnimation.action.time = t;
         }
-      } else if (tl.gltfAnimation.action) {
-        tl.gltfAnimation.action.paused = true;
+      }
+      
+      // 更新mixer - 必须在设置时间后调用
+      try {
+        mixer.update(0);
+      } catch (err) {
+        console.warn('更新GLTF动画mixer时出错:', err);
       }
     }
     
@@ -1645,6 +1662,44 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // 提升子节点为新的根
         root = child;
       }
+
+      // 检查并修复材质问题
+      root.traverse((child) => {
+        if ((child as any).isMesh) {
+          const mesh = child as THREE.Mesh;
+          try {
+            if (!mesh.material) {
+              // 如果材质为null，创建默认材质
+              mesh.material = new THREE.MeshBasicMaterial({ color: 0x888888 });
+            } else if (Array.isArray(mesh.material)) {
+              // 如果是数组材质，过滤掉null值
+              const validMaterials = mesh.material.filter(mat => mat != null);
+              if (validMaterials.length === 0) {
+                // 如果没有有效材质，创建一个默认材质
+                mesh.material = new THREE.MeshBasicMaterial({ color: 0x888888 });
+              } else {
+                mesh.material = validMaterials;
+              }
+            }
+            // 检查材质的shader相关属性
+            if (mesh.material && !Array.isArray(mesh.material)) {
+              const mat = mesh.material as any;
+              if (mat.uniforms) {
+                Object.keys(mat.uniforms).forEach(key => {
+                  if (mat.uniforms[key] && mat.uniforms[key].value === null) {
+                    console.warn(`修复材质 ${key} 的null值`);
+                    mat.uniforms[key].value = '';
+                  }
+                });
+              }
+            }
+          } catch (err) {
+            console.warn('修复材质时出错:', err);
+            // 创建安全的默认材质
+            mesh.material = new THREE.MeshBasicMaterial({ color: 0x888888 });
+          }
+        }
+      });
 
       modelRootRef.current = root;
       scene.add(root);
