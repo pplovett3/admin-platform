@@ -881,20 +881,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   }, [mode, selectedKey, gizmoMode, gizmoSpace]);
 
   const createClip = () => {
-    // 清空当前时间线轨道，创建新的干净动画
-    setTimeline({
-      duration: 10,
-      current: 0,
-      playing: false,
-      cameraKeys: [],
-      visTracks: {},
-      trsTracks: {},
-      annotationTracks: {}
-    });
-    
-    // 复位模型状态到初始状态
-    resetModelToInitialState();
-    
     setEditingAnimation(null);
     setAnimationModalOpen(true);
   };
@@ -904,39 +890,56 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     // 更新当前活动动画的timeline数据
     setClips(prev => prev.map(c => c.id === activeClipId ? { 
       ...c, 
-      timeline: {
-        ...JSON.parse(JSON.stringify(timeline)),
-        steps: steps // 同时更新steps
-      }
+      timeline: JSON.parse(JSON.stringify(timeline)) // 深拷贝当前时间线数据
     } : c));
-    message.success('动画已保存');
+    message.success('动画已保存到列表');
   };
   
   // 动画编辑处理函数
   const handleAnimationSave = (name: string, description: string) => {
     if (editingAnimation) {
-      // 编辑现有动画
+      // 编辑现有动画：更新当前时间线数据到正在编辑的动画
       setClips(prev => prev.map(c => 
         c.id === editingAnimation.id 
-          ? { ...c, name, description }
+          ? { 
+              ...c, 
+              name, 
+              description,
+              timeline: JSON.parse(JSON.stringify(timeline)) // 更新时间线数据
+            }
           : c
       ));
       message.success('动画已更新');
     } else {
-      // 创建新动画
+      // 创建新动画：检查重名
+      const trimmedName = name.trim();
+      const nameExists = clips.some(c => c.name.trim() === trimmedName);
+      
+      if (nameExists) {
+        message.error(`动画名称 "${trimmedName}" 已存在，请使用其他名称`);
+        return; // 不关闭弹窗，让用户修改名称
+      }
+      
       const id = generateUuid();
       const clip: Clip = { 
         id, 
-        name, 
+        name: trimmedName, 
         description, 
         timeline: JSON.parse(JSON.stringify(timeline)) 
       };
       setClips(prev => [clip, ...prev]);
       setActiveClipId(id);
       message.success('动画已创建');
+      
+      setAnimationModalOpen(false);
+      setEditingAnimation(null);
     }
-    setAnimationModalOpen(false);
-    setEditingAnimation(null);
+    
+    // 只有在成功创建新动画时才关闭弹窗
+    if (editingAnimation) {
+      setAnimationModalOpen(false);
+      setEditingAnimation(null);
+    }
   };
   
   const handleAnimationDelete = () => {
@@ -962,7 +965,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const onSelectClip = (id: string) => {
     setActiveClipId(id);
     const c = clips.find(x => x.id === id);
-    if (c) setTimeline(JSON.parse(JSON.stringify(c.timeline)));
+    if (c) {
+      console.log('切换到动画:', c.name);
+      // 深拷贝时间线数据，避免直接引用
+      setTimeline(JSON.parse(JSON.stringify(c.timeline)));
+      // 同时应用时间线数据到场景
+      setTimeout(() => {
+        applyTimelineAt(c.timeline.current || 0);
+      }, 0);
+    }
   };
 
   useEffect(() => {
@@ -996,34 +1007,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const visSel = selectedVisRef.current;
         if (camIdx!=null) { setTimeline(prev=>({ ...prev, cameraKeys: prev.cameraKeys.filter((_,i)=>i!==camIdx) })); setSelectedCamKeyIdx(null); return; }
         if (trsSel) {
-          setTimeline(prev=>{ 
-            const tracks={...prev.trsTracks}; 
-            const list=(tracks[trsSel.key]||[]).slice(); 
-            list.splice(trsSel.index,1); 
-            // 如果轨道变空，删除整个轨道
-            if (list.length === 0) {
-              delete tracks[trsSel.key];
-            } else {
-              tracks[trsSel.key]=list;
-            }
-            return { ...prev, trsTracks: tracks }; 
-          });
+          setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[trsSel.key]||[]).slice(); list.splice(trsSel.index,1); tracks[trsSel.key]=list; return { ...prev, trsTracks: tracks }; });
           setSelectedTrs(null);
           return;
         }
         if (visSel) {
-          setTimeline(prev=>{ 
-            const tracks={...prev.visTracks}; 
-            const list=(tracks[visSel.key]||[]).slice(); 
-            list.splice(visSel.index,1); 
-            // 如果轨道变空，删除整个轨道
-            if (list.length === 0) {
-              delete tracks[visSel.key];
-            } else {
-              tracks[visSel.key]=list;
-            }
-            return { ...prev, visTracks: tracks }; 
-          });
+          setTimeline(prev=>{ const tracks={...prev.visTracks}; const list=(tracks[visSel.key]||[]).slice(); list.splice(visSel.index,1); tracks[visSel.key]=list; return { ...prev, visTracks: tracks }; });
           setSelectedVis(null);
           return;
         }
@@ -1290,6 +1279,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   function applyTimelineAt(t: number) {
     const tl = timelineRef.current;
     const isVec3 = (v: any): v is [number, number, number] => Array.isArray(v) && v.length === 3 && v.every((x:any)=> typeof x === 'number' && isFinite(x));
+    
+    console.log('应用时间线于时间:', t, '数据:', {
+      相机关键帧: tl.cameraKeys?.length || 0,
+      可见性轨道: Object.keys(tl.visTracks || {}).length,
+      变换轨道: Object.keys(tl.trsTracks || {}).length
+    });
+    
     // camera
     const camKeys = [...(tl.cameraKeys||[])].sort((a,b)=>a.time-b.time);
     if (camKeys.length > 0) {
@@ -1327,22 +1323,30 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       camera.updateProjectionMatrix();
       controls.update();
     }
+    
     // visibility
     const visTracks = tl.visTracks || {};
     for (const key of Object.keys(visTracks)) {
       const obj = keyToObject.current.get(key);
-      if (!obj) continue;
+      if (!obj) {
+        console.warn('找不到可见性轨道对应的对象:', key);
+        continue;
+      }
       const keys = [...(visTracks[key] || [])].sort((a,b)=>a.time-b.time);
       if (keys.length === 0) continue;
       let value = keys[0].value;
       for (let i = 0; i < keys.length; i++) { if (keys[i].time <= t) value = keys[i].value; else break; }
       obj.visible = value;
     }
+    
     // TRS
     const trsTracks = tl.trsTracks || {};
     for (const key of Object.keys(trsTracks)) {
       const obj = keyToObject.current.get(key);
-      if (!obj) continue;
+      if (!obj) {
+        console.warn('找不到变换轨道对应的对象:', key);
+        continue;
+      }
       const keys = [...(trsTracks[key] || [])].sort((a,b)=>a.time-b.time);
       if (keys.length === 0) continue;
       let k0 = keys[0]; let k1 = keys[keys.length-1];
@@ -1452,9 +1456,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
       // 使用fetch来加载带认证的模型文件
       let root: THREE.Object3D;
-      // 保存原始动画数据，稍后在层级处理完成后再转换
-      let originalAnimations: THREE.AnimationClip[] | null = null;
-      
       if (actualSrc.startsWith('/api/files/')) {
         const token = getToken?.();
         const response = await fetch(finalSrc, {
@@ -1466,19 +1467,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const arrayBuffer = await response.arrayBuffer();
         const gltf = await loader.parseAsync(arrayBuffer, '');
         root = gltf.scene || gltf.scenes[0];
-        originalAnimations = gltf.animations;
       } else {
         const gltf = await loader.loadAsync(finalSrc);
         root = gltf.scene || gltf.scenes[0];
-        originalAnimations = gltf.animations;
-      }
-      
-      if (originalAnimations && originalAnimations.length > 0) {
-        console.log('🎬 发现GLB内置动画:', originalAnimations.map(clip => ({ name: clip.name, duration: clip.duration })));
       }
       
       // 规整根节点：
-      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现"Object3D/Group"套层
+      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现“Object3D/Group”套层
       // 2) 若为 Scene 且有多个子节点，则合并到一个 Group 中作为导入根
       if ((root as any).isScene) {
         let candidate: THREE.Object3D = root;
@@ -1525,45 +1520,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       nodes.push(makeNode(root));
       setTreeData(nodes);
-      
-      // 保存模型初始状态（用于新建动画时复位）
-      saveInitialModelState();
-
-      // 在层级处理和结构树生成完成后，转换GLB内置动画
-      if (originalAnimations && originalAnimations.length > 0) {
-        // 为每个GLB动画创建clips
-        const glbClips: Clip[] = [];
-        for (let i = 0; i < originalAnimations.length; i++) {
-          const animation = originalAnimations[i];
-          const glbTimeline = convertGLBAnimationsToTimelineWithMapping([animation], root, keyToObject.current);
-          if (glbTimeline) {
-            const clipId = generateUuid();
-            const clipName = animation.name || `GLB动画${i + 1}`;
-            glbClips.push({
-              id: clipId,
-              name: clipName,
-              description: `从GLB导入的动画: ${clipName}`,
-              timeline: glbTimeline
-            });
-          }
-        }
-        
-        if (glbClips.length > 0) {
-          console.log('✨ 从GLB创建动画clips:', glbClips.map(c => ({ name: c.name, duration: c.timeline.duration })));
-          
-          // 添加到clips列表
-          setClips(prev => [...glbClips, ...prev]);
-          
-          // 如果当前没有时间线数据，使用第一个GLB动画作为默认
-          if (!pendingImportRef.current?.timeline) {
-            if (!pendingImportRef.current) pendingImportRef.current = {};
-            pendingImportRef.current.timeline = glbClips[0].timeline;
-            
-            // 设置第一个GLB动画为活动动画
-            setTimeout(() => setActiveClipId(glbClips[0].id), 100);
-          }
-        }
-      }
 
       focusObject(root);
       message.destroy(); // 关闭加载消息
@@ -1734,8 +1690,111 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       });
       setAnnotations(restored);
       
-      // 处理时间线数据
-      if (pending.timeline) {
+      // 处理所有动画数据的时间线恢复
+      if (pending.allAnimations && Array.isArray(pending.allAnimations)) {
+        console.log('开始恢复所有动画数据，共', pending.allAnimations.length, '个动画');
+        
+        // 恢复所有动画的时间线，重新映射UUID
+        const restoredClips: Clip[] = pending.allAnimations.map((anim: any) => {
+          const tl = anim.timeline;
+          if (!tl) return anim;
+          
+          // 转换 visTracks：路径 -> 新UUID
+          const visTracks: Record<string, VisibilityKeyframe[]> = {};
+          if (Array.isArray(tl.visTracks)) {
+            tl.visTracks.forEach((track: any) => {
+              if (track.nodeKey && Array.isArray(track.keys)) {
+                const target = findByFlexiblePath(track.nodeKey);
+                if (target) {
+                  visTracks[target.uuid] = track.keys.map((k: any) => ({
+                    time: k.time,
+                    value: k.visible
+                  }));
+                }
+              }
+            });
+          } else if (tl.visTracks && typeof tl.visTracks === 'object') {
+            // 处理旧格式：已经是UUID -> keyframes的对象
+            Object.entries(tl.visTracks).forEach(([oldKey, keys]) => {
+              // 尝试通过名称匹配找到新的对象
+              const matches: THREE.Object3D[] = [];
+              keyToObject.current.forEach((obj, uuid) => {
+                if (uuid === oldKey || obj.name === oldKey) {
+                  matches.push(obj);
+                }
+              });
+              if (matches.length > 0) {
+                visTracks[matches[0].uuid] = keys as VisibilityKeyframe[];
+              }
+            });
+          }
+
+          // 转换 trsTracks：路径 -> 新UUID  
+          const trsTracks: Record<string, TransformKeyframe[]> = {};
+          if (Array.isArray(tl.trsTracks)) {
+            tl.trsTracks.forEach((track: any) => {
+              if (track.nodeKey && Array.isArray(track.keys)) {
+                const target = findByFlexiblePath(track.nodeKey);
+                if (target) {
+                  trsTracks[target.uuid] = track.keys.map((k: any) => ({
+                    time: k.time,
+                    position: k.position,
+                    rotationEuler: k.rotation,
+                    scale: k.scale,
+                    easing: k.easing || 'linear'
+                  }));
+                }
+              }
+            });
+          } else if (tl.trsTracks && typeof tl.trsTracks === 'object') {
+            // 处理旧格式：已经是UUID -> keyframes的对象
+            Object.entries(tl.trsTracks).forEach(([oldKey, keys]) => {
+              // 尝试通过名称匹配找到新的对象
+              const matches: THREE.Object3D[] = [];
+              keyToObject.current.forEach((obj, uuid) => {
+                if (uuid === oldKey || obj.name === oldKey) {
+                  matches.push(obj);
+                }
+              });
+              if (matches.length > 0) {
+                trsTracks[matches[0].uuid] = keys as TransformKeyframe[];
+              }
+            });
+          }
+
+          return {
+            ...anim,
+            timeline: {
+              ...tl,
+              cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
+              visTracks,
+              trsTracks,
+              annotationTracks: tl.annotationTracks || {}
+            }
+          };
+        });
+        
+        // 更新clips
+        setClips(restoredClips);
+        console.log('动画数据恢复完成，共', restoredClips.length, '个动画');
+        
+        // 恢复活动动画和时间线
+        const activeId = pending.activeAnimationId;
+        if (activeId) {
+          const activeClip = restoredClips.find(c => c.id === activeId);
+          if (activeClip) {
+            setActiveClipId(activeId);
+            setTimeline(JSON.parse(JSON.stringify(activeClip.timeline)));
+            console.log('恢复活动动画:', activeClip.name);
+          }
+        } else if (restoredClips.length > 0) {
+          // 如果没有指定活动动画，使用第一个
+          setActiveClipId(restoredClips[0].id);
+          setTimeline(JSON.parse(JSON.stringify(restoredClips[0].timeline)));
+          console.log('使用第一个动画:', restoredClips[0].name);
+        }
+      } else if (pending.timeline) {
+        // 兼容旧的单时间线格式
         const tl = pending.timeline;
         
         // 转换 visTracks 和 trsTracks 格式，使用路径查找对象
@@ -1750,24 +1809,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   value: k.visible
                 }));
               }
-            }
-          });
-        } else if (tl.visTracks && typeof tl.visTracks === 'object') {
-          // 处理Record<uuid,keys>格式的显隐轨道
-          Object.entries(tl.visTracks).forEach(([nodeKey, keys]) => {
-            // nodeKey可能是UUID或路径，先尝试作为UUID直接查找
-            let target = keyToObject.current.get(nodeKey);
-            
-            // 如果UUID查找失败，再尝试作为路径查找
-            if (!target) {
-              target = findByFlexiblePath(nodeKey);
-            }
-            
-            if (target && Array.isArray(keys)) {
-              visTracks[target.uuid] = keys.map((k: any) => ({
-                time: k.time,
-                value: k.value !== undefined ? k.value : k.visible
-              }));
             }
           });
         }
@@ -1788,52 +1829,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               }
             }
           });
-        } else if (tl.trsTracks && typeof tl.trsTracks === 'object') {
-          // 处理Record<uuid,keys>格式的TRS轨道
-          Object.entries(tl.trsTracks).forEach(([nodeKey, keys]) => {
-            // nodeKey可能是UUID或路径，先尝试作为UUID直接查找
-            let target = keyToObject.current.get(nodeKey);
-            
-            // 如果UUID查找失败，再尝试作为路径查找
-            if (!target) {
-              target = findByFlexiblePath(nodeKey);
-            }
-            
-            if (target && Array.isArray(keys)) {
-              trsTracks[target.uuid] = keys.map((k: any) => ({
-                time: k.time,
-                position: k.position,
-                rotationEuler: k.rotationEuler || k.rotation,
-                scale: k.scale,
-                easing: k.easing || 'linear'
-              }));
-            }
-          });
         }
 
-        // 兼容新旧格式的时间线数据
-        const newTimeline: Partial<TimelineState> = {
-          duration: tl.duration || 10,
-          cameraKeys: [],
-          visTracks,
-          trsTracks
-        };
-        
-        // 处理相机关键帧：兼容新旧格式
-        if (Array.isArray(tl.cameraKeys)) {
-          newTimeline.cameraKeys = tl.cameraKeys.map((k: any) => ({
-            time: k.time || 0,
-            position: Array.isArray(k.position) && k.position.length === 3 ? k.position as [number,number,number] : [0,0,5],
-            target: Array.isArray(k.target) && k.target.length === 3 ? k.target as [number,number,number] : [0,0,0],
-            easing: k.easing || 'easeInOut'
-          }));
-        }
-        
         setTimeline(prev => ({
           ...prev,
-          ...newTimeline
+          duration: tl.duration || 10,
+          cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
+          visTracks,
+          trsTracks
         }));
-        
       }
 
       // 处理步骤数据
@@ -2054,7 +2058,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     };
     nodes.push(makeNode(root));
     setTreeData(nodes);
-    structureDirtyRef.current = true;
   }
 
   function groupNodes(nodeKeys: string[]) {
@@ -2064,7 +2067,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const grp = new THREE.Group(); grp.name = `组${Math.floor(Math.random()*1000)}`; parent.add(grp); grp.updateMatrixWorld(true);
     objs.forEach(o => { const mw = o.matrixWorld.clone(); grp.add(o); o.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(grp.matrixWorld).invert(); o.matrix.copy(inv.multiply(mw)); o.matrix.decompose(o.position, o.quaternion, o.scale); });
     rebuildTree();
-    structureDirtyRef.current = true;
     setSelectedSet(new Set([grp.uuid])); setSelectedKey(grp.uuid); syncHighlight(); setPrsTick(v=>v+1);
   }
 
@@ -2075,7 +2077,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     kids.forEach(k => { const mw = (k as any).matrixWorld.clone(); parent.add(k as any); (k as any).updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(parent.matrixWorld).invert(); (k as any).matrix.copy(inv.multiply(mw)); (k as any).matrix.decompose((k as any).position, (k as any).quaternion, (k as any).scale); });
     parent.remove(o);
     rebuildTree();
-    structureDirtyRef.current = true;
     setSelectedSet(new Set(kids.map(k => k.uuid))); setSelectedKey(kids[0]?.uuid); syncHighlight(); setPrsTick(v=>v+1);
   }
 
@@ -2094,7 +2095,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 重建树结构（会自动清理并重建 keyToObject 映射）
     rebuildTree();
-    structureDirtyRef.current = true;
     
     // 清除选择状态
     setSelectedSet(new Set()); 
@@ -2546,12 +2546,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
         const list = (tracks[k.key]||[]).slice();
         list.splice(k.index, 1);
-        // 如果轨道变空，删除整个轨道
-        if (list.length === 0) {
-          delete tracks[k.key];
-        } else {
-          tracks[k.key] = list;
-        }
+        tracks[k.key] = list;
         return { ...prev, trsTracks: tracks };
       });
       setSelectedTrs(null);
@@ -2570,32 +2565,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
     if (trackId.startsWith('vis:')) {
       const k = trackId.slice(4);
-      setTimeline(prev=>{ 
-        const map={...prev.visTracks}; 
-        const filtered = (map[k]||[]).filter(v=>!inRange(v.time));
-        // 如果轨道变空，删除整个轨道
-        if (filtered.length === 0) {
-          delete map[k];
-        } else {
-          map[k] = filtered;
-        }
-        return { ...prev, visTracks: map }; 
-      });
+      setTimeline(prev=>{ const map={...prev.visTracks}; map[k]=(map[k]||[]).filter(v=>!inRange(v.time)); return { ...prev, visTracks: map }; });
       return true;
     }
     if (trackId.startsWith('trs:')) {
       const k = trackId.slice(4);
-      setTimeline(prev=>{ 
-        const map={...prev.trsTracks}; 
-        const filtered = (map[k]||[]).filter(v=>!inRange(v.time));
-        // 如果轨道变空，删除整个轨道
-        if (filtered.length === 0) {
-          delete map[k];
-        } else {
-          map[k] = filtered;
-        }
-        return { ...prev, trsTracks: map }; 
-      });
+      setTimeline(prev=>{ const map={...prev.trsTracks}; map[k]=(map[k]||[]).filter(v=>!inRange(v.time)); return { ...prev, trsTracks: map }; });
       return true;
     }
     return false;
@@ -2873,458 +2848,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   // 跟踪被删除的对象UUID
   const deletedObjectsRef = useRef<Set<string>>(new Set());
-  // 跟踪结构变动（重命名/层级调整/打组解组等）
-  const structureDirtyRef = useRef<boolean>(false);
-  
-  // 存储模型初始状态
-  const initialStateRef = useRef<Map<string, {position: THREE.Vector3, rotation: THREE.Euler, scale: THREE.Vector3, visible: boolean}>>(new Map());
-  
-  // 保存模型初始状态
-  function saveInitialModelState() {
-    const root = modelRootRef.current;
-    if (!root) return;
-    
-    const stateMap = new Map();
-    root.traverse((obj) => {
-      stateMap.set(obj.uuid, {
-        position: obj.position.clone(),
-        rotation: obj.rotation.clone(),
-        scale: obj.scale.clone(),
-        visible: obj.visible
-      });
-    });
-    initialStateRef.current = stateMap;
-  }
-  
-  // 复位模型到初始状态
-  function resetModelToInitialState() {
-    const root = modelRootRef.current;
-    if (!root || initialStateRef.current.size === 0) return;
-    
-    root.traverse((obj) => {
-      const initialState = initialStateRef.current.get(obj.uuid);
-      if (initialState) {
-        obj.position.copy(initialState.position);
-        obj.rotation.copy(initialState.rotation);
-        obj.scale.copy(initialState.scale);
-        obj.visible = initialState.visible;
-        obj.updateMatrixWorld();
-      }
-    });
-    
-    console.log('🔄 模型状态已复位到初始状态');
-  }
-  
-  // 将GLB动画转换为时间线格式
-  function convertGLBAnimationsToTimeline(animations: THREE.AnimationClip[], rootObject: THREE.Object3D): TimelineState | null {
-    if (!animations.length) return null;
-    
-    // 建立更全面的对象映射：按名称和层级路径
-    const objMap = new Map<string, THREE.Object3D>();
-    const objByPath = new Map<string, THREE.Object3D>();
-    
-    rootObject.traverse(obj => {
-      if (obj.name) {
-        objMap.set(obj.name, obj);
-        
-        // 同时建立层级路径映射
-        const path = [];
-        let current = obj;
-        while (current && current !== rootObject) {
-          if (current.name) path.unshift(current.name);
-          current = current.parent as THREE.Object3D;
-        }
-        const fullPath = path.join('/');
-        if (fullPath) objByPath.set(fullPath, obj);
-      }
-    });
-    
-    console.log('🔍 可用对象映射:', {
-      byName: Array.from(objMap.keys()),
-      byPath: Array.from(objByPath.keys())
-    });
-    
-    // 取第一个动画作为主要动画源
-    const clip = animations[0];
-    const timeline: Partial<TimelineState> = {
-      duration: clip.duration,
-      current: 0,
-      cameraKeys: [],
-      visTracks: {},
-      trsTracks: {}
-    };
-    
-    // 遍历所有轨道
-    for (const track of clip.tracks) {
-      const trackName = track.name;
-      const property = trackName.split('.').pop(); // 提取属性名
-      let nodeName = trackName.substring(0, trackName.lastIndexOf('.')); // 提取节点名/路径
-      
-      console.log('🎬 处理动画轨道:', { trackName, nodeName, property });
-      
-      // 尝试多种方式查找目标对象
-      let targetObj: THREE.Object3D | undefined;
-      
-      // 1. 直接按名称查找
-      targetObj = objMap.get(nodeName);
-      
-      // 2. 如果没找到，尝试按路径查找
-      if (!targetObj) {
-        targetObj = objByPath.get(nodeName);
-      }
-      
-      // 3. 如果仍没找到，尝试模糊匹配（去掉数字后缀等）
-      if (!targetObj) {
-        const cleanName = nodeName.replace(/\.\d+$/, '').replace(/_\d+$/, '');
-        targetObj = objMap.get(cleanName);
-      }
-      
-      // 4. 最后尝试部分匹配
-      if (!targetObj) {
-        for (const [name, obj] of objMap) {
-          if (name.includes(nodeName) || nodeName.includes(name)) {
-            targetObj = obj;
-            console.log('📍 模糊匹配找到对象:', name, '←', nodeName);
-            break;
-          }
-        }
-      }
-      
-      if (!targetObj) {
-        console.warn('⚠️ GLB动画轨道找不到目标对象:', nodeName, '在轨道:', trackName);
-        continue;
-      }
-      
-      console.log('✅ 找到动画目标:', targetObj.name, 'UUID:', targetObj.uuid);
-      
-      const uuid = targetObj.uuid;
-      if (!timeline.trsTracks![uuid]) {
-        timeline.trsTracks![uuid] = [];
-      }
-      
-      // 按属性类型处理关键帧
-      const times = track.times;
-      const values = track.values;
-      
-      if (property === 'position') {
-        // 位置轨道：每3个值为一组 [x,y,z]
-        for (let i = 0; i < times.length; i++) {
-          const time = times[i];
-          const position: [number, number, number] = [
-            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
-          ];
-          
-          // 查找或创建该时间点的关键帧
-          let keyframe = timeline.trsTracks![uuid].find(k => Math.abs(k.time - time) < 0.001);
-          if (!keyframe) {
-            keyframe = { time, position, rotationEuler: [0,0,0], scale: [1,1,1], easing: 'linear' };
-            timeline.trsTracks![uuid].push(keyframe);
-          }
-          keyframe.position = position;
-        }
-      } else if (property === 'quaternion') {
-        // 四元数旋转轨道：转换为欧拉角
-        for (let i = 0; i < times.length; i++) {
-          const time = times[i];
-          const quat = new THREE.Quaternion(
-            values[i * 4], values[i * 4 + 1], values[i * 4 + 2], values[i * 4 + 3]
-          );
-          const euler = new THREE.Euler().setFromQuaternion(quat);
-          const rotationEuler: [number, number, number] = [euler.x, euler.y, euler.z];
-          
-          let keyframe = timeline.trsTracks![uuid].find(k => Math.abs(k.time - time) < 0.001);
-          if (!keyframe) {
-            keyframe = { time, position: [0,0,0], rotationEuler, scale: [1,1,1], easing: 'linear' };
-            timeline.trsTracks![uuid].push(keyframe);
-          }
-          keyframe.rotationEuler = rotationEuler;
-        }
-      } else if (property === 'scale') {
-        // 缩放轨道
-        for (let i = 0; i < times.length; i++) {
-          const time = times[i];
-          const scale: [number, number, number] = [
-            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
-          ];
-          
-          let keyframe = timeline.trsTracks![uuid].find(k => Math.abs(k.time - time) < 0.001);
-          if (!keyframe) {
-            keyframe = { time, position: [0,0,0], rotationEuler: [0,0,0], scale, easing: 'linear' };
-            timeline.trsTracks![uuid].push(keyframe);
-          }
-          keyframe.scale = scale;
-        }
-      }
-    }
-    
-    // 排序所有轨道的关键帧
-    Object.values(timeline.trsTracks!).forEach(track => {
-      track.sort((a, b) => a.time - b.time);
-    });
-    
-    return timeline as TimelineState;
-  }
-
-  // 将GLB动画转换为时间线格式（使用现有对象映射）
-  function convertGLBAnimationsToTimelineWithMapping(
-    animations: THREE.AnimationClip[], 
-    rootObject: THREE.Object3D, 
-    existingMapping: Map<string, THREE.Object3D>
-  ): TimelineState | null {
-    if (!animations.length) return null;
-    
-    // 反向映射：从名称到UUID
-    const nameToUuid = new Map<string, string>();
-    const pathToUuid = new Map<string, string>();
-    
-    for (const [uuid, obj] of existingMapping) {
-      if (obj.name) {
-        nameToUuid.set(obj.name, uuid);
-        
-        // 构建层级路径
-        const path = [];
-        let current = obj;
-        while (current && current !== rootObject) {
-          if (current.name) path.unshift(current.name);
-          current = current.parent as THREE.Object3D;
-        }
-        const fullPath = path.join('/');
-        if (fullPath) pathToUuid.set(fullPath, uuid);
-      }
-    }
-    
-    console.log('🎯 动画映射参考:', {
-      nameToUuid: Array.from(nameToUuid.entries()),
-      pathToUuid: Array.from(pathToUuid.entries())
-    });
-    
-    // 取第一个动画作为主要动画源
-    const clip = animations[0];
-    const timeline: Partial<TimelineState> = {
-      duration: clip.duration,
-      current: 0,
-      cameraKeys: [],
-      visTracks: {},
-      trsTracks: {}
-    };
-    
-    // 遍历所有轨道
-    for (const track of clip.tracks) {
-      const trackName = track.name;
-      const property = trackName.split('.').pop(); // 提取属性名
-      let nodeName = trackName.substring(0, trackName.lastIndexOf('.')); // 提取节点名/路径
-      
-      console.log('🎬 处理动画轨道:', { trackName, nodeName, property });
-      
-      // 查找对应的UUID
-      let targetUuid: string | undefined;
-      
-      // 1. 直接按名称查找UUID
-      targetUuid = nameToUuid.get(nodeName);
-      
-      // 2. 按路径查找UUID
-      if (!targetUuid) {
-        targetUuid = pathToUuid.get(nodeName);
-      }
-      
-      // 3. 模糊匹配
-      if (!targetUuid) {
-        const cleanName = nodeName.replace(/\.\d+$/, '').replace(/_\d+$/, '');
-        targetUuid = nameToUuid.get(cleanName);
-      }
-      
-      // 4. 部分匹配
-      if (!targetUuid) {
-        for (const [name, uuid] of nameToUuid) {
-          if (name.includes(nodeName) || nodeName.includes(name)) {
-            targetUuid = uuid;
-            console.log('📍 模糊匹配找到UUID:', name, '←', nodeName, 'UUID:', uuid);
-            break;
-          }
-        }
-      }
-      
-      if (!targetUuid) {
-        console.warn('⚠️ GLB动画轨道找不到目标UUID:', nodeName, '在轨道:', trackName);
-        continue;
-      }
-      
-      const targetObj = existingMapping.get(targetUuid);
-      console.log('✅ 找到动画目标:', targetObj?.name, 'UUID:', targetUuid);
-      
-      if (!timeline.trsTracks![targetUuid]) {
-        timeline.trsTracks![targetUuid] = [];
-      }
-      
-      // 按属性类型处理关键帧
-      const times = track.times;
-      const values = track.values;
-      
-      if (property === 'position') {
-        // 位置轨道：每3个值为一组 [x,y,z]
-        for (let i = 0; i < times.length; i++) {
-          const time = times[i];
-          const position: [number, number, number] = [
-            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
-          ];
-          
-          // 查找或创建该时间点的关键帧
-          let keyframe = timeline.trsTracks![targetUuid].find(k => Math.abs(k.time - time) < 0.001);
-          if (!keyframe) {
-            keyframe = { time, position, rotationEuler: [0,0,0], scale: [1,1,1], easing: 'linear' };
-            timeline.trsTracks![targetUuid].push(keyframe);
-          }
-          keyframe.position = position;
-        }
-      } else if (property === 'quaternion') {
-        // 四元数旋转轨道：转换为欧拉角
-        for (let i = 0; i < times.length; i++) {
-          const time = times[i];
-          const quat = new THREE.Quaternion(
-            values[i * 4], values[i * 4 + 1], values[i * 4 + 2], values[i * 4 + 3]
-          );
-          const euler = new THREE.Euler().setFromQuaternion(quat);
-          const rotationEuler: [number, number, number] = [euler.x, euler.y, euler.z];
-          
-          let keyframe = timeline.trsTracks![targetUuid].find(k => Math.abs(k.time - time) < 0.001);
-          if (!keyframe) {
-            keyframe = { time, position: [0,0,0], rotationEuler, scale: [1,1,1], easing: 'linear' };
-            timeline.trsTracks![targetUuid].push(keyframe);
-          }
-          keyframe.rotationEuler = rotationEuler;
-        }
-      } else if (property === 'scale') {
-        // 缩放轨道
-        for (let i = 0; i < times.length; i++) {
-          const time = times[i];
-          const scale: [number, number, number] = [
-            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
-          ];
-          
-          let keyframe = timeline.trsTracks![targetUuid].find(k => Math.abs(k.time - time) < 0.001);
-          if (!keyframe) {
-            keyframe = { time, position: [0,0,0], rotationEuler: [0,0,0], scale, easing: 'linear' };
-            timeline.trsTracks![targetUuid].push(keyframe);
-          }
-          keyframe.scale = scale;
-        }
-      }
-    }
-    
-    // 排序所有轨道的关键帧
-    Object.values(timeline.trsTracks!).forEach(track => {
-      track.sort((a, b) => a.time - b.time);
-    });
-    
-    return timeline as TimelineState;
-  }
-
-  // 将时间线转换为Three.js动画
-  function convertTimelineToAnimationClips(timeline: TimelineState, rootObject: THREE.Object3D): THREE.AnimationClip[] {
-    const clips: THREE.AnimationClip[] = [];
-    
-    // 收集所有有TRS轨道的对象
-    const trsEntries = Object.entries(timeline.trsTracks || {});
-    console.log('🎬 转换时间线为动画clips:', {
-      duration: timeline.duration,
-      trsTracksCount: trsEntries.length,
-      trsEntries: trsEntries.map(([uuid, keys]) => ({
-        uuid,
-        objName: keyToObject.current.get(uuid)?.name || 'unknown',
-        keysCount: keys.length,
-        firstKey: keys[0]
-      }))
-    });
-    
-    if (trsEntries.length === 0) {
-      console.warn('⚠️ 没有TRS轨道，无法生成动画clips');
-      return clips;
-    }
-    
-    const tracks: THREE.KeyframeTrack[] = [];
-    
-    // 为每个对象创建轨道
-    for (const [uuid, keyframes] of trsEntries) {
-      const obj = keyToObject.current.get(uuid);
-      if (!obj || !keyframes.length) continue;
-      
-      const objName = obj.name || `Object_${uuid.slice(0, 8)}`;
-      const sortedKeys = [...keyframes].sort((a, b) => a.time - b.time);
-      
-      // 提取时间和值
-      const times = sortedKeys.map(k => k.time);
-      const positions: number[] = [];
-      const quaternions: number[] = [];
-      const scales: number[] = [];
-      
-      for (const keyframe of sortedKeys) {
-        // 位置
-        if (keyframe.position) {
-          positions.push(...keyframe.position);
-        } else {
-          positions.push(obj.position.x, obj.position.y, obj.position.z);
-        }
-        
-        // 旋转：从欧拉角转换为四元数
-        if (keyframe.rotationEuler) {
-          const euler = new THREE.Euler(
-            keyframe.rotationEuler[0],
-            keyframe.rotationEuler[1], 
-            keyframe.rotationEuler[2]
-          );
-          const quat = new THREE.Quaternion().setFromEuler(euler);
-          quaternions.push(quat.x, quat.y, quat.z, quat.w);
-        } else {
-          const quat = new THREE.Quaternion().setFromEuler(obj.rotation);
-          quaternions.push(quat.x, quat.y, quat.z, quat.w);
-        }
-        
-        // 缩放
-        if (keyframe.scale) {
-          scales.push(...keyframe.scale);
-        } else {
-          scales.push(obj.scale.x, obj.scale.y, obj.scale.z);
-        }
-      }
-      
-      // 创建关键帧轨道
-      if (positions.length > 0) {
-        tracks.push(new THREE.VectorKeyframeTrack(
-          `${objName}.position`,
-          times,
-          positions
-        ));
-      }
-      
-      if (quaternions.length > 0) {
-        tracks.push(new THREE.QuaternionKeyframeTrack(
-          `${objName}.quaternion`,
-          times,
-          quaternions
-        ));
-      }
-      
-      if (scales.length > 0) {
-        tracks.push(new THREE.VectorKeyframeTrack(
-          `${objName}.scale`,
-          times,
-          scales
-        ));
-      }
-    }
-    
-    if (tracks.length > 0) {
-      const clip = new THREE.AnimationClip('TimelineAnimation', timeline.duration, tracks);
-      clips.push(clip);
-      console.log('🎬 生成动画剪辑:', {
-        name: clip.name,
-        duration: clip.duration,
-        tracksCount: tracks.length
-      });
-    }
-    
-    return clips;
-  }
   
   // GLB导出器
   const exporterRef = useRef<GLTFExporter | null>(null);
@@ -3349,7 +2872,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const source = modelRootRef.current;
       const s = new THREE.Scene();
       let exportRoot: THREE.Object3D = source.clone(true);
-      // 若克隆根是"空容器"且只有一个子节点，则下钻，避免导出时再次包裹 Object3D
+      // 若克隆根是“空容器”且只有一个子节点，则下钻，避免导出时再次包裹 Object3D
       const isTrivial = (o: THREE.Object3D) => {
         const hasMesh = (o as any).isMesh || (o as any).geometry || (o as any).material;
         return !hasMesh && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
@@ -3360,43 +2883,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       s.add(exportRoot);
       const exportTarget: THREE.Scene = s;
-      
-      // 将所有clips转换为动画并添加到场景
-      const allAnimations: THREE.AnimationClip[] = [];
-      const animationNames = new Set<string>(); // 用于去重动画名称
-      
-      // 1. 导出所有clips中的动画
-      for (const clip of clips) {
-        const clipAnimations = convertTimelineToAnimationClips(clip.timeline, exportRoot);
-        for (const anim of clipAnimations) {
-          // 使用clip的名称作为动画名称，确保唯一性
-          let animName = clip.name;
-          let counter = 1;
-          while (animationNames.has(animName)) {
-            animName = `${clip.name}_${counter}`;
-            counter++;
-          }
-          anim.name = animName;
-          animationNames.add(animName);
-          allAnimations.push(anim);
-        }
-      }
-      
-      // 2. 如果没有clips但有当前时间线，也导出当前时间线
-      if (allAnimations.length === 0) {
-        const currentAnimations = convertTimelineToAnimationClips(timelineRef.current, exportRoot);
-        allAnimations.push(...currentAnimations);
-      }
-      
-      if (allAnimations.length > 0) {
-        // 将动画添加到场景的 animations 属性
-        (exportTarget as any).animations = allAnimations;
-        console.log('✨ 添加所有动画到GLB:', allAnimations.map(clip => ({
-          name: clip.name,
-          duration: clip.duration,
-          tracks: clip.tracks.length
-        })));
-      }
       
       // 导出为GLB格式
       const result = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -3410,10 +2896,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             }
           },
           (error) => reject(error),
-          { 
-            binary: true, // 导出为GLB格式
-            animations: allAnimations // 确保所有动画被包含
-          }
+          { binary: true } // 导出为GLB格式
         );
       });
       
@@ -3429,7 +2912,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   
   // 检测是否有结构变化（删除、重命名、层级调整）
   const hasStructureChanges = (): boolean => {
-    return deletedObjectsRef.current.size > 0 || structureDirtyRef.current === true;
+    return deletedObjectsRef.current.size > 0; // 简化：主要检测删除操作
   };
   
   // 构建模型结构信息（包含删除记录）
@@ -3542,62 +3025,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       });
       
       // 构造保存数据
-      // 兼容旧/新时间线结构，统一导出为 nodeKey 轨道数组形式
-      const makeVisTracksOut = (tl: any) => {
-        const vt = tl?.visTracks;
-        if (Array.isArray(vt)) {
-          // 旧格式：[{ nodeKey, keys: [{time, visible}]}]
-          return vt.map((track: any) => {
-            const target = findByFlexiblePath(track.nodeKey);
-            const nodeKeyPath = target ? buildPath(target) : track.nodeKey;
-            const keys = Array.isArray(track.keys) ? track.keys.map((k: any) => ({ time: k.time, visible: k.visible, easing: 'linear' })) : [];
-            return { nodeKey: nodeKeyPath, keys };
-          });
-        }
-        // 新格式：Record<uuid,nodeKeys[]>
-        const entries = Object.entries(vt || {}) as [string, any[]][];
-        return entries.map(([nodeKey, keys]) => {
-          const obj = keyToObject.current.get(nodeKey);
-          return {
-            nodeKey: obj ? buildPath(obj) : nodeKey,
-            keys: Array.isArray(keys) ? keys.map(k => ({ time: k.time, visible: k.value, easing: 'linear' })) : []
-          };
-        });
-      };
-      const makeTrsTracksOut = (tl: any) => {
-        const tt = tl?.trsTracks;
-        if (Array.isArray(tt)) {
-          // 旧格式：[{ nodeKey, keys: [{time, position, rotation, scale}]}]
-          return tt.map((track: any) => {
-            const target = findByFlexiblePath(track.nodeKey);
-            const nodeKeyPath = target ? buildPath(target) : track.nodeKey;
-            const keys = Array.isArray(track.keys) ? track.keys.map((k: any) => ({
-              time: k.time,
-              position: k.position,
-              rotation: k.rotation,
-              scale: k.scale,
-              easing: k.easing || 'linear'
-            })) : [];
-            return { nodeKey: nodeKeyPath, keys };
-          });
-        }
-        // 新格式：Record<uuid, TransformKeyframe[]>
-        const entries = Object.entries(tt || {}) as [string, any[]][];
-        return entries.map(([nodeKey, keys]) => {
-          const obj = keyToObject.current.get(nodeKey);
-          return {
-            nodeKey: obj ? buildPath(obj) : nodeKey,
-            keys: Array.isArray(keys) ? keys.map(k => ({
-              time: k.time,
-              position: k.position,
-              rotation: k.rotationEuler,
-              scale: k.scale,
-              easing: k.easing || 'linear'
-            })) : []
-          };
-        });
-      };
-
       const saveData = {
         annotations: annotations.map(a => {
           const obj = keyToObject.current.get(a.targetKey);
@@ -3629,15 +3056,37 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           name: clip.name,
           description: clip.description || '',
           timeline: {
-            duration: clip.timeline?.duration ?? timelineRef.current.duration,
-            cameraKeys: Array.isArray(clip.timeline?.cameraKeys) ? clip.timeline.cameraKeys.map(k => ({
+            duration: clip.timeline.duration,
+            cameraKeys: clip.timeline.cameraKeys.map(k => ({
               time: k.time,
               position: k.position,
               target: k.target,
               easing: k.easing || 'linear'
-            })) : [],
-            visTracks: makeVisTracksOut(clip.timeline),
-            trsTracks: makeTrsTracksOut(clip.timeline)
+            })),
+            visTracks: Object.entries(clip.timeline.visTracks || {}).map(([nodeKey, keys]) => {
+              const obj = keyToObject.current.get(nodeKey);
+              return {
+                nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
+                keys: keys.map(k => ({
+                  time: k.time,
+                  visible: k.value,
+                  easing: 'linear'
+                }))
+              };
+            }),
+            trsTracks: Object.entries(clip.timeline.trsTracks || {}).map(([nodeKey, keys]) => {
+              const obj = keyToObject.current.get(nodeKey);
+              return {
+                nodeKey: obj ? buildPath(obj) : nodeKey, // 保存路径而不是UUID
+                keys: keys.map(k => ({
+                  time: k.time,
+                  position: k.position,
+                  rotation: k.rotationEuler, 
+                  scale: k.scale,
+                  easing: k.easing || 'linear'
+                }))
+              };
+            })
           },
           steps: steps.map(s => ({
             id: s.id,
@@ -3680,9 +3129,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           lastUploadedFileIdRef.current = m ? m[1] : lastUploadedFileIdRef.current;
         }
       } catch {}
-      // 清除结构变更标记
-      structureDirtyRef.current = false;
-      deletedObjectsRef.current.clear();
       setLastSaved(new Date());
       message.success('课件已保存');
     } catch (error: any) {
@@ -3760,22 +3206,39 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
       // 初始化动画和时间线（延迟到模型加载后处理）
       if (coursewareData.animations && Array.isArray(coursewareData.animations)) {
-        // 加载所有动画到clips
+        // 加载所有动画到clips - 确保ID唯一性
         const loadedClips: Clip[] = coursewareData.animations.map(anim => ({
-          id: anim.id,
-          name: anim.name,
+          id: anim.id || generateUuid(), // 确保有ID
+          name: anim.name || '未命名动画',
           description: anim.description || '',
-          timeline: anim.timeline
+          timeline: anim.timeline || { duration: 10, current: 0, playing: false, cameraKeys: [], visTracks: {}, trsTracks: {}, annotationTracks: {} }
         }));
-        setClips(loadedClips);
+        
+        // 去重：如果有重复ID，为后面的生成新ID
+        const uniqueClips: Clip[] = [];
+        const usedIds = new Set<string>();
+        loadedClips.forEach(clip => {
+          if (usedIds.has(clip.id)) {
+            clip.id = generateUuid();
+          }
+          usedIds.add(clip.id);
+          uniqueClips.push(clip);
+        });
+        
+        setClips(uniqueClips);
+        console.log('载入动画:', uniqueClips.length, '个');
         
         // 设置第一个动画为活动动画
-        if (loadedClips.length > 0) {
-          setActiveClipId(loadedClips[0].id);
+        if (uniqueClips.length > 0) {
+          setActiveClipId(uniqueClips[0].id);
           
-          // 存储时间线数据到pending中
+          // 存储所有动画数据到pending中，等模型加载后恢复
           if (!pendingImportRef.current) pendingImportRef.current = {};
-          pendingImportRef.current.timeline = loadedClips[0].timeline;
+          pendingImportRef.current.allAnimations = uniqueClips;
+          pendingImportRef.current.activeAnimationId = uniqueClips[0].id;
+          
+          // 暂时设置第一个动画的时间线（模型加载后会重新处理）
+          pendingImportRef.current.timeline = uniqueClips[0].timeline;
           pendingImportRef.current.steps = coursewareData.animations[0]?.steps || [];
         }
       } else {
@@ -4592,7 +4055,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
       <SettingsModal />
-      <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); structureDirtyRef.current = true; setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
+      <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
         <Form layout="vertical" form={renameForm} preserve={false}>
           <Form.Item name="name" label="名称" rules={[{ required:true, message:'请输入名称' }]}>
             <Input />
