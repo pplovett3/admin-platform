@@ -1494,7 +1494,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       if (originalAnimations && originalAnimations.length > 0) {
         // 如果当前没有时间线数据，则从GLB动画生成
         if (!pendingImportRef.current?.timeline) {
-          const glbTimeline = convertGLBAnimationsToTimeline(originalAnimations, root);
+          // 使用最新的keyToObject映射来确保UUID一致性
+          const glbTimeline = convertGLBAnimationsToTimelineWithMapping(originalAnimations, root, keyToObject.current);
           if (glbTimeline) {
             if (!pendingImportRef.current) pendingImportRef.current = {};
             pendingImportRef.current.timeline = glbTimeline;
@@ -2911,6 +2912,160 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           if (!keyframe) {
             keyframe = { time, position: [0,0,0], rotationEuler: [0,0,0], scale, easing: 'linear' };
             timeline.trsTracks![uuid].push(keyframe);
+          }
+          keyframe.scale = scale;
+        }
+      }
+    }
+    
+    // 排序所有轨道的关键帧
+    Object.values(timeline.trsTracks!).forEach(track => {
+      track.sort((a, b) => a.time - b.time);
+    });
+    
+    return timeline as TimelineState;
+  }
+
+  // 将GLB动画转换为时间线格式（使用现有对象映射）
+  function convertGLBAnimationsToTimelineWithMapping(
+    animations: THREE.AnimationClip[], 
+    rootObject: THREE.Object3D, 
+    existingMapping: Map<string, THREE.Object3D>
+  ): TimelineState | null {
+    if (!animations.length) return null;
+    
+    // 反向映射：从名称到UUID
+    const nameToUuid = new Map<string, string>();
+    const pathToUuid = new Map<string, string>();
+    
+    for (const [uuid, obj] of existingMapping) {
+      if (obj.name) {
+        nameToUuid.set(obj.name, uuid);
+        
+        // 构建层级路径
+        const path = [];
+        let current = obj;
+        while (current && current !== rootObject) {
+          if (current.name) path.unshift(current.name);
+          current = current.parent as THREE.Object3D;
+        }
+        const fullPath = path.join('/');
+        if (fullPath) pathToUuid.set(fullPath, uuid);
+      }
+    }
+    
+    console.log('🎯 动画映射参考:', {
+      nameToUuid: Array.from(nameToUuid.entries()),
+      pathToUuid: Array.from(pathToUuid.entries())
+    });
+    
+    // 取第一个动画作为主要动画源
+    const clip = animations[0];
+    const timeline: Partial<TimelineState> = {
+      duration: clip.duration,
+      current: 0,
+      cameraKeys: [],
+      visTracks: {},
+      trsTracks: {}
+    };
+    
+    // 遍历所有轨道
+    for (const track of clip.tracks) {
+      const trackName = track.name;
+      const property = trackName.split('.').pop(); // 提取属性名
+      let nodeName = trackName.substring(0, trackName.lastIndexOf('.')); // 提取节点名/路径
+      
+      console.log('🎬 处理动画轨道:', { trackName, nodeName, property });
+      
+      // 查找对应的UUID
+      let targetUuid: string | undefined;
+      
+      // 1. 直接按名称查找UUID
+      targetUuid = nameToUuid.get(nodeName);
+      
+      // 2. 按路径查找UUID
+      if (!targetUuid) {
+        targetUuid = pathToUuid.get(nodeName);
+      }
+      
+      // 3. 模糊匹配
+      if (!targetUuid) {
+        const cleanName = nodeName.replace(/\.\d+$/, '').replace(/_\d+$/, '');
+        targetUuid = nameToUuid.get(cleanName);
+      }
+      
+      // 4. 部分匹配
+      if (!targetUuid) {
+        for (const [name, uuid] of nameToUuid) {
+          if (name.includes(nodeName) || nodeName.includes(name)) {
+            targetUuid = uuid;
+            console.log('📍 模糊匹配找到UUID:', name, '←', nodeName, 'UUID:', uuid);
+            break;
+          }
+        }
+      }
+      
+      if (!targetUuid) {
+        console.warn('⚠️ GLB动画轨道找不到目标UUID:', nodeName, '在轨道:', trackName);
+        continue;
+      }
+      
+      const targetObj = existingMapping.get(targetUuid);
+      console.log('✅ 找到动画目标:', targetObj?.name, 'UUID:', targetUuid);
+      
+      if (!timeline.trsTracks![targetUuid]) {
+        timeline.trsTracks![targetUuid] = [];
+      }
+      
+      // 按属性类型处理关键帧
+      const times = track.times;
+      const values = track.values;
+      
+      if (property === 'position') {
+        // 位置轨道：每3个值为一组 [x,y,z]
+        for (let i = 0; i < times.length; i++) {
+          const time = times[i];
+          const position: [number, number, number] = [
+            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
+          ];
+          
+          // 查找或创建该时间点的关键帧
+          let keyframe = timeline.trsTracks![targetUuid].find(k => Math.abs(k.time - time) < 0.001);
+          if (!keyframe) {
+            keyframe = { time, position, rotationEuler: [0,0,0], scale: [1,1,1], easing: 'linear' };
+            timeline.trsTracks![targetUuid].push(keyframe);
+          }
+          keyframe.position = position;
+        }
+      } else if (property === 'quaternion') {
+        // 四元数旋转轨道：转换为欧拉角
+        for (let i = 0; i < times.length; i++) {
+          const time = times[i];
+          const quat = new THREE.Quaternion(
+            values[i * 4], values[i * 4 + 1], values[i * 4 + 2], values[i * 4 + 3]
+          );
+          const euler = new THREE.Euler().setFromQuaternion(quat);
+          const rotationEuler: [number, number, number] = [euler.x, euler.y, euler.z];
+          
+          let keyframe = timeline.trsTracks![targetUuid].find(k => Math.abs(k.time - time) < 0.001);
+          if (!keyframe) {
+            keyframe = { time, position: [0,0,0], rotationEuler, scale: [1,1,1], easing: 'linear' };
+            timeline.trsTracks![targetUuid].push(keyframe);
+          }
+          keyframe.rotationEuler = rotationEuler;
+        }
+      } else if (property === 'scale') {
+        // 缩放轨道
+        for (let i = 0; i < times.length; i++) {
+          const time = times[i];
+          const scale: [number, number, number] = [
+            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
+          ];
+          
+          let keyframe = timeline.trsTracks![targetUuid].find(k => Math.abs(k.time - time) < 0.001);
+          if (!keyframe) {
+            keyframe = { time, position: [0,0,0], rotationEuler: [0,0,0], scale, easing: 'linear' };
+            timeline.trsTracks![targetUuid].push(keyframe);
           }
           keyframe.scale = scale;
         }
