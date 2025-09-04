@@ -1668,6 +1668,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               }
             }
           });
+        } else if (tl.visTracks && typeof tl.visTracks === 'object') {
+          // 处理Record<uuid,keys>格式的显隐轨道
+          Object.entries(tl.visTracks).forEach(([nodeKey, keys]) => {
+            const target = findByFlexiblePath(nodeKey);
+            if (target && Array.isArray(keys)) {
+              visTracks[target.uuid] = keys.map((k: any) => ({
+                time: k.time,
+                value: k.value !== undefined ? k.value : k.visible
+              }));
+            }
+          });
         }
 
         const trsTracks: Record<string, TransformKeyframe[]> = {};
@@ -1686,14 +1697,43 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               }
             }
           });
+        } else if (tl.trsTracks && typeof tl.trsTracks === 'object') {
+          // 处理Record<uuid,keys>格式的TRS轨道
+          Object.entries(tl.trsTracks).forEach(([nodeKey, keys]) => {
+            const target = findByFlexiblePath(nodeKey);
+            if (target && Array.isArray(keys)) {
+              trsTracks[target.uuid] = keys.map((k: any) => ({
+                time: k.time,
+                position: k.position,
+                rotationEuler: k.rotationEuler || k.rotation,
+                scale: k.scale,
+                easing: k.easing || 'linear'
+              }));
+            }
+          });
         }
 
-        setTimeline(prev => ({
-          ...prev,
+        // 兼容新旧格式的时间线数据
+        const newTimeline: Partial<TimelineState> = {
           duration: tl.duration || 10,
-          cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
+          cameraKeys: [],
           visTracks,
           trsTracks
+        };
+        
+        // 处理相机关键帧：兼容新旧格式
+        if (Array.isArray(tl.cameraKeys)) {
+          newTimeline.cameraKeys = tl.cameraKeys.map((k: any) => ({
+            time: k.time || 0,
+            position: Array.isArray(k.position) && k.position.length === 3 ? k.position as [number,number,number] : [0,0,5],
+            target: Array.isArray(k.target) && k.target.length === 3 ? k.target as [number,number,number] : [0,0,0],
+            easing: k.easing || 'easeInOut'
+          }));
+        }
+        
+        setTimeline(prev => ({
+          ...prev,
+          ...newTimeline
         }));
       }
 
