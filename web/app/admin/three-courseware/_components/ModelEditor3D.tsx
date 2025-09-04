@@ -881,6 +881,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   }, [mode, selectedKey, gizmoMode, gizmoSpace]);
 
   const createClip = () => {
+    // 清空当前时间线轨道，创建新的干净动画
+    setTimeline({
+      duration: 10,
+      current: 0,
+      playing: false,
+      cameraKeys: [],
+      visTracks: {},
+      trsTracks: {},
+      annotationTracks: {}
+    });
+    
+    // 复位模型状态到初始状态
+    resetModelToInitialState();
+    
     setEditingAnimation(null);
     setAnimationModalOpen(true);
   };
@@ -982,12 +996,34 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const visSel = selectedVisRef.current;
         if (camIdx!=null) { setTimeline(prev=>({ ...prev, cameraKeys: prev.cameraKeys.filter((_,i)=>i!==camIdx) })); setSelectedCamKeyIdx(null); return; }
         if (trsSel) {
-          setTimeline(prev=>{ const tracks={...prev.trsTracks}; const list=(tracks[trsSel.key]||[]).slice(); list.splice(trsSel.index,1); tracks[trsSel.key]=list; return { ...prev, trsTracks: tracks }; });
+          setTimeline(prev=>{ 
+            const tracks={...prev.trsTracks}; 
+            const list=(tracks[trsSel.key]||[]).slice(); 
+            list.splice(trsSel.index,1); 
+            // 如果轨道变空，删除整个轨道
+            if (list.length === 0) {
+              delete tracks[trsSel.key];
+            } else {
+              tracks[trsSel.key]=list;
+            }
+            return { ...prev, trsTracks: tracks }; 
+          });
           setSelectedTrs(null);
           return;
         }
         if (visSel) {
-          setTimeline(prev=>{ const tracks={...prev.visTracks}; const list=(tracks[visSel.key]||[]).slice(); list.splice(visSel.index,1); tracks[visSel.key]=list; return { ...prev, visTracks: tracks }; });
+          setTimeline(prev=>{ 
+            const tracks={...prev.visTracks}; 
+            const list=(tracks[visSel.key]||[]).slice(); 
+            list.splice(visSel.index,1); 
+            // 如果轨道变空，删除整个轨道
+            if (list.length === 0) {
+              delete tracks[visSel.key];
+            } else {
+              tracks[visSel.key]=list;
+            }
+            return { ...prev, visTracks: tracks }; 
+          });
           setSelectedVis(null);
           return;
         }
@@ -1489,6 +1525,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       nodes.push(makeNode(root));
       setTreeData(nodes);
+      
+      // 保存模型初始状态（用于新建动画时复位）
+      saveInitialModelState();
 
       // 在层级处理和结构树生成完成后，转换GLB内置动画
       if (originalAnimations && originalAnimations.length > 0) {
@@ -2507,7 +2546,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const tracks = { ...prev.trsTracks } as Record<string, TransformKeyframe[]>;
         const list = (tracks[k.key]||[]).slice();
         list.splice(k.index, 1);
-        tracks[k.key] = list;
+        // 如果轨道变空，删除整个轨道
+        if (list.length === 0) {
+          delete tracks[k.key];
+        } else {
+          tracks[k.key] = list;
+        }
         return { ...prev, trsTracks: tracks };
       });
       setSelectedTrs(null);
@@ -2526,12 +2570,32 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
     if (trackId.startsWith('vis:')) {
       const k = trackId.slice(4);
-      setTimeline(prev=>{ const map={...prev.visTracks}; map[k]=(map[k]||[]).filter(v=>!inRange(v.time)); return { ...prev, visTracks: map }; });
+      setTimeline(prev=>{ 
+        const map={...prev.visTracks}; 
+        const filtered = (map[k]||[]).filter(v=>!inRange(v.time));
+        // 如果轨道变空，删除整个轨道
+        if (filtered.length === 0) {
+          delete map[k];
+        } else {
+          map[k] = filtered;
+        }
+        return { ...prev, visTracks: map }; 
+      });
       return true;
     }
     if (trackId.startsWith('trs:')) {
       const k = trackId.slice(4);
-      setTimeline(prev=>{ const map={...prev.trsTracks}; map[k]=(map[k]||[]).filter(v=>!inRange(v.time)); return { ...prev, trsTracks: map }; });
+      setTimeline(prev=>{ 
+        const map={...prev.trsTracks}; 
+        const filtered = (map[k]||[]).filter(v=>!inRange(v.time));
+        // 如果轨道变空，删除整个轨道
+        if (filtered.length === 0) {
+          delete map[k];
+        } else {
+          map[k] = filtered;
+        }
+        return { ...prev, trsTracks: map }; 
+      });
       return true;
     }
     return false;
@@ -2811,6 +2875,45 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const deletedObjectsRef = useRef<Set<string>>(new Set());
   // 跟踪结构变动（重命名/层级调整/打组解组等）
   const structureDirtyRef = useRef<boolean>(false);
+  
+  // 存储模型初始状态
+  const initialStateRef = useRef<Map<string, {position: THREE.Vector3, rotation: THREE.Euler, scale: THREE.Vector3, visible: boolean}>>(new Map());
+  
+  // 保存模型初始状态
+  function saveInitialModelState() {
+    const root = modelRootRef.current;
+    if (!root) return;
+    
+    const stateMap = new Map();
+    root.traverse((obj) => {
+      stateMap.set(obj.uuid, {
+        position: obj.position.clone(),
+        rotation: obj.rotation.clone(),
+        scale: obj.scale.clone(),
+        visible: obj.visible
+      });
+    });
+    initialStateRef.current = stateMap;
+  }
+  
+  // 复位模型到初始状态
+  function resetModelToInitialState() {
+    const root = modelRootRef.current;
+    if (!root || initialStateRef.current.size === 0) return;
+    
+    root.traverse((obj) => {
+      const initialState = initialStateRef.current.get(obj.uuid);
+      if (initialState) {
+        obj.position.copy(initialState.position);
+        obj.rotation.copy(initialState.rotation);
+        obj.scale.copy(initialState.scale);
+        obj.visible = initialState.visible;
+        obj.updateMatrixWorld();
+      }
+    });
+    
+    console.log('🔄 模型状态已复位到初始状态');
+  }
   
   // 将GLB动画转换为时间线格式
   function convertGLBAnimationsToTimeline(animations: THREE.AnimationClip[], rootObject: THREE.Object3D): TimelineState | null {
@@ -3122,7 +3225,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 收集所有有TRS轨道的对象
     const trsEntries = Object.entries(timeline.trsTracks || {});
-    if (trsEntries.length === 0) return clips;
+    console.log('🎬 转换时间线为动画clips:', {
+      duration: timeline.duration,
+      trsTracksCount: trsEntries.length,
+      trsEntries: trsEntries.map(([uuid, keys]) => ({
+        uuid,
+        objName: keyToObject.current.get(uuid)?.name || 'unknown',
+        keysCount: keys.length,
+        firstKey: keys[0]
+      }))
+    });
+    
+    if (trsEntries.length === 0) {
+      console.warn('⚠️ 没有TRS轨道，无法生成动画clips');
+      return clips;
+    }
     
     const tracks: THREE.KeyframeTrack[] = [];
     
@@ -3246,13 +3363,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       // 将所有clips转换为动画并添加到场景
       const allAnimations: THREE.AnimationClip[] = [];
+      const animationNames = new Set<string>(); // 用于去重动画名称
       
       // 1. 导出所有clips中的动画
       for (const clip of clips) {
         const clipAnimations = convertTimelineToAnimationClips(clip.timeline, exportRoot);
         for (const anim of clipAnimations) {
-          // 使用clip的名称作为动画名称
-          anim.name = clip.name;
+          // 使用clip的名称作为动画名称，确保唯一性
+          let animName = clip.name;
+          let counter = 1;
+          while (animationNames.has(animName)) {
+            animName = `${clip.name}_${counter}`;
+            counter++;
+          }
+          anim.name = animName;
+          animationNames.add(animName);
           allAnimations.push(anim);
         }
       }
