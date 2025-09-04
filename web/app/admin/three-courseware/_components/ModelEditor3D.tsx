@@ -1290,9 +1290,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       const nextTime = Math.min(prev.duration, prev.current + dt);
       
-      // 更新GLTF动画
+      // 更新GLTF动画 - 暂时禁用
       if (prev.gltfAnimation?.mixer) {
-        prev.gltfAnimation.mixer.update(dt);
+        // TODO: 修复mixer问题后重新启用
+        console.log('GLTF动画mixer更新暂时禁用');
       }
       
       applyTimelineAt(nextTime);
@@ -1315,43 +1316,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       GLTF动画: !!tl.gltfAnimation
     });
     
-    // 处理GLTF内置动画
+    // 处理GLTF内置动画 - 暂时禁用
     if (tl.gltfAnimation) {
-      const { mixer, clip } = tl.gltfAnimation;
-      if (!tl.gltfAnimation.action) {
-        // 创建动画动作
-        tl.gltfAnimation.action = mixer.clipAction(clip);
-        tl.gltfAnimation.action.setLoop(THREE.LoopRepeat, Infinity);
-        tl.gltfAnimation.action.clampWhenFinished = true;
-      }
-      
-      // 设置动画时间
-      if (tl.gltfAnimation.action) {
-        // 确保动画已启用
-        tl.gltfAnimation.action.enabled = true;
-        
-        // 如果动画正在播放
-        if (tl.playing) {
-          if (!tl.gltfAnimation.action.isRunning()) {
-            tl.gltfAnimation.action.reset();
-            tl.gltfAnimation.action.play();
-          }
-          tl.gltfAnimation.action.paused = false;
-          // 设置到指定时间
-          tl.gltfAnimation.action.time = t;
-        } else {
-          // 暂停但保持在指定时间
-          tl.gltfAnimation.action.paused = true;
-          tl.gltfAnimation.action.time = t;
-        }
-      }
-      
-      // 更新mixer - 必须在设置时间后调用
-      try {
-        mixer.update(0);
-      } catch (err) {
-        console.warn('更新GLTF动画mixer时出错:', err);
-      }
+      console.log('GLTF动画功能暂时禁用，跳过播放');
+      // TODO: 修复后重新启用GLTF动画播放逻辑
     }
     
     // camera
@@ -1547,85 +1515,61 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const gltf = await loader.parseAsync(arrayBuffer, '');
         root = gltf.scene || gltf.scenes[0];
         
-        // 处理带认证的GLTF内置动画
+        // 处理带认证的GLTF内置动画 - 暂时禁用直到修复mixer问题
         if (gltf.animations && gltf.animations.length > 0) {
           console.log('发现GLTF内置动画:', gltf.animations.length, '个');
-          const mixer = new THREE.AnimationMixer(root);
+          console.log('注意：GLTF内置动画功能暂时禁用，正在修复中...');
           
-          // 将GLTF动画转换为我们的动画格式
-          const gltfClips: Clip[] = gltf.animations.map((clip, index) => {
-            const duration = clip.duration || 10;
-            return {
-              id: generateUuid(),
-              name: clip.name || `GLTF动画${index + 1}`,
-              description: `来自模型的内置动画`,
-              timeline: {
-                duration,
-                current: 0,
-                playing: false,
-                cameraKeys: [],
-                visTracks: {},
-                trsTracks: {},
-                annotationTracks: {},
-                // 保存原始GLTF动画信息
-                gltfAnimation: {
-                  clip,
-                  mixer
-                }
-              }
-            };
-          });
+          // TODO: 修复AnimationMixer和clipAction问题后重新启用
+          // 创建简单的动画占位符
+          const gltfClips: Clip[] = gltf.animations.map((clip, index) => ({
+            id: generateUuid(),
+            name: clip.name || `原始动画${index + 1}`,
+            description: `模型内置动画（暂时不可播放）`,
+            timeline: {
+              duration: clip.duration || 10,
+              current: 0,
+              playing: false,
+              cameraKeys: [],
+              visTracks: {},
+              trsTracks: {},
+              annotationTracks: {},
+              // 暂时不包含gltfAnimation以避免错误
+            }
+          }));
           
-          // 将GLTF动画添加到clips列表
+          // 添加到clips列表
           setClips(prev => [...gltfClips, ...prev]);
-          
-          // 如果没有其他动画，将第一个GLTF动画设为活动动画
-          if (clips.length === 0 && gltfClips.length > 0) {
-            setActiveClipId(gltfClips[0].id);
-            setTimeline(JSON.parse(JSON.stringify(gltfClips[0].timeline)));
-          }
         }
       } else {
         const gltf = await loader.loadAsync(finalSrc);
         root = gltf.scene || gltf.scenes[0];
         
-        // 处理GLTF内置动画
+        // 处理GLTF内置动画 - 暂时禁用直到修复mixer问题
         if (gltf.animations && gltf.animations.length > 0) {
           console.log('发现GLTF内置动画:', gltf.animations.length, '个');
-          const mixer = new THREE.AnimationMixer(root);
+          console.log('注意：GLTF内置动画功能暂时禁用，正在修复中...');
           
-          // 将GLTF动画转换为我们的动画格式
-          const gltfClips: Clip[] = gltf.animations.map((clip, index) => {
-            const duration = clip.duration || 10;
-            return {
-              id: generateUuid(),
-              name: clip.name || `GLTF动画${index + 1}`,
-              description: `来自模型的内置动画`,
-              timeline: {
-                duration,
-                current: 0,
-                playing: false,
-                cameraKeys: [],
-                visTracks: {},
-                trsTracks: {},
-                annotationTracks: {},
-                // 保存原始GLTF动画信息
-                gltfAnimation: {
-                  clip,
-                  mixer
-                }
-              }
-            };
-          });
+          // TODO: 修复AnimationMixer和clipAction问题后重新启用
+          // 创建简单的动画占位符
+          const gltfClips: Clip[] = gltf.animations.map((clip, index) => ({
+            id: generateUuid(),
+            name: clip.name || `原始动画${index + 1}`,
+            description: `模型内置动画（暂时不可播放）`,
+            timeline: {
+              duration: clip.duration || 10,
+              current: 0,
+              playing: false,
+              cameraKeys: [],
+              visTracks: {},
+              trsTracks: {},
+              annotationTracks: {},
+              // 暂时不包含gltfAnimation以避免错误
+            }
+          }));
           
-          // 将GLTF动画添加到clips列表
+          // 添加到clips列表
           setClips(prev => [...gltfClips, ...prev]);
-          
-          // 如果没有其他动画，将第一个GLTF动画设为活动动画
-          if (clips.length === 0 && gltfClips.length > 0) {
-            setActiveClipId(gltfClips[0].id);
-            setTimeline(JSON.parse(JSON.stringify(gltfClips[0].timeline)));
-          }
         }
       }
       
@@ -3070,6 +3014,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // GLB导出器
   const exporterRef = useRef<GLTFExporter | null>(null);
   const lastUploadedFileIdRef = useRef<string | null>(null);
+  
+  // GLTF动画相关
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const gltfActionsRef = useRef<THREE.AnimationAction[]>([]);
   
   // 初始化导出器
   useEffect(() => {
