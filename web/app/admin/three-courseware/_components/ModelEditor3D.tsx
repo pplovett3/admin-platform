@@ -1286,12 +1286,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         lerp(tar0[1], tar1[1], s),
         lerp(tar0[2], tar1[2], s)
       ];
-      console.log('📷 应用相机关键帧:', { 
-        time: t, 
-        k0: { time: k0.time, pos: k0.position, tar: k0.target }, 
-        k1: { time: k1.time, pos: k1.position, tar: k1.target },
-        s, pos, tar 
-      });
       camera.position.set(pos[0], pos[1], pos[2]);
       controls.target.set(tar[0], tar[1], tar[2]);
       camera.updateProjectionMatrix();
@@ -1312,23 +1306,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const trsTracks = tl.trsTracks || {};
     for (const key of Object.keys(trsTracks)) {
       const obj = keyToObject.current.get(key);
-      if (!obj) {
-        console.warn('⚠️ TRS轨道找不到对象:', key, '可用对象:', Array.from(keyToObject.current.keys()));
-        continue;
-      }
+      if (!obj) continue;
       const keys = [...(trsTracks[key] || [])].sort((a,b)=>a.time-b.time);
-      if (keys.length === 0) {
-        console.warn('⚠️ TRS轨道无关键帧:', key, obj.name);
-        continue;
-      }
-      console.log('🔄 应用TRS轨道:', {
-        objName: obj.name,
-        uuid: key,
-        time: t,
-        keysCount: keys.length,
-        firstKey: keys[0],
-        lastKey: keys[keys.length-1]
-      });
+      if (keys.length === 0) continue;
       let k0 = keys[0]; let k1 = keys[keys.length-1];
       for (let i=0;i<keys.length;i++){ if (keys[i].time <= t) k0 = keys[i]; if (keys[i].time >= t) { k1 = keys[i]; break; } }
       const lerp = (a:number,b:number,s:number)=>a+(b-a)*s;
@@ -1447,9 +1427,39 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const arrayBuffer = await response.arrayBuffer();
         const gltf = await loader.parseAsync(arrayBuffer, '');
         root = gltf.scene || gltf.scenes[0];
+        
+        // 检查并导入GLB内置动画
+        if (gltf.animations && gltf.animations.length > 0) {
+          console.log('🎬 发现GLB内置动画:', gltf.animations.map(clip => ({ name: clip.name, duration: clip.duration })));
+          
+          // 如果当前没有时间线数据，则从GLB动画生成
+          if (!pendingImportRef.current?.timeline) {
+            const glbTimeline = convertGLBAnimationsToTimeline(gltf.animations, root);
+            if (glbTimeline) {
+              if (!pendingImportRef.current) pendingImportRef.current = {};
+              pendingImportRef.current.timeline = glbTimeline;
+              console.log('✨ 从GLB动画生成时间线:', glbTimeline);
+            }
+          }
+        }
       } else {
         const gltf = await loader.loadAsync(finalSrc);
         root = gltf.scene || gltf.scenes[0];
+        
+        // 检查并导入GLB内置动画
+        if (gltf.animations && gltf.animations.length > 0) {
+          console.log('🎬 发现GLB内置动画:', gltf.animations.map(clip => ({ name: clip.name, duration: clip.duration })));
+          
+          // 如果当前没有时间线数据，则从GLB动画生成
+          if (!pendingImportRef.current?.timeline) {
+            const glbTimeline = convertGLBAnimationsToTimeline(gltf.animations, root);
+            if (glbTimeline) {
+              if (!pendingImportRef.current) pendingImportRef.current = {};
+              pendingImportRef.current.timeline = glbTimeline;
+              console.log('✨ 从GLB动画生成时间线:', glbTimeline);
+            }
+          }
+        }
       }
       
       // 规整根节点：
@@ -1756,20 +1766,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           ...newTimeline
         }));
         
-        // 调试输出
-        console.log('🔍 载入时间线数据：', {
-          duration: newTimeline.duration,
-          cameraKeysCount: newTimeline.cameraKeys?.length || 0,
-          cameraKeys: newTimeline.cameraKeys,
-          visTracksCount: Object.keys(visTracks).length,
-          trsTracksCount: Object.keys(trsTracks).length,
-          trsTracks: Object.keys(trsTracks).map(uuid => ({
-            uuid,
-            nodeKey: keyToObject.current.get(uuid)?.name || 'unknown',
-            keysCount: trsTracks[uuid]?.length || 0,
-            firstKey: trsTracks[uuid]?.[0]
-          }))
-        });
       }
 
       // 处理步骤数据
@@ -2787,6 +2783,195 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // 跟踪结构变动（重命名/层级调整/打组解组等）
   const structureDirtyRef = useRef<boolean>(false);
   
+  // 将GLB动画转换为时间线格式
+  function convertGLBAnimationsToTimeline(animations: THREE.AnimationClip[], rootObject: THREE.Object3D): TimelineState | null {
+    if (!animations.length) return null;
+    
+    const objMap = new Map<string, THREE.Object3D>();
+    rootObject.traverse(obj => objMap.set(obj.name, obj));
+    
+    // 取第一个动画作为主要动画源
+    const clip = animations[0];
+    const timeline: Partial<TimelineState> = {
+      duration: clip.duration,
+      current: 0,
+      cameraKeys: [],
+      visTracks: {},
+      trsTracks: {}
+    };
+    
+    // 遍历所有轨道
+    for (const track of clip.tracks) {
+      const nodeName = track.name.split('.')[0]; // 提取节点名 (去掉属性后缀)
+      const property = track.name.split('.').pop(); // 提取属性名
+      const targetObj = objMap.get(nodeName);
+      
+      if (!targetObj) {
+        console.warn('GLB动画轨道找不到目标对象:', nodeName);
+        continue;
+      }
+      
+      const uuid = targetObj.uuid;
+      if (!timeline.trsTracks![uuid]) {
+        timeline.trsTracks![uuid] = [];
+      }
+      
+      // 按属性类型处理关键帧
+      const times = track.times;
+      const values = track.values;
+      
+      if (property === 'position') {
+        // 位置轨道：每3个值为一组 [x,y,z]
+        for (let i = 0; i < times.length; i++) {
+          const time = times[i];
+          const position: [number, number, number] = [
+            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
+          ];
+          
+          // 查找或创建该时间点的关键帧
+          let keyframe = timeline.trsTracks![uuid].find(k => Math.abs(k.time - time) < 0.001);
+          if (!keyframe) {
+            keyframe = { time, position, rotationEuler: [0,0,0], scale: [1,1,1], easing: 'linear' };
+            timeline.trsTracks![uuid].push(keyframe);
+          }
+          keyframe.position = position;
+        }
+      } else if (property === 'quaternion') {
+        // 四元数旋转轨道：转换为欧拉角
+        for (let i = 0; i < times.length; i++) {
+          const time = times[i];
+          const quat = new THREE.Quaternion(
+            values[i * 4], values[i * 4 + 1], values[i * 4 + 2], values[i * 4 + 3]
+          );
+          const euler = new THREE.Euler().setFromQuaternion(quat);
+          const rotationEuler: [number, number, number] = [euler.x, euler.y, euler.z];
+          
+          let keyframe = timeline.trsTracks![uuid].find(k => Math.abs(k.time - time) < 0.001);
+          if (!keyframe) {
+            keyframe = { time, position: [0,0,0], rotationEuler, scale: [1,1,1], easing: 'linear' };
+            timeline.trsTracks![uuid].push(keyframe);
+          }
+          keyframe.rotationEuler = rotationEuler;
+        }
+      } else if (property === 'scale') {
+        // 缩放轨道
+        for (let i = 0; i < times.length; i++) {
+          const time = times[i];
+          const scale: [number, number, number] = [
+            values[i * 3], values[i * 3 + 1], values[i * 3 + 2]
+          ];
+          
+          let keyframe = timeline.trsTracks![uuid].find(k => Math.abs(k.time - time) < 0.001);
+          if (!keyframe) {
+            keyframe = { time, position: [0,0,0], rotationEuler: [0,0,0], scale, easing: 'linear' };
+            timeline.trsTracks![uuid].push(keyframe);
+          }
+          keyframe.scale = scale;
+        }
+      }
+    }
+    
+    // 排序所有轨道的关键帧
+    Object.values(timeline.trsTracks!).forEach(track => {
+      track.sort((a, b) => a.time - b.time);
+    });
+    
+    return timeline as TimelineState;
+  }
+
+  // 将时间线转换为Three.js动画
+  function convertTimelineToAnimationClips(timeline: TimelineState, rootObject: THREE.Object3D): THREE.AnimationClip[] {
+    const clips: THREE.AnimationClip[] = [];
+    
+    // 收集所有有TRS轨道的对象
+    const trsEntries = Object.entries(timeline.trsTracks || {});
+    if (trsEntries.length === 0) return clips;
+    
+    const tracks: THREE.KeyframeTrack[] = [];
+    
+    // 为每个对象创建轨道
+    for (const [uuid, keyframes] of trsEntries) {
+      const obj = keyToObject.current.get(uuid);
+      if (!obj || !keyframes.length) continue;
+      
+      const objName = obj.name || `Object_${uuid.slice(0, 8)}`;
+      const sortedKeys = [...keyframes].sort((a, b) => a.time - b.time);
+      
+      // 提取时间和值
+      const times = sortedKeys.map(k => k.time);
+      const positions: number[] = [];
+      const quaternions: number[] = [];
+      const scales: number[] = [];
+      
+      for (const keyframe of sortedKeys) {
+        // 位置
+        if (keyframe.position) {
+          positions.push(...keyframe.position);
+        } else {
+          positions.push(obj.position.x, obj.position.y, obj.position.z);
+        }
+        
+        // 旋转：从欧拉角转换为四元数
+        if (keyframe.rotationEuler) {
+          const euler = new THREE.Euler(
+            keyframe.rotationEuler[0],
+            keyframe.rotationEuler[1], 
+            keyframe.rotationEuler[2]
+          );
+          const quat = new THREE.Quaternion().setFromEuler(euler);
+          quaternions.push(quat.x, quat.y, quat.z, quat.w);
+        } else {
+          const quat = new THREE.Quaternion().setFromEuler(obj.rotation);
+          quaternions.push(quat.x, quat.y, quat.z, quat.w);
+        }
+        
+        // 缩放
+        if (keyframe.scale) {
+          scales.push(...keyframe.scale);
+        } else {
+          scales.push(obj.scale.x, obj.scale.y, obj.scale.z);
+        }
+      }
+      
+      // 创建关键帧轨道
+      if (positions.length > 0) {
+        tracks.push(new THREE.VectorKeyframeTrack(
+          `${objName}.position`,
+          times,
+          positions
+        ));
+      }
+      
+      if (quaternions.length > 0) {
+        tracks.push(new THREE.QuaternionKeyframeTrack(
+          `${objName}.quaternion`,
+          times,
+          quaternions
+        ));
+      }
+      
+      if (scales.length > 0) {
+        tracks.push(new THREE.VectorKeyframeTrack(
+          `${objName}.scale`,
+          times,
+          scales
+        ));
+      }
+    }
+    
+    if (tracks.length > 0) {
+      const clip = new THREE.AnimationClip('TimelineAnimation', timeline.duration, tracks);
+      clips.push(clip);
+      console.log('🎬 生成动画剪辑:', {
+        name: clip.name,
+        duration: clip.duration,
+        tracksCount: tracks.length
+      });
+    }
+    
+    return clips;
+  }
+  
   // GLB导出器
   const exporterRef = useRef<GLTFExporter | null>(null);
   const lastUploadedFileIdRef = useRef<string | null>(null);
@@ -2822,6 +3007,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       s.add(exportRoot);
       const exportTarget: THREE.Scene = s;
       
+      // 将当前时间线转换为动画并添加到场景
+      const animations = convertTimelineToAnimationClips(timelineRef.current, exportRoot);
+      if (animations.length > 0) {
+        // 将动画添加到场景的 animations 属性
+        (exportTarget as any).animations = animations;
+        console.log('✨ 添加动画到GLB:', animations.map(clip => ({
+          name: clip.name,
+          duration: clip.duration,
+          tracks: clip.tracks.length
+        })));
+      }
+      
       // 导出为GLB格式
       const result = await new Promise<ArrayBuffer>((resolve, reject) => {
         exporterRef.current!.parse(
@@ -2834,7 +3031,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             }
           },
           (error) => reject(error),
-          { binary: true } // 导出为GLB格式
+          { 
+            binary: true, // 导出为GLB格式
+            animations: animations // 确保动画被包含
+          }
         );
       });
       
