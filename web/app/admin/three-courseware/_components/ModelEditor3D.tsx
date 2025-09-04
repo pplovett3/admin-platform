@@ -52,7 +52,7 @@ function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number;
         <div key={i} style={{ position:'absolute', left: `${t*pxPerSec}px`, top: 0, bottom: 0, width: 1, background: (Math.abs((t/step)%5)<1e-6) ? '#475569' : '#334155' }} />
       ))}
       {ticks.map((t, i) => ((Math.abs((t/step)%5)<1e-6) ? <div key={`lbl-${i}`} style={{ position:'absolute', left: `${t*pxPerSec+4}px`, top: 4, fontSize: 10, color:'#94a3b8' }}>{t.toFixed(step<1?1:0)}s</div> : null))}
-      <div title={`当前: ${current.toFixed(2)}s`} style={{ position:'absolute', left: `${current*pxPerSec}px`, top: 0, bottom: 0, width: 2, background:'#ef4444' }} />
+      <div title={`当前: ${(current || 0).toFixed(2)}s`} style={{ position:'absolute', left: `${(current || 0)*pxPerSec}px`, top: 0, bottom: 0, width: 2, background:'#ef4444' }} />
     </div>
   );
 }
@@ -304,6 +304,11 @@ type TimelineState = {
   visTracks: Record<string, VisibilityKeyframe[]>; // key: object uuid
   trsTracks: Record<string, TransformKeyframe[]>; // key: object uuid
   annotationTracks: Record<string, VisibilityKeyframe[]>; // key: annotation id
+  gltfAnimation?: {
+    clip: THREE.AnimationClip;
+    mixer: THREE.AnimationMixer;
+    action?: THREE.AnimationAction;
+  };
 };
 
 type TransformKeyframe = {
@@ -967,11 +972,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const c = clips.find(x => x.id === id);
     if (c) {
       console.log('切换到动画:', c.name);
-      // 深拷贝时间线数据，避免直接引用
-      setTimeline(JSON.parse(JSON.stringify(c.timeline)));
+      // 确保时间线数据的完整性
+      const safeTimeline = {
+        duration: c.timeline.duration || 10,
+        current: c.timeline.current || 0,
+        playing: c.timeline.playing || false,
+        cameraKeys: c.timeline.cameraKeys || [],
+        visTracks: c.timeline.visTracks || {},
+        trsTracks: c.timeline.trsTracks || {},
+        annotationTracks: c.timeline.annotationTracks || {}
+      };
+      setTimeline(safeTimeline);
       // 同时应用时间线数据到场景
       setTimeout(() => {
-        applyTimelineAt(c.timeline.current || 0);
+        applyTimelineAt(safeTimeline.current);
       }, 0);
     }
   };
@@ -1265,8 +1279,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const dt = Math.min(0.1, (now - lastTickRef.current) / 1000);
     lastTickRef.current = now;
     setTimeline(prev => {
-      if (!prev.playing) { controls?.update(); return prev; }
+      if (!prev.playing) { 
+        controls?.update(); 
+        // 即使不播放也要更新GLTF mixer以保持时间同步
+        if (prev.gltfAnimation?.mixer) {
+          prev.gltfAnimation.mixer.setTime(prev.current || 0);
+          prev.gltfAnimation.mixer.update(0);
+        }
+        return prev; 
+      }
       const nextTime = Math.min(prev.duration, prev.current + dt);
+      
+      // 更新GLTF动画
+      if (prev.gltfAnimation?.mixer) {
+        prev.gltfAnimation.mixer.update(dt);
+      }
+      
       applyTimelineAt(nextTime);
       controls?.update();
       if (nextTime >= prev.duration) return { ...prev, current: prev.duration, playing: false };
@@ -1283,8 +1311,31 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     console.log('应用时间线于时间:', t, '数据:', {
       相机关键帧: tl.cameraKeys?.length || 0,
       可见性轨道: Object.keys(tl.visTracks || {}).length,
-      变换轨道: Object.keys(tl.trsTracks || {}).length
+      变换轨道: Object.keys(tl.trsTracks || {}).length,
+      GLTF动画: !!tl.gltfAnimation
     });
+    
+    // 处理GLTF内置动画
+    if (tl.gltfAnimation) {
+      const { mixer, clip } = tl.gltfAnimation;
+      if (!tl.gltfAnimation.action) {
+        // 创建动画动作
+        tl.gltfAnimation.action = mixer.clipAction(clip);
+        tl.gltfAnimation.action.setLoop(THREE.LoopRepeat, Infinity);
+      }
+      
+      // 设置动画时间
+      mixer.setTime(t);
+      mixer.update(0); // 强制更新到指定时间
+      
+      if (tl.playing && tl.gltfAnimation.action) {
+        if (!tl.gltfAnimation.action.isRunning()) {
+          tl.gltfAnimation.action.play();
+        }
+      } else if (tl.gltfAnimation.action) {
+        tl.gltfAnimation.action.paused = true;
+      }
+    }
     
     // camera
     const camKeys = [...(tl.cameraKeys||[])].sort((a,b)=>a.time-b.time);
@@ -1418,10 +1469,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       if (modelRootRef.current) {
         scene.remove(modelRootRef.current);
         modelRootRef.current.traverse((o: any) => {
-          if (o.geometry) o.geometry.dispose?.();
-          if (o.material) {
-            if (Array.isArray(o.material)) o.material.forEach((m: any) => m.dispose?.());
-            else o.material.dispose?.();
+          try {
+            if (o.geometry && typeof o.geometry.dispose === 'function') {
+              o.geometry.dispose();
+            }
+            if (o.material) {
+              if (Array.isArray(o.material)) {
+                o.material.forEach((m: any) => {
+                  if (m && typeof m.dispose === 'function') m.dispose();
+                });
+              } else if (o.material && typeof o.material.dispose === 'function') {
+                o.material.dispose();
+              }
+            }
+          } catch (err) {
+            console.warn('清理模型资源时出错:', err);
           }
         });
         modelRootRef.current = null;
@@ -1467,9 +1529,87 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const arrayBuffer = await response.arrayBuffer();
         const gltf = await loader.parseAsync(arrayBuffer, '');
         root = gltf.scene || gltf.scenes[0];
+        
+        // 处理带认证的GLTF内置动画
+        if (gltf.animations && gltf.animations.length > 0) {
+          console.log('发现GLTF内置动画:', gltf.animations.length, '个');
+          const mixer = new THREE.AnimationMixer(root);
+          
+          // 将GLTF动画转换为我们的动画格式
+          const gltfClips: Clip[] = gltf.animations.map((clip, index) => {
+            const duration = clip.duration || 10;
+            return {
+              id: generateUuid(),
+              name: clip.name || `GLTF动画${index + 1}`,
+              description: `来自模型的内置动画`,
+              timeline: {
+                duration,
+                current: 0,
+                playing: false,
+                cameraKeys: [],
+                visTracks: {},
+                trsTracks: {},
+                annotationTracks: {},
+                // 保存原始GLTF动画信息
+                gltfAnimation: {
+                  clip,
+                  mixer
+                }
+              }
+            };
+          });
+          
+          // 将GLTF动画添加到clips列表
+          setClips(prev => [...gltfClips, ...prev]);
+          
+          // 如果没有其他动画，将第一个GLTF动画设为活动动画
+          if (clips.length === 0 && gltfClips.length > 0) {
+            setActiveClipId(gltfClips[0].id);
+            setTimeline(JSON.parse(JSON.stringify(gltfClips[0].timeline)));
+          }
+        }
       } else {
         const gltf = await loader.loadAsync(finalSrc);
         root = gltf.scene || gltf.scenes[0];
+        
+        // 处理GLTF内置动画
+        if (gltf.animations && gltf.animations.length > 0) {
+          console.log('发现GLTF内置动画:', gltf.animations.length, '个');
+          const mixer = new THREE.AnimationMixer(root);
+          
+          // 将GLTF动画转换为我们的动画格式
+          const gltfClips: Clip[] = gltf.animations.map((clip, index) => {
+            const duration = clip.duration || 10;
+            return {
+              id: generateUuid(),
+              name: clip.name || `GLTF动画${index + 1}`,
+              description: `来自模型的内置动画`,
+              timeline: {
+                duration,
+                current: 0,
+                playing: false,
+                cameraKeys: [],
+                visTracks: {},
+                trsTracks: {},
+                annotationTracks: {},
+                // 保存原始GLTF动画信息
+                gltfAnimation: {
+                  clip,
+                  mixer
+                }
+              }
+            };
+          });
+          
+          // 将GLTF动画添加到clips列表
+          setClips(prev => [...gltfClips, ...prev]);
+          
+          // 如果没有其他动画，将第一个GLTF动画设为活动动画
+          if (clips.length === 0 && gltfClips.length > 0) {
+            setActiveClipId(gltfClips[0].id);
+            setTimeline(JSON.parse(JSON.stringify(gltfClips[0].timeline)));
+          }
+        }
       }
       
       // 规整根节点：
@@ -1784,14 +1924,35 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           const activeClip = restoredClips.find(c => c.id === activeId);
           if (activeClip) {
             setActiveClipId(activeId);
-            setTimeline(JSON.parse(JSON.stringify(activeClip.timeline)));
+            // 确保时间线数据的完整性
+            const safeTimeline = {
+              duration: activeClip.timeline.duration || 10,
+              current: activeClip.timeline.current || 0,
+              playing: activeClip.timeline.playing || false,
+              cameraKeys: activeClip.timeline.cameraKeys || [],
+              visTracks: activeClip.timeline.visTracks || {},
+              trsTracks: activeClip.timeline.trsTracks || {},
+              annotationTracks: activeClip.timeline.annotationTracks || {}
+            };
+            setTimeline(safeTimeline);
             console.log('恢复活动动画:', activeClip.name);
           }
         } else if (restoredClips.length > 0) {
           // 如果没有指定活动动画，使用第一个
           setActiveClipId(restoredClips[0].id);
-          setTimeline(JSON.parse(JSON.stringify(restoredClips[0].timeline)));
-          console.log('使用第一个动画:', restoredClips[0].name);
+                  const firstTimeline = restoredClips[0].timeline;
+        // 确保时间线数据的完整性
+        const safeTimeline = {
+          duration: firstTimeline.duration || 10,
+          current: firstTimeline.current || 0,
+          playing: firstTimeline.playing || false,
+          cameraKeys: firstTimeline.cameraKeys || [],
+          visTracks: firstTimeline.visTracks || {},
+          trsTracks: firstTimeline.trsTracks || {},
+          annotationTracks: firstTimeline.annotationTracks || {}
+        };
+        setTimeline(safeTimeline);
+        console.log('使用第一个动画:', restoredClips[0].name);
         }
       } else if (pending.timeline) {
         // 兼容旧的单时间线格式
@@ -1832,11 +1993,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         }
 
         setTimeline(prev => ({
-          ...prev,
           duration: tl.duration || 10,
+          current: tl.current || 0,
+          playing: tl.playing || false,
           cameraKeys: Array.isArray(tl.cameraKeys) ? tl.cameraKeys : [],
           visTracks,
-          trsTracks
+          trsTracks,
+          annotationTracks: tl.annotationTracks || {}
         }));
       }
 
@@ -3859,7 +4022,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               <span>时长(s)</span>
               <InputNumber min={1} max={600} value={timeline.duration} onChange={onChangeDuration} />
               <span>时间(s)</span>
-              <InputNumber min={0} max={timeline.duration} step={0.01} value={Number(timeline.current.toFixed(2))} onChange={(v)=> onScrub(Number(v||0))} />
+              <InputNumber min={0} max={timeline.duration} step={0.01} value={Number((timeline.current || 0).toFixed(2))} onChange={(v)=> onScrub(Number(v||0))} />
             </Flex>
             <div style={{ paddingLeft: 80 + trackLabelWidth }}>
               <div ref={rulerScrollRef} style={{ overflowX:'auto', overflowY:'hidden' }}
