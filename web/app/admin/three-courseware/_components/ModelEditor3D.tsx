@@ -1286,6 +1286,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         lerp(tar0[1], tar1[1], s),
         lerp(tar0[2], tar1[2], s)
       ];
+      console.log('📷 应用相机关键帧:', { 
+        time: t, 
+        k0: { time: k0.time, pos: k0.position, tar: k0.target }, 
+        k1: { time: k1.time, pos: k1.position, tar: k1.target },
+        s, pos, tar 
+      });
       camera.position.set(pos[0], pos[1], pos[2]);
       controls.target.set(tar[0], tar[1], tar[2]);
       camera.updateProjectionMatrix();
@@ -1306,9 +1312,23 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const trsTracks = tl.trsTracks || {};
     for (const key of Object.keys(trsTracks)) {
       const obj = keyToObject.current.get(key);
-      if (!obj) continue;
+      if (!obj) {
+        console.warn('⚠️ TRS轨道找不到对象:', key, '可用对象:', Array.from(keyToObject.current.keys()));
+        continue;
+      }
       const keys = [...(trsTracks[key] || [])].sort((a,b)=>a.time-b.time);
-      if (keys.length === 0) continue;
+      if (keys.length === 0) {
+        console.warn('⚠️ TRS轨道无关键帧:', key, obj.name);
+        continue;
+      }
+      console.log('🔄 应用TRS轨道:', {
+        objName: obj.name,
+        uuid: key,
+        time: t,
+        keysCount: keys.length,
+        firstKey: keys[0],
+        lastKey: keys[keys.length-1]
+      });
       let k0 = keys[0]; let k1 = keys[keys.length-1];
       for (let i=0;i<keys.length;i++){ if (keys[i].time <= t) k0 = keys[i]; if (keys[i].time >= t) { k1 = keys[i]; break; } }
       const lerp = (a:number,b:number,s:number)=>a+(b-a)*s;
@@ -1735,6 +1755,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           ...prev,
           ...newTimeline
         }));
+        
+        // 调试输出
+        console.log('🔍 载入时间线数据：', {
+          duration: newTimeline.duration,
+          cameraKeysCount: newTimeline.cameraKeys?.length || 0,
+          cameraKeys: newTimeline.cameraKeys,
+          visTracksCount: Object.keys(visTracks).length,
+          trsTracksCount: Object.keys(trsTracks).length,
+          trsTracks: Object.keys(trsTracks).map(uuid => ({
+            uuid,
+            nodeKey: keyToObject.current.get(uuid)?.name || 'unknown',
+            keysCount: trsTracks[uuid]?.length || 0,
+            firstKey: trsTracks[uuid]?.[0]
+          }))
+        });
       }
 
       // 处理步骤数据
