@@ -1694,7 +1694,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         } else if (tl.visTracks && typeof tl.visTracks === 'object') {
           // 处理Record<uuid,keys>格式的显隐轨道
           Object.entries(tl.visTracks).forEach(([nodeKey, keys]) => {
-            const target = findByFlexiblePath(nodeKey);
+            // nodeKey可能是UUID或路径，先尝试作为UUID直接查找
+            let target = keyToObject.current.get(nodeKey);
+            
+            // 如果UUID查找失败，再尝试作为路径查找
+            if (!target) {
+              target = findByFlexiblePath(nodeKey);
+            }
+            
             if (target && Array.isArray(keys)) {
               visTracks[target.uuid] = keys.map((k: any) => ({
                 time: k.time,
@@ -1723,7 +1730,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         } else if (tl.trsTracks && typeof tl.trsTracks === 'object') {
           // 处理Record<uuid,keys>格式的TRS轨道
           Object.entries(tl.trsTracks).forEach(([nodeKey, keys]) => {
-            const target = findByFlexiblePath(nodeKey);
+            // nodeKey可能是UUID或路径，先尝试作为UUID直接查找
+            let target = keyToObject.current.get(nodeKey);
+            
+            // 如果UUID查找失败，再尝试作为路径查找
+            if (!target) {
+              target = findByFlexiblePath(nodeKey);
+            }
+            
             if (target && Array.isArray(keys)) {
               trsTracks[target.uuid] = keys.map((k: any) => ({
                 time: k.time,
