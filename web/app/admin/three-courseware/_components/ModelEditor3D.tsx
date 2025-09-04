@@ -1416,6 +1416,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
       // 使用fetch来加载带认证的模型文件
       let root: THREE.Object3D;
+      // 保存原始动画数据，稍后在层级处理完成后再转换
+      let originalAnimations: THREE.AnimationClip[] | null = null;
+      
       if (actualSrc.startsWith('/api/files/')) {
         const token = getToken?.();
         const response = await fetch(finalSrc, {
@@ -1427,39 +1430,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const arrayBuffer = await response.arrayBuffer();
         const gltf = await loader.parseAsync(arrayBuffer, '');
         root = gltf.scene || gltf.scenes[0];
-        
-        // 检查并导入GLB内置动画
-        if (gltf.animations && gltf.animations.length > 0) {
-          console.log('🎬 发现GLB内置动画:', gltf.animations.map(clip => ({ name: clip.name, duration: clip.duration })));
-          
-          // 如果当前没有时间线数据，则从GLB动画生成
-          if (!pendingImportRef.current?.timeline) {
-            const glbTimeline = convertGLBAnimationsToTimeline(gltf.animations, root);
-            if (glbTimeline) {
-              if (!pendingImportRef.current) pendingImportRef.current = {};
-              pendingImportRef.current.timeline = glbTimeline;
-              console.log('✨ 从GLB动画生成时间线:', glbTimeline);
-            }
-          }
-        }
+        originalAnimations = gltf.animations;
       } else {
         const gltf = await loader.loadAsync(finalSrc);
         root = gltf.scene || gltf.scenes[0];
-        
-        // 检查并导入GLB内置动画
-        if (gltf.animations && gltf.animations.length > 0) {
-          console.log('🎬 发现GLB内置动画:', gltf.animations.map(clip => ({ name: clip.name, duration: clip.duration })));
-          
-          // 如果当前没有时间线数据，则从GLB动画生成
-          if (!pendingImportRef.current?.timeline) {
-            const glbTimeline = convertGLBAnimationsToTimeline(gltf.animations, root);
-            if (glbTimeline) {
-              if (!pendingImportRef.current) pendingImportRef.current = {};
-              pendingImportRef.current.timeline = glbTimeline;
-              console.log('✨ 从GLB动画生成时间线:', glbTimeline);
-            }
-          }
-        }
+        originalAnimations = gltf.animations;
+      }
+      
+      if (originalAnimations && originalAnimations.length > 0) {
+        console.log('🎬 发现GLB内置动画:', originalAnimations.map(clip => ({ name: clip.name, duration: clip.duration })));
       }
       
       // 规整根节点：
@@ -1510,6 +1489,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       nodes.push(makeNode(root));
       setTreeData(nodes);
+
+      // 在层级处理和结构树生成完成后，转换GLB内置动画
+      if (originalAnimations && originalAnimations.length > 0) {
+        // 如果当前没有时间线数据，则从GLB动画生成
+        if (!pendingImportRef.current?.timeline) {
+          const glbTimeline = convertGLBAnimationsToTimeline(originalAnimations, root);
+          if (glbTimeline) {
+            if (!pendingImportRef.current) pendingImportRef.current = {};
+            pendingImportRef.current.timeline = glbTimeline;
+            console.log('✨ 从GLB动画生成时间线:', glbTimeline);
+          }
+        }
+      }
 
       focusObject(root);
       message.destroy(); // 关闭加载消息
