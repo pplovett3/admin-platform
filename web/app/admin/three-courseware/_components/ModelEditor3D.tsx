@@ -3365,11 +3365,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 2. 处理可见性轨道 (Visibility Tracks)
       Object.entries(timeline.visTracks || {}).forEach(([nodeUuid, keyframes]) => {
         const targetObject = keyToObject.current.get(nodeUuid);
-        if (!targetObject || keyframes.length === 0) return;
+        if (!targetObject || keyframes.length === 0) {
+          console.log(`  ⚠️ 跳过可见性轨道: 对象不存在或无关键帧 (UUID: ${nodeUuid})`);
+          return;
+        }
 
-        const objectName = buildNamePath(targetObject) || targetObject.name || '';
+        const objectName = buildNamePath(targetObject) || targetObject.name || targetObject.uuid.slice(0, 8);
 
         console.log(`  👁️ 处理可见性: ${objectName} (${keyframes.length}个关键帧)`);
+        console.log(`    关键帧详情:`, keyframes.map(k => `${k.time}s: ${k.value ? '显示' : '隐藏'}`).join(', '));
 
         const sortedKeys = [...keyframes].sort((a, b) => a.time - b.time);
         const times = sortedKeys.map(k => k.time);
@@ -3377,7 +3381,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // glTF 不支持 .visible 轨道。将可见性映射为缩放（仅在没有缩放关键帧时使用）。
         const hasScaleKeys = (timeline.trsTracks?.[nodeUuid] || []).some(k => !!k.scale);
         if (!hasScaleKeys) {
-          const baseScale = targetObject.scale;
+          const baseScale = targetObject.scale.clone(); // 克隆以避免修改原始数据
           const scales: number[] = [];
           sortedKeys.forEach(k => {
             if (k.value) {
@@ -3389,12 +3393,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               scales.push(s, s, s);
             }
           });
+          const trackName = `${objectName}.scale`;
           const scaleTrackFromVisibility = new THREE.VectorKeyframeTrack(
-            `${objectName}.scale`,
+            trackName,
             times,
             scales
           );
           tracks.push(scaleTrackFromVisibility);
+          console.log(`    ✅ 已生成可见性→缩放轨道: ${trackName}, ${times.length}个时间点`);
         } else {
           console.log('  ⚠️ 该对象已有缩放关键帧，跳过可见性→缩放映射以避免冲突');
         }
@@ -3513,20 +3519,54 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           break;
           
         case 'scale':
-          // 缩放轨道
+          // 缩放轨道（检测是否为可见性映射的缩放）
           if (!trsTracks[targetUuid]) trsTracks[targetUuid] = [];
+          
+          // 检测是否是可见性映射的缩放轨道（包含极小值）
+          let isVisibilityTrack = false;
+          const threshold = 1e-2; // 检测阈值
+          const scaleValues: [number, number, number][] = [];
+          
           for (let i = 0; i < times.length; i++) {
-            const existing = trsTracks[targetUuid].find(k => k.time === times[i]);
-            if (existing) {
-              existing.scale = [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]];
-            } else {
-              trsTracks[targetUuid].push({
-                time: times[i],
-                scale: [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]]
-              });
+            const x = values[i * 3];
+            const y = values[i * 3 + 1]; 
+            const z = values[i * 3 + 2];
+            scaleValues.push([x, y, z]);
+            
+            // 如果存在极小值，可能是可见性映射
+            if (x < threshold && y < threshold && z < threshold) {
+              isVisibilityTrack = true;
             }
           }
-          console.log(`      📏 缩放关键帧: ${times.length}个`);
+          
+          if (isVisibilityTrack) {
+            // 解析为可见性轨道
+            const visKeys: VisibilityKeyframe[] = [];
+            for (let i = 0; i < times.length; i++) {
+              const [x, y, z] = scaleValues[i];
+              const isVisible = x > threshold && y > threshold && z > threshold;
+              visKeys.push({
+                time: times[i],
+                value: isVisible
+              });
+            }
+            visTracks[targetUuid] = visKeys;
+            console.log(`      👁️ 检测到可见性轨道（映射自缩放）: ${visKeys.length}个关键帧`);
+          } else {
+            // 正常的缩放轨道
+            for (let i = 0; i < times.length; i++) {
+              const existing = trsTracks[targetUuid].find(k => k.time === times[i]);
+              if (existing) {
+                existing.scale = scaleValues[i];
+              } else {
+                trsTracks[targetUuid].push({
+                  time: times[i],
+                  scale: scaleValues[i]
+                });
+              }
+            }
+            console.log(`      📏 缩放关键帧: ${times.length}个`);
+          }
           break;
       }
     });
@@ -3586,8 +3626,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             mixer: null as any,
             isOriginal: metadata.isOriginal
           }
-        }
-      };
+        },
+        // 恢复步骤数据
+        steps: metadata.steps || []
+      } as any;
       
       loadedClips.push(editorClip);
     });
@@ -3629,14 +3671,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
       // 2. 🎬 准备动画数据
       const animationsToExport: THREE.AnimationClip[] = [];
+      const exportedNames = new Set<string>(); // 防止重复导出同名动画
       
-      // 添加原始GLB动画（如果有）
-      if (originalAnimationsRef.current.length > 0) {
-        console.log(`📁 添加原始动画: ${originalAnimationsRef.current.length}个`);
-        animationsToExport.push(...originalAnimationsRef.current);
-      }
-
-      // 转换并添加自定义动画 (包括没有gltfAnimation标记的和明确标记为非原始的)
+      // 先添加所有自定义动画（包括修改过的原始动画）
       const customAnimations = clips.filter(clip => 
         !clip.timeline.gltfAnimation || 
         !clip.timeline.gltfAnimation.isOriginal
@@ -3650,10 +3687,27 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       })));
       
       for (const clip of customAnimations) {
+        console.log(`🔄 转换自定义动画: ${clip.name}`);
+        console.log(`  可见性轨道数量: ${Object.keys(clip.timeline.visTracks || {}).length}`);
+        console.log(`  变换轨道数量: ${Object.keys(clip.timeline.trsTracks || {}).length}`);
+        
         const animationClip = convertTimelineToAnimationClip(clip, exportRoot);
         if (animationClip) {
+          console.log(`  ✅ 成功转换，生成轨道数量: ${animationClip.tracks.length}`);
           animationsToExport.push(animationClip);
+          exportedNames.add(animationClip.name); // 记录已导出的动画名称
+        } else {
+          console.log(`  ❌ 转换失败`);
         }
+      }
+
+      // 然后添加未被修改的原始GLB动画
+      if (originalAnimationsRef.current.length > 0) {
+        const originalToAdd = originalAnimationsRef.current.filter(orig => 
+          !exportedNames.has(orig.name) // 只添加没有同名自定义版本的原始动画
+        );
+        console.log(`📁 添加未修改的原始动画: ${originalToAdd.length}/${originalAnimationsRef.current.length}个`);
+        animationsToExport.push(...originalToAdd);
       }
 
       console.log(`📦 总计导出动画: ${animationsToExport.length}个`);
