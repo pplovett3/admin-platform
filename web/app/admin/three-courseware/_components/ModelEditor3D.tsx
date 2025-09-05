@@ -2660,6 +2660,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 创建sprite（始终面向相机，但位置固定）
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
+      texture.anisotropy = 4;
       const spriteMat = new THREE.SpriteMaterial({ 
         map: texture,
         transparent: true,
@@ -2667,6 +2668,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         depthWrite: false
       });
       const sprite = new THREE.Sprite(spriteMat);
+      // 减少文字贴图阻挡拾取的概率：将拾取委托到父组
+      sprite.userData.annotationId = a.id;
+      const originalRaycast = (sprite as any).raycast;
+      (sprite as any).raycast = function(raycaster: any, intersects: any[]) {
+        // 仍保留最小的命中盒，避免完全失去拾取
+        try { originalRaycast.call(this, raycaster, intersects); } catch {}
+        // 同时将父组加入一个轻量的命中用于上层解析
+        if (intersects && intersects.length === 0) {
+          intersects.push({ object: annotationGroup, distance: 0, point: this.position.clone() });
+        }
+      };
       
       // 使用完全固定的位置（保存时的绝对位置）
       sprite.position.copy(labelPos);
@@ -2679,6 +2691,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       sprite.userData.annotationId = a.id;
       sprite.userData.clickable = true;
       annotationGroup.add(sprite);
+      // 确保组本身也带有 id，任何子项命中都能向上找到它
+      annotationGroup.userData.annotationId = a.id;
       
       group.add(annotationGroup);
     });
@@ -4852,7 +4866,7 @@ function AnnotationEditor({ open, value, onCancel, onOk, onDelete }: { open: boo
         <Space style={{ width:'100%', justifyContent:'flex-end' }}>
           {value && onDelete && <Button danger onClick={()=> onDelete(value.id)}>删除</Button>}
           <Button onClick={onCancel}>取消</Button>
-          <Button type="primary" onClick={async ()=>{ const v = await form.validateFields(); if (!value) return onOk(null); onOk({ ...value, label: { title: v.title, summary: v.summary } }); }}>确定</Button>
+          <Button type="primary" onClick={async ()=>{ const v = await form.validateFields(); if (!value) return onOk(null); onOk({ ...value, label: { ...value.label, title: v.title, summary: v.summary } }); }}>确定</Button>
         </Space>
       </Form>
     </Modal>
