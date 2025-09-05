@@ -3853,20 +3853,27 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
           // 若运行时能从场景读到标签端点，则兜底补齐偏移
           if (!saveData.labelOffset) {
-            const worldLabel = getAnnotationLabelWorldPosition(a.id);
             const target = keyToObject.current.get(a.targetKey);
-            if (worldLabel && target) {
-              // 计算局部偏移并保存
+            const worldLabel = getAnnotationLabelWorldPosition(a.id);
+            if (target) {
               target.updateWorldMatrix(true, true);
-              const pos = new THREE.Vector3(a.anchor.offset[0], a.anchor.offset[1], a.anchor.offset[2]).applyMatrix4(target.matrixWorld);
-              const offsetWorld = worldLabel.clone().sub(pos);
-              // 反变换到局部
-              const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
-              target.matrixWorld.decompose(p, q, s);
-              const local = offsetWorld.clone().applyQuaternion(q.clone().invert());
-              local.divide(s);
-              saveData.labelOffset = { x: local.x, y: local.y, z: local.z };
-              saveData.labelOffsetSpace = 'local';
+              const anchorWorld = new THREE.Vector3(a.anchor.offset[0], a.anchor.offset[1], a.anchor.offset[2]).applyMatrix4(target.matrixWorld);
+              let offsetWorld: THREE.Vector3 | null = null;
+              if (worldLabel) {
+                offsetWorld = worldLabel.clone().sub(anchorWorld);
+              } else if (cameraRef.current) {
+                // 兜底：沿相机方向推一个固定距离
+                const dir = cameraRef.current.position.clone().sub(anchorWorld).normalize();
+                offsetWorld = dir.multiplyScalar(0.22);
+              }
+              if (offsetWorld) {
+                const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
+                target.matrixWorld.decompose(p, q, s);
+                const local = offsetWorld.clone().applyQuaternion(q.clone().invert());
+                local.divide(s);
+                saveData.labelOffset = { x: local.x, y: local.y, z: local.z };
+                saveData.labelOffsetSpace = 'local';
+              }
             }
           }
           
