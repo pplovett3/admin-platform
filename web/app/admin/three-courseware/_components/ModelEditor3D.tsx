@@ -901,7 +901,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     // 更新当前活动动画的timeline数据
     setClips(prev => prev.map(c => c.id === activeClipId ? { 
       ...c, 
-      timeline: JSON.parse(JSON.stringify(timeline)) // 深拷贝当前时间线数据
+      timeline: JSON.parse(JSON.stringify(timeline)), // 深拷贝当前时间线数据
+      // 持久化当前步骤
+      steps: JSON.parse(JSON.stringify(stepsRef.current || []))
     } : c));
     message.success('动画已保存到列表');
   };
@@ -999,6 +1001,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         annotationTracks: c.timeline.annotationTracks || {}
       };
       setTimeline(safeTimeline);
+      // 同步该动画的步骤
+      setSteps(Array.isArray((c as any).steps) ? [...(c as any).steps] : []);
       // 若为GLB原始动画且当前无解析轨道，立即按名称路径解析一次
       try {
         const gltfAnim = (c as any).timeline?.gltfAnimation;
@@ -3838,6 +3842,25 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             // 兼容：若仅给出空间但无数组，仍写出空间字段
             saveData.labelOffsetSpace = (a.label as any).offsetSpace;
           }
+
+          // 若运行时能从场景读到标签端点，则兜底补齐偏移
+          if (!saveData.labelOffset) {
+            const worldLabel = getAnnotationLabelWorldPosition(a.id);
+            const target = keyToObject.current.get(a.targetKey);
+            if (worldLabel && target) {
+              // 计算局部偏移并保存
+              target.updateWorldMatrix(true, true);
+              const pos = new THREE.Vector3(a.anchor.offset[0], a.anchor.offset[1], a.anchor.offset[2]).applyMatrix4(target.matrixWorld);
+              const offsetWorld = worldLabel.clone().sub(pos);
+              // 反变换到局部
+              const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
+              target.matrixWorld.decompose(p, q, s);
+              const local = offsetWorld.clone().applyQuaternion(q.clone().invert());
+              local.divide(s);
+              saveData.labelOffset = { x: local.x, y: local.y, z: local.z };
+              saveData.labelOffsetSpace = 'local';
+            }
+          }
           
           return saveData;
         }),
@@ -3849,7 +3872,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           isOriginal: !!clip.timeline.gltfAnimation?.isOriginal,
             duration: clip.timeline.duration,
           // 只保存步骤信息，动画轨道数据在GLB中
-          steps: steps.map(s => ({
+          steps: (clip as any).steps ? (clip as any).steps : steps.map(s => ({
             id: s.id,
             name: s.name,
             description: s.name,
@@ -4014,7 +4037,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             pendingImportRef.current.allAnimations = uniqueClips;
             pendingImportRef.current.activeAnimationId = uniqueClips[0].id;
             pendingImportRef.current.timeline = uniqueClips[0].timeline;
-          pendingImportRef.current.steps = coursewareData.animations[0]?.steps || [];
+            // 将后端步骤写入对应clip（若存在）
+            try {
+              coursewareData.animations.forEach((a:any)=>{
+                const clip = uniqueClips.find(c=>c.id===a.id || c.name===a.name);
+                if (clip && Array.isArray(a.steps)) (clip as any).steps = a.steps;
+              });
+            } catch {}
           }
         }
       } else {
@@ -4255,6 +4284,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       return false;
     }
   };
+
+  // 根据场景中的标注可视对象，反推出标签的世界位置
+  function getAnnotationLabelWorldPosition(annoId: string): THREE.Vector3 | null {
+    const group = markersGroupRef.current;
+    if (!group) return null;
+    let pos: THREE.Vector3 | null = null;
+    group.traverse((obj: any) => {
+      if (pos) return;
+      if (obj && obj.userData && obj.userData.annotationId === annoId) {
+        // 优先使用 sprite 的位置
+        if ((obj as any).isSprite) {
+          pos = (obj as any).position.clone();
+        } else if ((obj as any).isLine) {
+          // 线段的第二个点是标签端
+          try {
+            const arr = (obj as any).geometry.attributes.position.array;
+            pos = new THREE.Vector3(arr[3], arr[4], arr[5]);
+          } catch {}
+        }
+      }
+    });
+    return pos;
+  }
 
   function findByPath(path: string): THREE.Object3D | undefined {
     if (!path) return undefined;
@@ -4680,6 +4732,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <strong style={{ width: 80 }}>步骤</strong>
                 <Button size="small" onClick={()=>{ setStepDraftTime(timeline.current); setEditingStep(null); stepForm.setFieldsValue({ name: `步骤${steps.length+1}` }); setStepModalOpen(true); }}>添加步骤</Button>
+                <span style={{ color:'#94a3b8' }}>当前动画：</span>
+                <span style={{ color: clips.find(c=>c.id===activeClipId)?.name ? '#e2e8f0' : '#94a3b8' }}>{clips.find(c=>c.id===activeClipId)?.name || '未选择'}</span>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <strong style={{ width: 80 }}>相机</strong>
