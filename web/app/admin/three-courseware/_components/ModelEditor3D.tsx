@@ -2644,6 +2644,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       line.userData.annotationId = a.id;
       annotationGroup.add(line);
       
+      // 在组上记录标签世界位置，便于保存时兜底反推偏移
+      (annotationGroup as any).userData.labelWorld = (labelPos as THREE.Vector3).clone();
+
       // 4. 创建改进的3D标签
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d')!;
@@ -4295,8 +4298,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     group.traverse((obj: any) => {
       if (pos) return;
       if (obj && obj.userData && obj.userData.annotationId === annoId) {
-        // 优先使用 sprite 的位置
-        if ((obj as any).isSprite) {
+        // 先读组上缓存
+        if (obj.userData.labelWorld) {
+          pos = (obj.userData.labelWorld as THREE.Vector3).clone();
+        } else if ((obj as any).isSprite) {
           pos = (obj as any).position.clone();
         } else if ((obj as any).isLine) {
           // 线段的第二个点是标签端
