@@ -1572,8 +1572,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             delete pendingImportRef.current.allAnimations;
             console.log('🧹 已清理GLB动画的pending数据，防止被覆盖');
           } else {
-            // 添加原始动画到clips列表
-            setClips(prev => [...gltfClips, ...prev]);
+            // 无元数据时，默认按名称路径解析GLB动画为可编辑轨道
+            const autoMetadata = gltf.animations.map((ac, i) => ({ id: generateUuid(), name: ac.name || `原始动画${i + 1}`, description: '模型内置动画', isOriginal: true }));
+            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, autoMetadata, root);
+            setClips(rebuiltClips);
+            if (rebuiltClips.length > 0) {
+              setActiveClipId(rebuiltClips[0].id);
+              setTimeline({
+                duration: rebuiltClips[0].timeline.duration || 10,
+                current: 0,
+                playing: false,
+                cameraKeys: [],
+                visTracks: {},
+                trsTracks: {},
+                annotationTracks: {}
+              });
+            }
           }
           
           console.log(`✅ 已加载${gltfClips.length}个原始动画到编辑器`);
@@ -1638,8 +1652,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             delete pendingImportRef.current.allAnimations;
             console.log('🧹 已清理GLB动画的pending数据，防止被覆盖');
           } else {
-            // 添加原始动画到clips列表
-            setClips(prev => [...gltfClips, ...prev]);
+            // 无元数据时，默认按名称路径解析GLB动画为可编辑轨道
+            const autoMetadata = gltf.animations.map((ac, i) => ({ id: generateUuid(), name: ac.name || `原始动画${i + 1}`, description: '模型内置动画', isOriginal: true }));
+            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, autoMetadata, root);
+            setClips(rebuiltClips);
+            if (rebuiltClips.length > 0) {
+              setActiveClipId(rebuiltClips[0].id);
+              setTimeline({
+                duration: rebuiltClips[0].timeline.duration || 10,
+                current: 0,
+                playing: false,
+                cameraKeys: [],
+                visTracks: {},
+                trsTracks: {},
+                annotationTracks: {}
+              });
+            }
           }
           
           console.log(`✅ 已加载${gltfClips.length}个原始动画到编辑器`);
@@ -3371,9 +3399,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     console.log('🔄 从GLB重建动画数据...');
     
     const loadedClips: Clip[] = [];
+    const seenNames = new Set<string>();
     
     // 处理每个GLB动画
     gltfAnimations.forEach((clip, index) => {
+      if (!clip || !clip.name) {
+        console.warn('  ⚠️ 跳过无效动画或未命名动画');
+        return;
+      }
+      if (seenNames.has(clip.name)) {
+        console.warn('  ⚠️ 检测到重复动画名称，跳过重复:', clip.name);
+        return;
+      }
+      seenNames.add(clip.name);
       // 查找对应的元数据
       const metadata = animationMetadata.find(meta => meta.name === clip.name) || 
                       animationMetadata[index] || 
@@ -3449,16 +3487,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       s.add(exportRoot);
 
-      // 2. 🎬 准备动画数据
-      const animationsToExport: THREE.AnimationClip[] = [];
+      // 2. 🎬 准备动画数据（按名称去重，优先使用自定义动画覆盖同名原始动画）
+      const byName = new Map<string, THREE.AnimationClip>();
       
-      // 添加原始GLB动画（如果有）
+      // 2.1 添加原始GLB动画（如果有）
       if (originalAnimationsRef.current.length > 0) {
         console.log(`📁 添加原始动画: ${originalAnimationsRef.current.length}个`);
-        animationsToExport.push(...originalAnimationsRef.current);
+        for (const ac of originalAnimationsRef.current) {
+          if (!ac || !ac.name) continue;
+          if (!byName.has(ac.name)) byName.set(ac.name, ac);
+        }
       }
 
-      // 转换并添加自定义动画 (包括没有gltfAnimation标记的和明确标记为非原始的)
+      // 2.2 转换并添加自定义动画 (包括没有gltfAnimation标记的和明确标记为非原始的)
       const customAnimations = clips.filter(clip => 
         !clip.timeline.gltfAnimation || 
         !clip.timeline.gltfAnimation.isOriginal
@@ -3473,12 +3514,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       for (const clip of customAnimations) {
         const animationClip = convertTimelineToAnimationClip(clip, exportRoot);
-        if (animationClip) {
-          animationsToExport.push(animationClip);
+        if (animationClip && animationClip.name) {
+          // 自定义动画覆盖同名原始动画
+          byName.set(animationClip.name, animationClip);
         }
       }
 
-      console.log(`📦 总计导出动画: ${animationsToExport.length}个`);
+      const animationsToExport = Array.from(byName.values());
+      console.log(`📦 总计导出动画: ${animationsToExport.length}个（按名称去重后）`);
 
       // 3. 配置导出选项
       const exportOptions = {
@@ -3646,8 +3689,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         }
       }
       
-      // 确保clips数据的完整性
-      const validClips = clips.filter(clip => clip && clip.id && clip.timeline);
+      // 确保clips数据的完整性（按名称去重，后出现的覆盖前面的）
+      const seen = new Set<string>();
+      const validClips = [] as Clip[];
+      for (let i = clips.length - 1; i >= 0; i--) {
+        const c = clips[i];
+        if (!c || !c.id || !c.timeline) continue;
+        const nameKey = (c.name || '').trim();
+        if (seen.has(nameKey)) continue;
+        seen.add(nameKey);
+        validClips.unshift(c);
+      }
       console.log('保存课件数据，clips数量:', validClips.length);
       console.log('保存数据预览:', {
         annotations: annotations.length,
