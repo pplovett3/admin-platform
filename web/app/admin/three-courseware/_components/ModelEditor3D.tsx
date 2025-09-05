@@ -927,14 +927,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       
       const id = generateUuid();
+      const emptyTimeline: TimelineState = { 
+        duration: Math.max(1, Number((timeline && (timeline as any).duration) || 10)),
+        current: 0,
+        playing: false,
+        cameraKeys: [],
+        visTracks: {},
+        trsTracks: {},
+        annotationTracks: {}
+      };
       const clip: Clip = { 
         id, 
         name: trimmedName, 
         description, 
-        timeline: JSON.parse(JSON.stringify(timeline)) 
+        timeline: emptyTimeline
       };
       setClips(prev => [clip, ...prev]);
       setActiveClipId(id);
+      setTimeline(emptyTimeline);
       message.success('动画已创建');
       
       setAnimationModalOpen(false);
