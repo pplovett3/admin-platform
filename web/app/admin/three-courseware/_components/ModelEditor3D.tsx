@@ -2189,7 +2189,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     // 先检测标注点（非标注位置选择模式下）
     const markers = markersGroupRef.current;
     if (markers) {
-      const markerHits = raycaster.intersectObjects(markers.children, true);
+      // 直接对整组递归拾取，避免因 children 为空或层级变化导致失效
+      const markerHits = raycaster.intersectObjects([markers], true);
       if (markerHits.length > 0) {
         // 查找标注ID，可能在直接对象上或其父组上
         let annoId: string | undefined;
@@ -2786,18 +2787,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     let labelOffset: [number, number, number] = [0.2, 0.1, 0]; // 默认偏移（局部）
     let offsetSpace: 'local'|'world' = 'local';
     
-    // 优先使用面法线来确定偏移方向
+    // 优先使用面法线，结合物体中心指向命中点的方向确保朝外
     try {
       const faceNormal = intersection.face?.normal as THREE.Vector3 | undefined;
       if (faceNormal) {
         // normal 是命中网格局部空间的，需要转成世界方向
-        const normalWorld = faceNormal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix((intersection.object as any).matrixWorld));
-        normalWorld.normalize();
+        const normalWorld = faceNormal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix((intersection.object as any).matrixWorld)).normalize();
+        // 由目标物体中心指向命中点，判定朝外方向
+        const target = placingAnnotationTargetRef.current;
+        const bbox = new THREE.Box3().setFromObject(target);
+        const centerWorld = new THREE.Vector3();
+        bbox.getCenter(centerWorld);
+        const outwardWorld = intersectionPoint.clone().sub(centerWorld).normalize();
+        const fixedWorld = (normalWorld.dot(outwardWorld) < 0) ? normalWorld.clone().multiplyScalar(-1) : normalWorld;
         // 将世界方向转为标注目标对象的局部方向
         const target = placingAnnotationTargetRef.current;
         const targetWorldQuat = new THREE.Quaternion();
         target.getWorldQuaternion(targetWorldQuat);
-        const localDir = normalWorld.clone().applyQuaternion(targetWorldQuat.clone().invert()).normalize();
+        const localDir = fixedWorld.clone().applyQuaternion(targetWorldQuat.clone().invert()).normalize();
         const d = 0.22; // 标签距离
         labelOffset = [localDir.x * d, localDir.y * d, localDir.z * d];
         offsetSpace = 'local';
