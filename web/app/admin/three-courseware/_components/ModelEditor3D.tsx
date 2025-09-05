@@ -3939,7 +3939,23 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       console.log('最终保存数据大小:', JSON.stringify(saveData).length, '字符');
 
-      await apiPut(`/api/coursewares/${coursewareId}`, saveData);
+      // 最终序列化为纯JSON，确保调试可见且不受可枚举属性影响
+      const payload = JSON.parse(JSON.stringify(saveData));
+      // 再次兜底：若某条标注仍无偏移，直接附加数组格式（零向量）以便排查
+      try {
+        if (Array.isArray(payload.annotations)) {
+          payload.annotations = payload.annotations.map((it:any)=>{
+            if (!it.labelOffset && (!it.label || !Array.isArray(it.label.offset))) {
+              it.label = it.label || { title: it.title, summary: it.description||'' };
+              it.label.offset = [0,0,0];
+              it.label.offsetSpace = it.label.offsetSpace || 'local';
+            }
+            return it;
+          });
+        }
+      } catch {}
+      console.log('[Courseware/Save-Payload]', payload);
+      await apiPut(`/api/coursewares/${coursewareId}`, payload);
       // 成功保存后，更新本地上一次上传记录
       try {
         if (modifiedModelUrl) {
