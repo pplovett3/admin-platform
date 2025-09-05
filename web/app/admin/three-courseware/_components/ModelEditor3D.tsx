@@ -2888,6 +2888,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
     } catch {}
     
+    // Debug: 打印锚点与偏移（局部与世界）
+    try {
+      const targetObj = placingAnnotationTargetRef.current;
+      const anchorWorldDbg = localPos.clone().applyMatrix4(targetObj.matrixWorld);
+      const pDbg = new THREE.Vector3(); const qDbg = new THREE.Quaternion(); const sDbg = new THREE.Vector3();
+      targetObj.matrixWorld.decompose(pDbg, qDbg, sDbg);
+      const offsetWorldDbg = new THREE.Vector3(labelOffset[0], labelOffset[1], labelOffset[2]).multiply(sDbg).applyQuaternion(qDbg);
+      const labelWorldDbg = anchorWorldDbg.clone().add(offsetWorldDbg);
+      console.log('[Annotation/Create] anchorLocal=', localPos.toArray(), 'anchorWorld=', anchorWorldDbg.toArray(), 'labelOffsetLocal=', labelOffset, 'labelWorld=', labelWorldDbg.toArray());
+    } catch {}
+
     const anno: Annotation = {
       id: generateUuid(),
       targetKey: placingAnnotationTargetRef.current.uuid,
@@ -3873,6 +3884,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 local.divide(s);
                 saveData.labelOffset = { x: local.x, y: local.y, z: local.z };
                 saveData.labelOffsetSpace = 'local';
+                console.log('[Annotation/Save-FillOffset]', a.id, { anchorWorld: anchorWorld.toArray(), labelWorld: worldLabel?.toArray?.(), offsetLocal: [local.x, local.y, local.z] });
               }
             }
           }
@@ -4548,26 +4560,38 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       <Card title="属性 / 选中信息" bodyStyle={{ padding: 0 }} style={{ height: '100%', overflow: 'hidden', gridArea: 'right', display: 'flex', flexDirection: 'column', opacity: showRight ? 1 : 0, visibility: showRight ? 'visible' : 'hidden', pointerEvents: showRight ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
         {mode==='annot' && (
             <div style={{ padding: 12, height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
-              {selectedKey ? (
-                <Flex vertical gap={8}>
-                  <div>已选中：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
-                  <Button onClick={onFocusSelected}>相机对焦</Button>
-                  {isAnnotationPlacing ? (
-                    <Flex vertical gap={8}>
-                      <div style={{ color: '#1890ff', fontWeight: 'bold' }}>
-                        📍 请点击对象表面选择标注位置
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#666' }}>
-                        目标对象: {placingAnnotationTarget?.name || '未知'}
-                      </div>
-                      <Button danger onClick={cancelAnnotationPlacing}>取消选择位置</Button>
-                    </Flex>
-                  ) : (
-                    <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
-                  )}
-                </Flex>
-              ) : <div>点击结构树或视窗选择对象</div>}
-              {/* 全局标注列表暂时隐藏 */}
+              <Flex vertical gap={12}>
+                {selectedKey ? (
+                  <Flex vertical gap={8}>
+                    <div>已选中：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
+                    <Button onClick={onFocusSelected}>相机对焦</Button>
+                    {isAnnotationPlacing ? (
+                      <Flex vertical gap={8}>
+                        <div style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                          📍 请点击对象表面选择标注位置
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          目标对象: {placingAnnotationTarget?.name || '未知'}
+                        </div>
+                        <Button danger onClick={cancelAnnotationPlacing}>取消选择位置</Button>
+                      </Flex>
+                    ) : (
+                      <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
+                    )}
+                  </Flex>
+                ) : <div>点击结构树或视窗选择对象</div>}
+                <Divider />
+                <div style={{ fontWeight: 600 }}>标注列表</div>
+                <div>
+                  {(annotations||[]).map(a => (
+                    <div key={a.id} style={{ display:'grid', gridTemplateColumns:'1fr auto auto', alignItems:'center', gap:8, padding:'6px 0', borderBottom:'1px dashed rgba(148,163,184,0.2)' }}>
+                      <div title={a.label.title} style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.label.title}</div>
+                      <Button size="small" onClick={()=>{ setEditingAnno(a); const target=keyToObject.current.get(a.targetKey); if(target) selectObject(target); }}>编辑</Button>
+                      <Button size="small" danger onClick={()=> setAnnotations(prev=>prev.filter(x=>x.id!==a.id))}>删除</Button>
+                    </div>
+                  ))}
+                </div>
+              </Flex>
             </div>
         )}
         {mode==='anim' && (
