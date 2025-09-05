@@ -425,6 +425,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
   const [mode, setMode] = useState<'annot'|'anim'>('annot');
+  // 记录初始姿态（TRS与可见性）
+  const initialStateRef = useRef<Map<string, { pos: THREE.Vector3; rot: THREE.Euler; scl: THREE.Vector3; visible: boolean }>>(new Map());
   const [modelName, setModelName] = useState<string>('未加载模型');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [urlImportOpen, setUrlImportOpen] = useState(false);
@@ -1929,7 +1931,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const restored: Annotation[] = [];
       (pending.annotations || []).forEach((x: any) => {
         // 支持新的数据格式 (nodeKey + position)
-        const nodeKey = x.nodeKey || x?.target?.path || '';
+        const nodeKey = x.nodeKey || x?.target?.namePath || x?.target?.path || '';
         const target = findByFlexiblePath(nodeKey);
         if (!target) return;
         
@@ -1941,8 +1943,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           offset = x.anchor.offset;
         }
         
-        const labelOffsetArr = x.labelOffset ? [x.labelOffset.x, x.labelOffset.y, x.labelOffset.z] : (x?.label?.offset || undefined);
-        const labelOffsetSpace = x.labelOffsetSpace || x?.label?.offsetSpace || 'local';
+        const labelOffsetArr = (x.labelOffset && typeof x.labelOffset === 'object')
+          ? [Number(x.labelOffset.x||0), Number(x.labelOffset.y||0), Number(x.labelOffset.z||0)]
+          : (Array.isArray(x?.label?.offset) ? x.label.offset : undefined);
+        const labelOffsetSpace = (x as any).labelOffsetSpace || x?.label?.offsetSpace || 'local';
         restored.push({
           id: String(x.id || generateUuid()),
           targetKey: target.uuid,
@@ -2345,11 +2349,42 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const map = keyToObject.current; map.clear();
     const makeNode = (o: THREE.Object3D): TreeNode => {
       const k = o.uuid; map.set(k, o);
+      // 首次建立映射时记录初始TRS与可见性
+      if (!initialStateRef.current.has(k)) {
+        initialStateRef.current.set(k, { pos: o.position.clone(), rot: o.rotation.clone(), scl: o.scale.clone(), visible: (o as any).visible !== false });
+      }
       return { title: o.name || o.type || k.slice(0,8), key: k, children: o.children?.map(makeNode) };
     };
     nodes.push(makeNode(root));
     setTreeData(nodes);
   }
+
+  // 复位：仅TRS与可见性，保持相机；并清空隔离效果
+  const resetSceneToInitial = useCallback(() => {
+    const map = initialStateRef.current;
+    map.forEach((state, uuid) => {
+      const obj = keyToObject.current.get(uuid);
+      if (!obj) return;
+      obj.position.copy(state.pos);
+      obj.rotation.copy(state.rot as any);
+      obj.scale.copy(state.scl);
+      (obj as any).visible = state.visible;
+      obj.updateMatrixWorld(true);
+    });
+    const root = modelRootRef.current;
+    if (root) root.traverse(o => { if (map.has(o.uuid)) (o as any).visible = map.get(o.uuid)!.visible; });
+    // 清理选中/高亮/隔离
+    setSelectedKey(undefined);
+    setSelectedSet(new Set());
+    const t = tcontrolsRef.current; if (t) { t.detach(); (t as any).visible = false; }
+    const outline = outlineRef.current; if (outline) outline.selectedObjects = [];
+    clearEmissiveHighlight();
+    if (boxHelperRef.current) { const sc = sceneRef.current!; sc.remove(boxHelperRef.current); boxHelperRef.current = null; }
+    // 时间线停止并跳到0（不改相机）
+    setTimeline(prev => ({ ...prev, playing: false, current: 0 }));
+    applyTimelineAt(0);
+    refreshMarkers();
+  }, []);
 
   function groupNodes(nodeKeys: string[]) {
     const objs = nodeKeys.map(k => keyToObject.current.get(k)!).filter(Boolean);
@@ -2691,6 +2726,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       sprite.userData.annotationId = a.id;
       sprite.userData.clickable = true;
       annotationGroup.add(sprite);
+
+      // 额外的不可见拾取代理，提升点击命中率
+      const proxyGeom = new THREE.SphereGeometry(0.08, 8, 8);
+      const proxyMat = new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0 });
+      const proxy = new THREE.Mesh(proxyGeom, proxyMat);
+      proxy.position.copy(labelPos);
+      proxy.userData.annotationId = a.id;
+      annotationGroup.add(proxy);
       // 确保组本身也带有 id，任何子项命中都能向上找到它
       annotationGroup.userData.annotationId = a.id;
       
@@ -3791,6 +3834,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             if (a.label.offsetSpace) {
               saveData.labelOffsetSpace = a.label.offsetSpace;
             }
+          } else if (a.label && (a.label as any).offsetSpace) {
+            // 兼容：若仅给出空间但无数组，仍写出空间字段
+            saveData.labelOffsetSpace = (a.label as any).offsetSpace;
           }
           
           return saveData;
@@ -4307,7 +4353,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           <Segmented
             size="large"
             value={mode}
-            onChange={(v)=>setMode(v as any)}
+            onChange={(v)=>{ const next=v as any; if (next==='annot') { resetSceneToInitial(); } setMode(next); }}
             options={[{label:'添加标注', value:'annot'},{label:'制作动画', value:'anim'}]}
             className="mode-seg"
             style={{ padding: 4, borderRadius: 999 }}
