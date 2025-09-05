@@ -3808,8 +3808,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         }
       }
       
-      // 确保clips数据的完整性
-      const validClips = clips.filter(clip => clip && clip.id && clip.timeline);
+      // 确保clips数据的完整性，并把当前激活动画的步骤同步进其对象
+      const syncedClips = clips.map(c => c && c.id ? (c.id === activeClipId ? { ...c, steps: JSON.parse(JSON.stringify(stepsRef.current||[])) } : c) : c);
+      const validClips = syncedClips.filter(clip => clip && clip.id && clip.timeline);
       console.log('保存课件数据，clips数量:', validClips.length);
       console.log('保存数据预览:', {
         annotations: annotations.length,
@@ -3877,12 +3878,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           isOriginal: !!clip.timeline.gltfAnimation?.isOriginal,
             duration: clip.timeline.duration,
           // 只保存步骤信息，动画轨道数据在GLB中
-          steps: (clip as any).steps ? (clip as any).steps : steps.map(s => ({
-            id: s.id,
-            name: s.name,
-            description: s.name,
-            time: s.time
-          }))
+          steps: Array.isArray((clip as any).steps) ? (clip as any).steps.map((s:any)=>({ id: s.id, name: s.name, description: s.description ?? s.name, time: s.time })) : []
         })),
         settings: {
           cameraPosition: cameraRef.current ? {
@@ -3928,17 +3924,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   };
 
-  // 自动保存（每30秒）
+  // 自动保存（关闭）
   useEffect(() => {
-    if (!coursewareId) return;
-
-    const interval = setInterval(() => {
-      if (!saving) {
-        saveCourseware();
-      }
-    }, 30000); // 30秒自动保存
-
-    return () => clearInterval(interval);
+    // 已按需关闭自动保存，避免模型未载入时写入空数据
+    return;
   }, [coursewareId, saving]);
 
   // 快捷键保存（Ctrl+S）
