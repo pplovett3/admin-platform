@@ -283,7 +283,9 @@ type Annotation = {
     title: string; 
     summary?: string;
     // 标签相对于标注点的偏移量（在创建时固定）
+    // 新版默认为"local"（随父节点TRS变化），旧数据可能为世界偏移
     offset?: [number, number, number];
+    offsetSpace?: 'local'|'world';
   };
 };
 
@@ -394,6 +396,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnno, setEditingAnno] = useState<Annotation | null>(null);
   const [labelScale, setLabelScale] = useState(1.0); // 标签大小缩放
+  const [showAnnotations, setShowAnnotations] = useState<boolean>(true); // 标签显隐
   const keyToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   const markersGroupRef = useRef<THREE.Group | null>(null);
   const pendingImportRef = useRef<any | null>(null); // 缓存导入的 JSON，待模型加载后再解析
@@ -1938,6 +1941,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           offset = x.anchor.offset;
         }
         
+        const labelOffsetArr = x.labelOffset ? [x.labelOffset.x, x.labelOffset.y, x.labelOffset.z] : (x?.label?.offset || undefined);
+        const labelOffsetSpace = x.labelOffsetSpace || x?.label?.offsetSpace || 'local';
         restored.push({
           id: String(x.id || generateUuid()),
           targetKey: target.uuid,
@@ -1945,7 +1950,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           anchor: { space: 'local', offset: [Number(offset[0]), Number(offset[1]), Number(offset[2])] },
           label: { 
             title: String(x.title || x?.label?.title || target.name || '未命名'), 
-            summary: String(x.description || x?.label?.summary || '') 
+            summary: String(x.description || x?.label?.summary || ''),
+            ...(labelOffsetArr ? { offset: [Number(labelOffsetArr[0]), Number(labelOffsetArr[1]), Number(labelOffsetArr[2])], offsetSpace: labelOffsetSpace } : {})
           }
         });
       });
@@ -2172,7 +2178,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       if (hits.length > 0) {
         const hit = hits[0];
-        handleAnnotationPlacement(hit.point, hit.object);
+        handleAnnotationPlacement(hit as any);
         return;
       } else {
         message.warning('请点击选中对象的表面');
@@ -2510,6 +2516,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   const refreshMarkers = useCallback(() => {
     const group = ensureMarkers();
+    group.visible = showAnnotations;
+    if (!showAnnotations) return; // 隐藏时不重建以节省性能
     const camera = cameraRef.current;
     if (!camera) return;
     
@@ -2542,31 +2550,43 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const pointGeom = new THREE.SphereGeometry(0.012, 16, 16);
       const pointMat = new THREE.MeshBasicMaterial({ 
         color: 0x1890ff,
-        depthTest: false,
+        depthTest: true,
         transparent: true,
         opacity: 1.0
       });
       const pointMesh = new THREE.Mesh(pointGeom, pointMat);
       pointMesh.position.copy(world);
-      pointMesh.renderOrder = 1000;
+      pointMesh.renderOrder = 0;
       pointMesh.userData.annotationId = a.id; // 确保点击检测
       annotationGroup.add(pointMesh);
       
       // 2. 计算标签位置（使用保存的固定偏移量）
       let labelPos;
       if (a.label.offset) {
-        // 使用保存的固定偏移量（世界坐标系中的绝对偏移）
-        labelPos = new THREE.Vector3(
-          world.x + a.label.offset[0],
-          world.y + a.label.offset[1], 
-          world.z + a.label.offset[2]
-        );
+        // 根据偏移的坐标系生成世界位置
+        if (a.label.offsetSpace === 'local') {
+          const offsetLocal = new THREE.Vector3(a.label.offset[0], a.label.offset[1], a.label.offset[2]);
+          // 将局部向量变换到世界（考虑旋转与缩放）
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scl = new THREE.Vector3();
+          target.matrixWorld.decompose(pos, quat, scl);
+          const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
+          labelPos = world.clone().add(offsetWorld);
+        } else {
+          // 旧数据：世界偏移
+          labelPos = new THREE.Vector3(
+            world.x + a.label.offset[0],
+            world.y + a.label.offset[1], 
+            world.z + a.label.offset[2]
+          );
+        }
       } else {
-        // 对于没有偏移的旧标注，给一个固定的默认偏移
+        // 对于没有偏移的旧标注，给一个固定的默认偏移（世界系）
         labelPos = new THREE.Vector3(
-          world.x + 0.2, // 固定X偏移
-          world.y + 0.1, // 固定Y偏移  
-          world.z + 0.0  // 固定Z偏移
+          world.x + 0.2,
+          world.y + 0.1,
+          world.z + 0.0
         );
         console.warn('标注缺少偏移信息，使用默认固定偏移:', a.id);
       }
@@ -2577,10 +2597,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         color: 0x1890ff,
         transparent: true,
         opacity: 0.8,
-        depthTest: false
+        depthTest: true
       });
       const line = new THREE.Line(lineGeom, lineMat);
-      line.renderOrder = 999;
+      line.renderOrder = 0;
       line.userData.annotationId = a.id;
       annotationGroup.add(line);
       
@@ -2642,7 +2662,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const spriteMat = new THREE.SpriteMaterial({ 
         map: texture,
         transparent: true,
-        depthTest: false
+        depthTest: true,
+        depthWrite: false
       });
       const sprite = new THREE.Sprite(spriteMat);
       
@@ -2653,14 +2674,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const fixedScale = 0.002 * labelScale; // 固定基础缩放 * 用户设置
       sprite.scale.set(canvas.width * fixedScale, canvas.height * fixedScale, 1);
       
-      sprite.renderOrder = 1001;
+      sprite.renderOrder = 0;
       sprite.userData.annotationId = a.id;
       sprite.userData.clickable = true;
       annotationGroup.add(sprite);
       
       group.add(annotationGroup);
     });
-  }, [annotations, labelScale]);
+  }, [annotations, labelScale, showAnnotations]);
 
   useEffect(() => { refreshMarkers(); }, [refreshMarkers, selectedKey]);
   
@@ -2735,8 +2756,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   };
 
   // 处理标注位置选择的点击
-  const handleAnnotationPlacement = (intersectionPoint: THREE.Vector3, hitObject: THREE.Object3D) => {
+  const handleAnnotationPlacement = (intersection: any) => {
     if (!placingAnnotationTargetRef.current) return;
+    const intersectionPoint: THREE.Vector3 = intersection.point?.clone?.() || intersection;
+    const hitObject: THREE.Object3D = intersection.object || placingAnnotationTargetRef.current;
     
     // 检查击中的对象是否是目标对象或其子对象
     let isValidTarget = false;
@@ -2760,21 +2783,38 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 计算标签的固定偏移量（基于当前相机位置，保存为世界坐标偏移）
     const camera = cameraRef.current;
-    let labelOffset: [number, number, number] = [0.2, 0.1, 0]; // 默认偏移
-    if (camera) {
-      const worldPos = intersectionPoint.clone();
-      const cameraPos = camera.position.clone();
-      const direction = cameraPos.clone().sub(worldPos).normalize();
-      const labelDistance = 0.2; // 标签距离
-      const labelWorldPos = worldPos.clone().add(direction.multiplyScalar(labelDistance));
-      
-      // 保存世界坐标系中的绝对偏移量
-      labelOffset = [
-        labelWorldPos.x - worldPos.x,
-        labelWorldPos.y - worldPos.y, 
-        labelWorldPos.z - worldPos.z
-      ] as [number, number, number];
-    }
+    let labelOffset: [number, number, number] = [0.2, 0.1, 0]; // 默认偏移（局部）
+    let offsetSpace: 'local'|'world' = 'local';
+    
+    // 优先使用面法线来确定偏移方向
+    try {
+      const faceNormal = intersection.face?.normal as THREE.Vector3 | undefined;
+      if (faceNormal) {
+        // normal 是命中网格局部空间的，需要转成世界方向
+        const normalWorld = faceNormal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix((intersection.object as any).matrixWorld));
+        normalWorld.normalize();
+        // 将世界方向转为标注目标对象的局部方向
+        const target = placingAnnotationTargetRef.current;
+        const targetWorldQuat = new THREE.Quaternion();
+        target.getWorldQuaternion(targetWorldQuat);
+        const localDir = normalWorld.clone().applyQuaternion(targetWorldQuat.clone().invert()).normalize();
+        const d = 0.22; // 标签距离
+        labelOffset = [localDir.x * d, localDir.y * d, localDir.z * d];
+        offsetSpace = 'local';
+      } else if (camera) {
+        // 兜底：沿相机方向
+        const worldPos = intersectionPoint.clone();
+        const cameraPos = camera.position.clone();
+        const direction = cameraPos.clone().sub(worldPos).normalize();
+        const labelDistance = 0.2;
+        const target = placingAnnotationTargetRef.current;
+        const targetWorldQuat = new THREE.Quaternion();
+        target.getWorldQuaternion(targetWorldQuat);
+        const localDir = direction.applyQuaternion(targetWorldQuat.clone().invert());
+        labelOffset = [localDir.x * labelDistance, localDir.y * labelDistance, localDir.z * labelDistance];
+        offsetSpace = 'local';
+      }
+    } catch {}
     
     const anno: Annotation = {
       id: generateUuid(),
@@ -2784,7 +2824,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       label: { 
         title: placingAnnotationTargetRef.current.name || '未命名', 
         summary: '',
-        offset: labelOffset // 保存固定的标签偏移量
+        offset: labelOffset, // 保存固定的标签偏移量
+        offsetSpace
       }
     };
     
@@ -3727,6 +3768,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               y: a.label.offset[1],
               z: a.label.offset[2]
             };
+            if (a.label.offsetSpace) {
+              saveData.labelOffsetSpace = a.label.offsetSpace;
+            }
           }
           
           return saveData;
@@ -3835,13 +3879,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             title: a.title,
             description: a.description,
             labelOffset: a.labelOffset, // 标签偏移量
+            labelOffsetSpace: (a as any).labelOffsetSpace,
             // 兼容老格式
             target: { path: a.nodeKey }, 
             anchor: { offset: [a.position?.x || 0, a.position?.y || 0, a.position?.z || 0] },
             label: { 
               title: a.title, 
               summary: a.description,
-              offset: a.labelOffset ? [a.labelOffset.x, a.labelOffset.y, a.labelOffset.z] : undefined
+              offset: a.labelOffset ? [a.labelOffset.x, a.labelOffset.y, a.labelOffset.z] : undefined,
+              offsetSpace: (a as any).labelOffsetSpace
             }
           })),
           // 包含模型结构数据
@@ -4251,6 +4297,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       </div>} bodyStyle={{ padding: 0, height: '100%' }} style={{ height: '100%', gridArea: 'center', display: 'flex', flexDirection: 'column', minWidth: 0 }}
         extra={(
           <Space>
+            <Switch checkedChildren="标签开" unCheckedChildren="标签关" checked={showAnnotations} onChange={(v)=>{ setShowAnnotations(v); refreshMarkers(); }} />
             {coursewareId && (
               <>
                 <Tooltip title={lastSaved ? `上次保存: ${lastSaved.toLocaleTimeString()}` : '点击保存 (Ctrl+S)'}>
@@ -4717,7 +4764,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             </div>
           </div>
       </Card>
-      <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} />
+      <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} onDelete={(id)=>{ setAnnotations(prev=>prev.filter(a=>a.id!==id)); setEditingAnno(null); }} />
       <SettingsModal />
       <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
         <Form layout="vertical" form={renameForm} preserve={false}>
@@ -4775,7 +4822,7 @@ function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
   return nodes.map(mapNode).filter(Boolean) as TreeNode[];
 }
 
-function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; value: Annotation | null; onCancel: ()=>void; onOk: (v: Annotation | null)=>void }) {
+function AnnotationEditor({ open, value, onCancel, onOk, onDelete }: { open: boolean; value: Annotation | null; onCancel: ()=>void; onOk: (v: Annotation | null)=>void; onDelete?: (id: string)=>void }) {
   const [form] = Form.useForm();
   useEffect(() => {
     if (open && value) {
@@ -4783,13 +4830,9 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
     }
   }, [open, value, form]);
   return (
-    <Modal title="编辑标注" open={open} onCancel={onCancel} onOk={async ()=>{
-      const v = await form.validateFields();
-      if (!value) return onOk(null);
-      onOk({ ...value, label: { title: v.title, summary: v.summary } });
-    }} destroyOnClose>
+    <Modal title="编辑标注" open={open} onCancel={onCancel} footer={null} destroyOnClose>
       <Form layout="vertical" form={form} preserve={false}>
-        <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标注标题' }]}>
+        <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标注标题' }]}> 
           <Input placeholder="例如：发动机组件" />
         </Form.Item>
         <Form.Item name="summary" label="简介">
@@ -4800,6 +4843,11 @@ function AnnotationEditor({ open, value, onCancel, onOk }: { open: boolean; valu
             maxLength={500}
           />
         </Form.Item>
+        <Space style={{ width:'100%', justifyContent:'flex-end' }}>
+          {value && onDelete && <Button danger onClick={()=> onDelete(value.id)}>删除</Button>}
+          <Button onClick={onCancel}>取消</Button>
+          <Button type="primary" onClick={async ()=>{ const v = await form.validateFields(); if (!value) return onOk(null); onOk({ ...value, label: { title: v.title, summary: v.summary } }); }}>确定</Button>
+        </Space>
       </Form>
     </Modal>
   );
