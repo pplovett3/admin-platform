@@ -918,7 +918,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               ...c, 
               name, 
               description,
-              timeline: JSON.parse(JSON.stringify(timeline)) // 更新时间线数据
+              timeline: JSON.parse(JSON.stringify(timeline)), // 更新时间线数据
+              steps: JSON.parse(JSON.stringify(stepsRef.current||[]))
             }
           : c
       ));
@@ -1010,6 +1011,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const noVis = !safeTimeline.visTracks || Object.keys(safeTimeline.visTracks).length === 0;
         if (gltfAnim?.clip && noTrs && noVis && modelRootRef.current) {
           const parsed = parseAnimationClipToTracks(gltfAnim.clip, modelRootRef.current);
+          // 只解析一次，避免重复叠加
           setClips(prev => prev.map(cc => cc.id === c.id ? { ...cc, timeline: { ...cc.timeline, visTracks: parsed.visTracks, trsTracks: parsed.trsTracks } } : cc));
           setTimeline(prev => ({ ...prev, visTracks: parsed.visTracks, trsTracks: parsed.trsTracks }));
         }
@@ -2556,8 +2558,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   const refreshMarkers = useCallback(() => {
     const group = ensureMarkers();
+    // 即使隐藏也重建一次，保证保存时能读取位置
     group.visible = showAnnotations;
-    if (!showAnnotations) return; // 隐藏时不重建以节省性能
     const camera = cameraRef.current;
     if (!camera) return;
     
