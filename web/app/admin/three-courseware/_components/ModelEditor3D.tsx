@@ -898,6 +898,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   const saveClip = () => {
     if (!activeClipId) return message.warning('请先选择或新建动画');
+    
+    // 调试信息：当前时间线状态
+    console.log(`[Animation/Save] 保存动画: ${activeClipId}`);
+    console.log(`  显隐轨道数量: ${Object.keys(timeline.visTracks).length}`);
+    console.log(`  变换轨道数量: ${Object.keys(timeline.trsTracks).length}`);
+    console.log(`  步骤数量: ${stepsRef.current?.length || 0}`);
+    
+    // 详细显示每个显隐轨道
+    Object.entries(timeline.visTracks).forEach(([uuid, keyframes]) => {
+      const obj = keyToObject.current.get(uuid);
+      const objName = obj?.name || uuid.slice(0,8);
+      console.log(`  [显隐轨道] ${objName}: ${keyframes.length}个关键帧`, keyframes.map(k => `${k.time}s:${k.value ? '显示' : '隐藏'}`).join(', '));
+    });
+    
     // 更新当前活动动画的timeline数据
     setClips(prev => prev.map(c => c.id === activeClipId ? { 
       ...c, 
@@ -3135,6 +3149,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     setTimeline(prev => {
       const track = prev.visTracks[selectedKey] || [];
       const nextTrack = [...track, { time: prev.current, value: obj.visible }].sort((a,b)=>a.time-b.time);
+      console.log(`[Visibility/AddKey] 对象: ${obj.name || selectedKey.slice(0,8)}, 时间: ${prev.current}s, 可见性: ${obj.visible}, 轨道关键帧数: ${nextTrack.length}`);
       return { ...prev, visTracks: { ...prev.visTracks, [selectedKey]: nextTrack } };
     });
   };
@@ -3142,13 +3157,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     setTimeline(prev => {
       const list = (prev.visTracks[key] || []).slice();
       const eps = 1e-3; const i = list.findIndex(k => Math.abs(k.time - prev.current) < eps);
+      const obj = keyToObject.current.get(key);
+      const objName = obj?.name || key.slice(0,8);
+      
       if (i < 0) {
-        if (!autoKeyRef.current) return prev;
+        if (!autoKeyRef.current) {
+          console.log(`[Visibility/SetCurrent] 跳过自动关键帧: ${objName}, 时间: ${prev.current}s, 目标可见性: ${visible}`);
+          return prev;
+        }
         const next = [...list, { time: prev.current, value: visible }].sort((a,b)=>a.time-b.time);
+        console.log(`[Visibility/SetCurrent] 自动添加关键帧: ${objName}, 时间: ${prev.current}s, 可见性: ${visible}, 新轨道长度: ${next.length}`);
         return { ...prev, visTracks: { ...prev.visTracks, [key]: next } };
       }
       pushHistory();
       list[i] = { ...list[i], value: visible };
+      console.log(`[Visibility/SetCurrent] 更新现有关键帧: ${objName}, 时间: ${prev.current}s, 可见性: ${visible}`);
       return { ...prev, visTracks: { ...prev.visTracks, [key]: list } };
     });
   };
@@ -3711,6 +3734,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
 
       console.log(`📦 总计导出动画: ${animationsToExport.length}个`);
+      
+      // 详细显示每个动画的轨道信息
+      animationsToExport.forEach((anim, i) => {
+        console.log(`  [GLB导出动画 ${i+1}] ${anim.name}:`);
+        console.log(`    轨道总数: ${anim.tracks.length}`);
+        
+        const tracksByType = {
+          position: anim.tracks.filter(t => t.name.endsWith('.position')).length,
+          rotation: anim.tracks.filter(t => t.name.endsWith('.quaternion')).length,
+          scale: anim.tracks.filter(t => t.name.endsWith('.scale')).length,
+        };
+        
+        console.log(`    位置轨道: ${tracksByType.position}, 旋转轨道: ${tracksByType.rotation}, 缩放轨道: ${tracksByType.scale}`);
+        
+        // 详细显示缩放轨道（可能包含可见性映射）
+        const scaleTracks = anim.tracks.filter(t => t.name.endsWith('.scale'));
+        scaleTracks.forEach(track => {
+          const objectName = track.name.replace('.scale', '');
+          const values = track.values as Float32Array;
+          const hasSmallValues = Array.from(values).some(v => v < 0.01);
+          console.log(`      缩放轨道 ${objectName}: ${track.times.length}个关键帧${hasSmallValues ? ' (可能为可见性映射)' : ''}`);
+        });
+      });
 
       // 3. 配置导出选项
       const exportOptions = {
@@ -4550,6 +4596,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                     key: 'export-glb',
                     label: '导出 GLB',
                     onClick: async () => {
+                      // 导出前的调试信息
+                      console.log('🎯 [手动GLB导出] 当前动画状态:');
+                      console.log(`  活动动画: ${activeClipId}`);
+                      console.log(`  动画总数: ${clips.length}`);
+                      
+                      const activeClip = clips.find(c => c.id === activeClipId);
+                      if (activeClip) {
+                        console.log(`  当前动画显隐轨道数: ${Object.keys(activeClip.timeline.visTracks || {}).length}`);
+                        Object.entries(activeClip.timeline.visTracks || {}).forEach(([uuid, keyframes]) => {
+                          const obj = keyToObject.current.get(uuid);
+                          const objName = obj?.name || uuid.slice(0,8);
+                          console.log(`    [显隐轨道] ${objName}: ${keyframes.length}个关键帧 - ${keyframes.map(k => `${k.time}s:${k.value ? '显' : '隐'}`).join(' ')}`);
+                        });
+                      }
+                      
                       const blob = await exportCurrentModelAsGLB();
                       if (!blob) { message.error('导出失败'); return; }
                       const a = document.createElement('a');
@@ -4557,6 +4618,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                       a.download = `${coursewareName||'模型'}.glb`;
                       a.click();
                       URL.revokeObjectURL(a.href);
+                      
+                      console.log('✅ [手动GLB导出] 文件已下载，请在Windows模型查看器中检查显隐动画效果');
                     }
                   },
                   {
