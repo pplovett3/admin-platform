@@ -3748,6 +3748,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
     setSaving(true);
     try {
+      // 确保标注几何存在，便于保存时反推偏移
+      try { refreshMarkers(); } catch {}
       let modifiedModelUrl = null;
       
       // 🚀 如果模型结构或动画有变化，导出新的完整GLB文件
