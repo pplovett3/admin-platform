@@ -2794,16 +2794,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // normal 是命中网格局部空间的，需要转成世界方向
         const normalWorld = faceNormal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix((intersection.object as any).matrixWorld)).normalize();
         // 由目标物体中心指向命中点，判定朝外方向
-        const target = placingAnnotationTargetRef.current;
-        const bbox = new THREE.Box3().setFromObject(target);
+        const targetObj = placingAnnotationTargetRef.current;
+        const bbox = new THREE.Box3().setFromObject(targetObj);
         const centerWorld = new THREE.Vector3();
         bbox.getCenter(centerWorld);
         const outwardWorld = intersectionPoint.clone().sub(centerWorld).normalize();
         const fixedWorld = (normalWorld.dot(outwardWorld) < 0) ? normalWorld.clone().multiplyScalar(-1) : normalWorld;
         // 将世界方向转为标注目标对象的局部方向
-        const target = placingAnnotationTargetRef.current;
         const targetWorldQuat = new THREE.Quaternion();
-        target.getWorldQuaternion(targetWorldQuat);
+        targetObj.getWorldQuaternion(targetWorldQuat);
         const localDir = fixedWorld.clone().applyQuaternion(targetWorldQuat.clone().invert()).normalize();
         const d = 0.22; // 标签距离
         labelOffset = [localDir.x * d, localDir.y * d, localDir.z * d];
@@ -2814,9 +2813,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         const cameraPos = camera.position.clone();
         const direction = cameraPos.clone().sub(worldPos).normalize();
         const labelDistance = 0.2;
-        const target = placingAnnotationTargetRef.current;
+        const targetObj = placingAnnotationTargetRef.current;
         const targetWorldQuat = new THREE.Quaternion();
-        target.getWorldQuaternion(targetWorldQuat);
+        targetObj.getWorldQuaternion(targetWorldQuat);
         const localDir = direction.applyQuaternion(targetWorldQuat.clone().invert());
         labelOffset = [localDir.x * labelDistance, localDir.y * labelDistance, localDir.z * labelDistance];
         offsetSpace = 'local';
