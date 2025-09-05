@@ -1550,8 +1550,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           if (pendingImportRef.current?.animationMetadata) {
             console.log('🔄 检测到待处理的动画元数据，进行GLB动画重建...');
             
-            // 从GLB和元数据重建动画
-            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, pendingImportRef.current.animationMetadata);
+            // 从GLB和元数据重建动画（传入当前root）
+            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, pendingImportRef.current.animationMetadata, root);
             setClips(rebuiltClips);
             
             if (rebuiltClips.length > 0) {
@@ -1616,8 +1616,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           if (pendingImportRef.current?.animationMetadata) {
             console.log('🔄 检测到待处理的动画元数据，进行GLB动画重建...');
             
-            // 从GLB和元数据重建动画
-            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, pendingImportRef.current.animationMetadata);
+            // 从GLB和元数据重建动画（传入当前root）
+            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, pendingImportRef.current.animationMetadata, root);
             setClips(rebuiltClips);
             
             if (rebuiltClips.length > 0) {
@@ -3366,8 +3366,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return { visTracks, trsTracks };
   };
 
-  // 🔄 从GLB动画数据重建编辑器动画
-  const loadAnimationsFromGLB = (gltfAnimations: THREE.AnimationClip[], animationMetadata: any[]) => {
+  // 🔄 从GLB动画数据重建编辑器动画（显式接收rootObject，避免root为null）
+  const loadAnimationsFromGLB = (gltfAnimations: THREE.AnimationClip[], animationMetadata: any[], rootObject: THREE.Object3D) => {
     console.log('🔄 从GLB重建动画数据...');
     
     const loadedClips: Clip[] = [];
@@ -3381,8 +3381,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       
       console.log(`  📁 加载动画: ${clip.name} (${metadata.isOriginal ? '原始' : '自定义'})`);
       
-      // 解析动画轨道数据
-      const { visTracks, trsTracks } = parseAnimationClipToTracks(clip, modelRootRef.current!);
+      // 解析动画轨道数据（使用传入的rootObject）
+      const safeRoot = rootObject || modelRootRef.current;
+      if (!safeRoot) {
+        console.warn('  ⚠️ 解析动画时root未就绪，跳过该动画:', clip.name);
+        return;
+      }
+      const { visTracks, trsTracks } = parseAnimationClipToTracks(clip, safeRoot);
       
       // 创建编辑器动画对象
       const editorClip: Clip = {
