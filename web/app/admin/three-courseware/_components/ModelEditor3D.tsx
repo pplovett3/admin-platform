@@ -1953,6 +1953,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           ? [Number(x.labelOffset.x||0), Number(x.labelOffset.y||0), Number(x.labelOffset.z||0)]
           : (Array.isArray(x?.label?.offset) ? x.label.offset : undefined);
         const labelOffsetSpace = (x as any).labelOffsetSpace || x?.label?.offsetSpace || 'local';
+        
+        // 调试：记录恢复时的偏移量信息
+        if (labelOffsetArr) {
+          console.log(`[Annotation/Restore] ${x.title}: offset=${JSON.stringify(labelOffsetArr)}, space=${labelOffsetSpace}`);
+        }
         restored.push({
           id: String(x.id || generateUuid()),
           targetKey: target.uuid,
@@ -3954,6 +3959,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           });
         }
       } catch {}
+      // 额外的调试信息：检查最终payload中的标注偏移量
+      if (payload.annotations && payload.annotations.length > 0) {
+        console.log('[Courseware/Save-Payload] 标注偏移量检查:');
+        payload.annotations.forEach((ann: any, i: number) => {
+          console.log(`  [${i}] ${ann.title}: labelOffset=${JSON.stringify(ann.labelOffset)}, labelOffsetSpace=${ann.labelOffsetSpace}, label.offset=${JSON.stringify(ann.label?.offset)}`);
+        });
+      }
       console.log('[Courseware/Save-Payload]', payload);
       await apiPut(`/api/coursewares/${coursewareId}`, payload);
       // 成功保存后，更新本地上一次上传记录

@@ -1,12 +1,20 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
-// 标注数据结构（简化版：仅标题+简介）
+// 标注数据结构（完整版：包含标签偏移量）
 export interface IAnnotation {
   id: string;
   nodeKey: string;
   title: string;
   description: string;
   position: { x: number; y: number; z: number };
+  labelOffset?: { x: number; y: number; z: number }; // 标签偏移量
+  labelOffsetSpace?: 'local' | 'world'; // 偏移空间类型
+  label?: { // 兼容前端格式
+    title: string;
+    summary?: string;
+    offset?: [number, number, number];
+    offsetSpace?: 'local' | 'world';
+  };
 }
 
 // 动画步骤
@@ -111,6 +119,18 @@ const AnnotationSchema = new Schema({
     x: { type: Number, required: true },
     y: { type: Number, required: true },
     z: { type: Number, required: true }
+  },
+  labelOffset: {
+    x: { type: Number },
+    y: { type: Number },
+    z: { type: Number }
+  },
+  labelOffsetSpace: { type: String, enum: ['local', 'world'], default: 'local' },
+  label: {
+    title: { type: String },
+    summary: { type: String },
+    offset: [{ type: Number }],
+    offsetSpace: { type: String, enum: ['local', 'world'], default: 'local' }
   }
 }, { _id: false });
 
