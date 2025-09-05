@@ -3888,6 +3888,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               }
             }
           }
+
+          // 兼容：在 label 内也冗余一份数组格式，便于观察与后端兼容
+          if (saveData.labelOffset) {
+            const lx = Number(saveData.labelOffset.x||0), ly = Number(saveData.labelOffset.y||0), lz = Number(saveData.labelOffset.z||0);
+            (saveData as any).label = {
+              title: a.label.title,
+              summary: a.label.summary || '',
+              offset: [lx, ly, lz],
+              offsetSpace: saveData.labelOffsetSpace || 'local'
+            };
+            console.log('[Annotation/Save-Write]', a.id, { offset: [lx, ly, lz], offsetSpace: (saveData as any).label.offsetSpace });
+          }
           
           return saveData;
         }),
