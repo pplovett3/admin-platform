@@ -2010,17 +2010,43 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               }
             });
           } else if (tl.visTracks && typeof tl.visTracks === 'object') {
-            // 处理旧格式：已经是UUID -> keyframes的对象
-            Object.entries(tl.visTracks).forEach(([oldKey, keys]) => {
-              // 尝试通过名称匹配找到新的对象
-              const matches: THREE.Object3D[] = [];
-              keyToObject.current.forEach((obj, uuid) => {
-                if (uuid === oldKey || obj.name === oldKey) {
-                  matches.push(obj);
+            // 🔥 处理新格式：对象路径 -> keyframes的对象
+            console.log(`  📋 处理新格式显隐轨道: ${Object.keys(tl.visTracks).length}个轨道`);
+            
+            Object.entries(tl.visTracks).forEach(([pathOrUuid, keys]) => {
+              let targetObject: THREE.Object3D | null = null;
+              
+              // 首先尝试作为UUID查找
+              if (keyToObject.current.has(pathOrUuid)) {
+                targetObject = keyToObject.current.get(pathOrUuid) || null;
+                console.log(`    [UUID匹配] ${pathOrUuid} → 找到对象`);
+              } else {
+                // 作为对象路径查找
+                keyToObject.current.forEach((obj, uuid) => {
+                  const objPath = buildNamePath(obj) || obj.name;
+                  if (objPath === pathOrUuid || obj.name === pathOrUuid) {
+                    targetObject = obj;
+                    console.log(`    [路径匹配] ${pathOrUuid} → ${obj.name} (${uuid.slice(0,8)})`);
+                  }
+                });
+                
+                // 如果还没找到，尝试灵活路径匹配
+                if (!targetObject) {
+                  targetObject = findByFlexiblePath(pathOrUuid) || null;
+                  if (targetObject) {
+                    console.log(`    [灵活匹配] ${pathOrUuid} → ${targetObject.name}`);
+                  }
                 }
-              });
-              if (matches.length > 0) {
-                visTracks[matches[0].uuid] = keys as VisibilityKeyframe[];
+              }
+              
+              if (targetObject) {
+                visTracks[targetObject.uuid] = (keys as any[]).map((k: any) => ({
+                  time: k.time,
+                  value: k.visible !== undefined ? k.visible : k.value
+                }));
+                console.log(`    ✅ 恢复显隐轨道: ${pathOrUuid} → ${targetObject.name}, ${(keys as any[]).length}个关键帧`);
+              } else {
+                console.warn(`    ❌ 未找到对象: ${pathOrUuid}`);
               }
             });
           }
@@ -2043,17 +2069,35 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               }
             });
           } else if (tl.trsTracks && typeof tl.trsTracks === 'object') {
-            // 处理旧格式：已经是UUID -> keyframes的对象
-            Object.entries(tl.trsTracks).forEach(([oldKey, keys]) => {
-              // 尝试通过名称匹配找到新的对象
-              const matches: THREE.Object3D[] = [];
-              keyToObject.current.forEach((obj, uuid) => {
-                if (uuid === oldKey || obj.name === oldKey) {
-                  matches.push(obj);
+            // 🔥 处理新格式：对象路径 -> keyframes的对象
+            console.log(`  📋 处理新格式变换轨道: ${Object.keys(tl.trsTracks).length}个轨道`);
+            
+            Object.entries(tl.trsTracks).forEach(([pathOrUuid, keys]) => {
+              let targetObject: THREE.Object3D | null = null;
+              
+              // 首先尝试作为UUID查找
+              if (keyToObject.current.has(pathOrUuid)) {
+                targetObject = keyToObject.current.get(pathOrUuid) || null;
+              } else {
+                // 作为对象路径查找
+                keyToObject.current.forEach((obj, uuid) => {
+                  const objPath = buildNamePath(obj) || obj.name;
+                  if (objPath === pathOrUuid || obj.name === pathOrUuid) {
+                    targetObject = obj;
+                  }
+                });
+                
+                // 如果还没找到，尝试灵活路径匹配
+                if (!targetObject) {
+                  targetObject = findByFlexiblePath(pathOrUuid) || null;
                 }
-              });
-              if (matches.length > 0) {
-                trsTracks[matches[0].uuid] = keys as TransformKeyframe[];
+              }
+              
+              if (targetObject) {
+                trsTracks[targetObject.uuid] = keys as TransformKeyframe[];
+                console.log(`    ✅ 恢复变换轨道: ${pathOrUuid} → ${targetObject.name}, ${(keys as any[]).length}个关键帧`);
+              } else {
+                console.warn(`    ❌ 未找到对象: ${pathOrUuid}`);
               }
             });
           }
