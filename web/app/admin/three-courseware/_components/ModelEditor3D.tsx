@@ -3744,55 +3744,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           finalVisTracks = jsonVisTracks; // 使用JSON中的显隐轨道
         }
         
-        // 从JSON中恢复变换轨道（支持新旧格式）
-        if (metadata.timeline._unityFormat?.transformTracks || metadata.timeline.trsTracks) {
-          const jsonTrsTracks: Record<string, TransformKeyframe[]> = {};
-          
-          // 优先使用Unity格式（对象路径映射）
-          if (metadata.timeline._unityFormat?.transformTracks) {
-            console.log(`    使用Unity格式变换轨道`);
-            Object.entries(metadata.timeline._unityFormat.transformTracks).forEach(([objectPath, keyframes]) => {
-              let targetObject: THREE.Object3D | null = null;
-              rootObject.traverse((obj) => {
-                const objPath = buildNamePath(obj) || obj.name;
-                if (objPath === objectPath || obj.name === objectPath) {
-                  targetObject = obj;
-                }
-              });
-              
-              if (targetObject) {
-                const obj = targetObject as THREE.Object3D;
-                jsonTrsTracks[obj.uuid] = keyframes as TransformKeyframe[];
-                console.log(`    [Unity格式变换轨道] ${objectPath} → ${obj.name}: ${(keyframes as any[]).length}个关键帧`);
-              } else {
-                console.warn(`    ⚠️ 未找到对象: ${objectPath}`);
-              }
-            });
-          }
-          // 使用标准格式（数组）
-          else if (metadata.timeline.trsTracks && Array.isArray(metadata.timeline.trsTracks)) {
-            console.log(`    使用标准格式变换轨道`);
-            metadata.timeline.trsTracks.forEach((track: any) => {
-              let targetObject: THREE.Object3D | null = null;
-              rootObject.traverse((obj) => {
-                const objPath = buildNamePath(obj) || obj.name;
-                if (objPath === track.nodeKey || obj.name === track.nodeKey) {
-                  targetObject = obj;
-                }
-              });
-              
-              if (targetObject) {
-                const obj = targetObject as THREE.Object3D;
-                jsonTrsTracks[obj.uuid] = track.keys || [];
-                console.log(`    [标准格式变换轨道] ${track.nodeKey} → ${obj.name}: ${(track.keys || []).length}个关键帧`);
-              } else {
-                console.warn(`    ⚠️ 未找到对象: ${track.nodeKey}`);
-              }
-            });
-          }
-          
-          finalTrsTracks = jsonTrsTracks; // 使用JSON中的变换轨道
-        }
+        // 🚫 不再从JSON恢复变换轨道 - TRS数据完全由GLB提供
+        console.log(`    📋 TRS轨道将从GLB文件解析，不使用JSON数据`);
       }
       
       // 创建编辑器动画对象
@@ -4220,19 +4173,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 }
                 return null;
               }).filter(Boolean),
-              // 🔥 变换轨道 - 转换为后端期望的数组格式
-              trsTracks: Object.entries(clip.timeline.trsTracks || {}).map(([uuid, keyframes]) => {
-                const obj = keyToObject.current.get(uuid);
-                if (obj) {
-                  const objectPath = buildNamePath(obj) || obj.name || uuid;
-                  return {
-                    nodeKey: objectPath,
-                    keys: keyframes as any[]
-                  };
-                }
-                return null;
-              }).filter(Boolean),
-              // 🎯 额外保存Unity专用的路径映射格式（便于前端解析）
+              // 🚫 不保存TRS轨道 - 这些数据由GLB文件本身提供
+              // trsTracks: [], // 注释掉，不上传TRS数据
+              
+              // 🎯 Unity专用格式 - 仅保存GLB无法存储的数据
               _unityFormat: {
                 visibilityTracks: Object.entries(clip.timeline.visTracks || {}).reduce((acc, [uuid, keyframes]) => {
                   const obj = keyToObject.current.get(uuid);
@@ -4245,23 +4189,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                     }));
                   }
                   return acc;
-                }, {} as Record<string, any[]>),
-                transformTracks: Object.entries(clip.timeline.trsTracks || {}).reduce((acc, [uuid, keyframes]) => {
-                  const obj = keyToObject.current.get(uuid);
-                  if (obj) {
-                    const objectPath = buildNamePath(obj) || obj.name || uuid;
-                    acc[objectPath] = keyframes as any[];
-                  }
-                  return acc;
                 }, {} as Record<string, any[]>)
+                // transformTracks: {} // 注释掉，不保存TRS数据到JSON
               }
             }
           };
           
           // 调试信息
           const visCount = animData.timeline.visTracks.length;
-          const trsCount = animData.timeline.trsTracks.length;
-          console.log(`[Animation/JSON保存] ${clip.name}: 显隐轨道${visCount}个, 变换轨道${trsCount}个`);
+          const cameraKeysCount = animData.timeline.cameraKeys.length;
+          console.log(`[Animation/JSON保存] ${clip.name}: 显隐轨道${visCount}个, 相机关键帧${cameraKeysCount}个 (TRS轨道由GLB提供)`);
           
           // 详细显示显隐轨道内容
           if (visCount > 0) {

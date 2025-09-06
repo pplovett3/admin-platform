@@ -196,11 +196,11 @@ const TimelineSchema = new Schema({
   duration: { type: Number, required: true, default: 10 },
   cameraKeys: [CameraKeyframeSchema],
   visTracks: [VisibilityTrackSchema],
-  trsTracks: [TransformTrackSchema],
-  // Unity专用格式（可选）
+  // trsTracks: [TransformTrackSchema], // 注释掉 - TRS数据由GLB提供，不存储在JSON中
+  // Unity专用格式（可选）- 仅保存GLB无法存储的数据
   _unityFormat: {
-    visibilityTracks: { type: Schema.Types.Mixed },
-    transformTracks: { type: Schema.Types.Mixed }
+    visibilityTracks: { type: Schema.Types.Mixed }
+    // transformTracks: { type: Schema.Types.Mixed } // 注释掉 - 不保存TRS到JSON
   }
 }, { _id: false });
 
