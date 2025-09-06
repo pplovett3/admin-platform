@@ -277,6 +277,59 @@
   - GET `/api/analytics/student/overview`
   - GET `/api/analytics/student/trend/sessions?days=14`
 
+### 三维课件管理（需登录，权限：superadmin/schoolAdmin/teacher）
+- 课件列表
+  - GET `/api/coursewares?q=&page=&limit=`
+  - Query可选：`q`(模糊搜索名称/描述) `page`(页码，默认1) `limit`(每页条数，默认20)
+  - 200
+    ```json
+    {
+      "items": [
+        {
+          "_id": "68bc53d55f017bd5c72d4013",
+          "name": "小米su7轮胎",
+          "description": "",
+          "modelUrl": "/api/files/68af267e83f0e85a3dd4d13f/download",
+          "modifiedModelUrl": "/api/files/68bc54af5f017bd5c72d402a/download",
+          "createdAt": "2025-09-06T15:31:33.035Z",
+          "updatedAt": "2025-09-06T15:35:11.071Z",
+          "createdBy": { "_id": "689c46d6191b483b08e9c560", "name": "Admin" },
+          "version": 3
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "limit": 20,
+        "total": 1,
+        "pages": 1
+      }
+    }
+    ```
+  - Postman示例：GET `http://106.15.229.165:4000/api/coursewares`，Headers带`Authorization: Bearer <token>`
+
+- 课件详情（包含完整的动画、标注、模型结构数据）
+  - GET `/api/coursewares/:id`
+  - 200（完整JSON结构见下方Unity开发文档中的示例）
+  - Postman示例：GET `http://106.15.229.165:4000/api/coursewares/68bc53d55f017bd5c72d4013`，Headers带`Authorization: Bearer <token>`
+
+- 创建课件
+  - POST `/api/coursewares`
+  - Body
+    ```json
+    {
+      "name": "课件名称",
+      "description": "课件描述（可选）",
+      "modelUrl": "/api/files/xxx/download"
+    }
+    ```
+
+- 更新课件
+  - PUT `/api/coursewares/:id`
+  - Body（包含完整的课件数据：标注、动画、设置等）
+
+- 删除课件
+  - DELETE `/api/coursewares/:id`
+
 ### 健康检查
 - GET `/health` → `{ "ok": true }`
 
