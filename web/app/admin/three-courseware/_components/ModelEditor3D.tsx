@@ -4037,8 +4037,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         }
       }
       
-      // 确保clips数据的完整性，并把当前激活动画的步骤同步进其对象
-      const syncedClips = clips.map(c => c && c.id ? (c.id === activeClipId ? { ...c, steps: JSON.parse(JSON.stringify(stepsRef.current||[])) } : c) : c);
+      // 确保clips数据的完整性，同步当前激活动画的时间线和步骤数据
+      const syncedClips = clips.map(c => {
+        if (c && c.id && c.id === activeClipId) {
+          // 🔥 同步当前时间线数据到活动动画中
+          const currentTimeline = JSON.parse(JSON.stringify(timeline));
+          console.log(`[课件保存] 同步活动动画 ${c.name} 的时间线数据:`);
+          console.log(`  显隐轨道: ${Object.keys(currentTimeline.visTracks || {}).length}个`);
+          console.log(`  变换轨道: ${Object.keys(currentTimeline.trsTracks || {}).length}个`);
+          console.log(`  相机关键帧: ${(currentTimeline.cameraKeys || []).length}个`);
+          
+          return {
+            ...c,
+            timeline: currentTimeline,
+            steps: JSON.parse(JSON.stringify(stepsRef.current || []))
+          };
+        }
+        return c;
+      });
       const validClips = syncedClips.filter(clip => clip && clip.id && clip.timeline);
       console.log('保存课件数据，clips数量:', validClips.length);
       console.log('保存数据预览:', {
@@ -4139,7 +4155,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 const obj = keyToObject.current.get(uuid);
                 if (obj) {
                   const objectPath = buildNamePath(obj) || obj.name || uuid;
-                  acc[objectPath] = keyframes.map(k => ({
+                  acc[objectPath] = (keyframes as any[]).map((k: any) => ({
                     time: k.time,
                     visible: k.value,
                     // 添加对象信息便于调试
@@ -4153,7 +4169,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 const obj = keyToObject.current.get(uuid);
                 if (obj) {
                   const objectPath = buildNamePath(obj) || obj.name || uuid;
-                  acc[objectPath] = keyframes;
+                  acc[objectPath] = keyframes as any[];
                 }
                 return acc;
               }, {} as Record<string, any[]>)
@@ -4170,6 +4186,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             console.log(`  显隐轨道详情:`);
             Object.entries(animData.timeline.visibilityTracks).forEach(([objectPath, keyframes]) => {
               console.log(`    ${objectPath}: ${keyframes.length}个关键帧 - ${keyframes.map((k:any) => `${k.time}s:${k.visible ? '显' : '隐'}`).join(' ')}`);
+            });
+          } else {
+            console.warn(`  ⚠️ 动画 ${clip.name} 没有显隐轨道数据！`);
+            console.log(`    原始时间线显隐轨道: ${Object.keys(clip.timeline.visTracks || {}).length}个`);
+            Object.entries(clip.timeline.visTracks || {}).forEach(([uuid, keyframes]) => {
+              const obj = keyToObject.current.get(uuid);
+              console.log(`      ${uuid.slice(0,8)} (${obj?.name}): ${(keyframes as any[]).length}个关键帧`);
             });
           }
           
