@@ -196,7 +196,12 @@ const TimelineSchema = new Schema({
   duration: { type: Number, required: true, default: 10 },
   cameraKeys: [CameraKeyframeSchema],
   visTracks: [VisibilityTrackSchema],
-  trsTracks: [TransformTrackSchema]
+  trsTracks: [TransformTrackSchema],
+  // Unity专用格式（可选）
+  _unityFormat: {
+    visibilityTracks: { type: Schema.Types.Mixed },
+    transformTracks: { type: Schema.Types.Mixed }
+  }
 }, { _id: false });
 
 const AnimationSchema = new Schema({

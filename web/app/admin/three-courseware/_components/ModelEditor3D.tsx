@@ -3688,54 +3688,108 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       if (metadata.timeline) {
         console.log(`  📋 发现JSON轨道数据，优先使用JSON中的显隐轨道`);
         
-        // 从JSON中恢复显隐轨道（按对象路径映射）
-        if (metadata.timeline.visibilityTracks) {
+        // 从JSON中恢复显隐轨道（支持新旧格式）
+        if (metadata.timeline._unityFormat?.visibilityTracks || metadata.timeline.visTracks) {
           const jsonVisTracks: Record<string, VisibilityKeyframe[]> = {};
           
-          Object.entries(metadata.timeline.visibilityTracks).forEach(([objectPath, keyframes]) => {
-            // 根据对象路径查找对象
-            let targetObject: THREE.Object3D | null = null;
-            rootObject.traverse((obj) => {
-              const objPath = buildNamePath(obj) || obj.name;
-              if (objPath === objectPath || obj.name === objectPath) {
-                targetObject = obj;
+          // 优先使用Unity格式（对象路径映射）
+          if (metadata.timeline._unityFormat?.visibilityTracks) {
+            console.log(`    使用Unity格式显隐轨道`);
+            Object.entries(metadata.timeline._unityFormat.visibilityTracks).forEach(([objectPath, keyframes]) => {
+              let targetObject: THREE.Object3D | null = null;
+              rootObject.traverse((obj) => {
+                const objPath = buildNamePath(obj) || obj.name;
+                if (objPath === objectPath || obj.name === objectPath) {
+                  targetObject = obj;
+                }
+              });
+              
+              if (targetObject) {
+                const obj = targetObject as THREE.Object3D;
+                jsonVisTracks[obj.uuid] = (keyframes as any[]).map((k: any) => ({
+                  time: k.time,
+                  value: k.visible
+                }));
+                console.log(`    [Unity格式显隐轨道] ${objectPath} → ${obj.name}: ${(keyframes as any[]).length}个关键帧`);
+              } else {
+                console.warn(`    ⚠️ 未找到对象: ${objectPath}`);
               }
             });
-            
-            if (targetObject) {
-              const obj = targetObject as THREE.Object3D;
-              jsonVisTracks[obj.uuid] = (keyframes as any[]).map((k: any) => ({
-                time: k.time,
-                value: k.visible
-              }));
-              console.log(`    [JSON显隐轨道] ${objectPath} → ${obj.name}: ${(keyframes as any[]).length}个关键帧`);
-            } else {
-              console.warn(`    ⚠️ 未找到对象: ${objectPath}`);
-            }
-          });
+          } 
+          // 使用标准格式（数组）
+          else if (metadata.timeline.visTracks && Array.isArray(metadata.timeline.visTracks)) {
+            console.log(`    使用标准格式显隐轨道`);
+            metadata.timeline.visTracks.forEach((track: any) => {
+              let targetObject: THREE.Object3D | null = null;
+              rootObject.traverse((obj) => {
+                const objPath = buildNamePath(obj) || obj.name;
+                if (objPath === track.nodeKey || obj.name === track.nodeKey) {
+                  targetObject = obj;
+                }
+              });
+              
+              if (targetObject) {
+                const obj = targetObject as THREE.Object3D;
+                jsonVisTracks[obj.uuid] = track.keys.map((k: any) => ({
+                  time: k.time,
+                  value: k.visible
+                }));
+                console.log(`    [标准格式显隐轨道] ${track.nodeKey} → ${obj.name}: ${track.keys.length}个关键帧`);
+              } else {
+                console.warn(`    ⚠️ 未找到对象: ${track.nodeKey}`);
+              }
+            });
+          }
           
           finalVisTracks = jsonVisTracks; // 使用JSON中的显隐轨道
         }
         
-        // 从JSON中恢复变换轨道
-        if (metadata.timeline.transformTracks) {
+        // 从JSON中恢复变换轨道（支持新旧格式）
+        if (metadata.timeline._unityFormat?.transformTracks || metadata.timeline.trsTracks) {
           const jsonTrsTracks: Record<string, TransformKeyframe[]> = {};
           
-          Object.entries(metadata.timeline.transformTracks).forEach(([objectPath, keyframes]) => {
-            let targetObject: THREE.Object3D | null = null;
-            rootObject.traverse((obj) => {
-              const objPath = buildNamePath(obj) || obj.name;
-              if (objPath === objectPath || obj.name === objectPath) {
-                targetObject = obj;
+          // 优先使用Unity格式（对象路径映射）
+          if (metadata.timeline._unityFormat?.transformTracks) {
+            console.log(`    使用Unity格式变换轨道`);
+            Object.entries(metadata.timeline._unityFormat.transformTracks).forEach(([objectPath, keyframes]) => {
+              let targetObject: THREE.Object3D | null = null;
+              rootObject.traverse((obj) => {
+                const objPath = buildNamePath(obj) || obj.name;
+                if (objPath === objectPath || obj.name === objectPath) {
+                  targetObject = obj;
+                }
+              });
+              
+              if (targetObject) {
+                const obj = targetObject as THREE.Object3D;
+                jsonTrsTracks[obj.uuid] = keyframes as TransformKeyframe[];
+                console.log(`    [Unity格式变换轨道] ${objectPath} → ${obj.name}: ${(keyframes as any[]).length}个关键帧`);
+              } else {
+                console.warn(`    ⚠️ 未找到对象: ${objectPath}`);
               }
             });
-            
-            if (targetObject) {
-              const obj = targetObject as THREE.Object3D;
-              jsonTrsTracks[obj.uuid] = keyframes as TransformKeyframe[];
-              console.log(`    [JSON变换轨道] ${objectPath} → ${obj.name}: ${(keyframes as any[]).length}个关键帧`);
-            }
-          });
+          }
+          // 使用标准格式（数组）
+          else if (metadata.timeline.trsTracks && Array.isArray(metadata.timeline.trsTracks)) {
+            console.log(`    使用标准格式变换轨道`);
+            metadata.timeline.trsTracks.forEach((track: any) => {
+              let targetObject: THREE.Object3D | null = null;
+              rootObject.traverse((obj) => {
+                const objPath = buildNamePath(obj) || obj.name;
+                if (objPath === track.nodeKey || obj.name === track.nodeKey) {
+                  targetObject = obj;
+                }
+              });
+              
+              if (targetObject) {
+                const obj = targetObject as THREE.Object3D;
+                jsonTrsTracks[obj.uuid] = track.keys || [];
+                console.log(`    [标准格式变换轨道] ${track.nodeKey} → ${obj.name}: ${(track.keys || []).length}个关键帧`);
+              } else {
+                console.warn(`    ⚠️ 未找到对象: ${track.nodeKey}`);
+              }
+            });
+          }
           
           finalTrsTracks = jsonTrsTracks; // 使用JSON中的变换轨道
         }
@@ -4145,47 +4199,75 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             duration: clip.timeline.duration,
             // 保存步骤信息
             steps: Array.isArray((clip as any).steps) ? (clip as any).steps.map((s:any)=>({ id: s.id, name: s.name, description: s.description ?? s.name, time: s.time })) : [],
-            // 🎯 保存完整轨道数据到JSON，供Unity播放器解析
+            // 🎯 保存完整轨道数据到JSON，按后端Schema格式
             timeline: {
               duration: clip.timeline.duration,
               // 相机轨道
               cameraKeys: clip.timeline.cameraKeys || [],
-              // 🔥 显隐轨道 - 保存为对象路径映射，便于Unity按名称查找
-              visibilityTracks: Object.entries(clip.timeline.visTracks || {}).reduce((acc, [uuid, keyframes]) => {
+              // 🔥 显隐轨道 - 转换为后端期望的数组格式
+              visTracks: Object.entries(clip.timeline.visTracks || {}).map(([uuid, keyframes]) => {
                 const obj = keyToObject.current.get(uuid);
                 if (obj) {
                   const objectPath = buildNamePath(obj) || obj.name || uuid;
-                  acc[objectPath] = (keyframes as any[]).map((k: any) => ({
-                    time: k.time,
-                    visible: k.value,
-                    // 添加对象信息便于调试
-                    _debug: { uuid, objectName: obj.name }
-                  }));
+                  return {
+                    nodeKey: objectPath,
+                    keys: (keyframes as any[]).map((k: any) => ({
+                      time: k.time,
+                      visible: k.value,
+                      easing: 'linear'
+                    }))
+                  };
                 }
-                return acc;
-              }, {} as Record<string, any[]>),
-              // 🔥 变换轨道 - 同样保存为对象路径映射
-              transformTracks: Object.entries(clip.timeline.trsTracks || {}).reduce((acc, [uuid, keyframes]) => {
+                return null;
+              }).filter(Boolean),
+              // 🔥 变换轨道 - 转换为后端期望的数组格式
+              trsTracks: Object.entries(clip.timeline.trsTracks || {}).map(([uuid, keyframes]) => {
                 const obj = keyToObject.current.get(uuid);
                 if (obj) {
                   const objectPath = buildNamePath(obj) || obj.name || uuid;
-                  acc[objectPath] = keyframes as any[];
+                  return {
+                    nodeKey: objectPath,
+                    keys: keyframes as any[]
+                  };
                 }
-                return acc;
-              }, {} as Record<string, any[]>)
+                return null;
+              }).filter(Boolean),
+              // 🎯 额外保存Unity专用的路径映射格式（便于前端解析）
+              _unityFormat: {
+                visibilityTracks: Object.entries(clip.timeline.visTracks || {}).reduce((acc, [uuid, keyframes]) => {
+                  const obj = keyToObject.current.get(uuid);
+                  if (obj) {
+                    const objectPath = buildNamePath(obj) || obj.name || uuid;
+                    acc[objectPath] = (keyframes as any[]).map((k: any) => ({
+                      time: k.time,
+                      visible: k.value,
+                      _debug: { uuid, objectName: obj.name }
+                    }));
+                  }
+                  return acc;
+                }, {} as Record<string, any[]>),
+                transformTracks: Object.entries(clip.timeline.trsTracks || {}).reduce((acc, [uuid, keyframes]) => {
+                  const obj = keyToObject.current.get(uuid);
+                  if (obj) {
+                    const objectPath = buildNamePath(obj) || obj.name || uuid;
+                    acc[objectPath] = keyframes as any[];
+                  }
+                  return acc;
+                }, {} as Record<string, any[]>)
+              }
             }
           };
           
           // 调试信息
-          const visCount = Object.keys(animData.timeline.visibilityTracks).length;
-          const trsCount = Object.keys(animData.timeline.transformTracks).length;
+          const visCount = animData.timeline.visTracks.length;
+          const trsCount = animData.timeline.trsTracks.length;
           console.log(`[Animation/JSON保存] ${clip.name}: 显隐轨道${visCount}个, 变换轨道${trsCount}个`);
           
           // 详细显示显隐轨道内容
           if (visCount > 0) {
             console.log(`  显隐轨道详情:`);
-            Object.entries(animData.timeline.visibilityTracks).forEach(([objectPath, keyframes]) => {
-              console.log(`    ${objectPath}: ${keyframes.length}个关键帧 - ${keyframes.map((k:any) => `${k.time}s:${k.visible ? '显' : '隐'}`).join(' ')}`);
+            animData.timeline.visTracks.forEach((track: any) => {
+              console.log(`    ${track.nodeKey}: ${track.keys.length}个关键帧 - ${track.keys.map((k:any) => `${k.time}s:${k.visible ? '显' : '隐'}`).join(' ')}`);
             });
           } else {
             console.warn(`  ⚠️ 动画 ${clip.name} 没有显隐轨道数据！`);
@@ -4355,21 +4437,31 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             };
             
             // 🔥 如果存在新格式的timeline数据，进行转换
-            if (anim.timeline && anim.timeline.visibilityTracks) {
+            if (anim.timeline && (anim.timeline.visTracks || anim.timeline._unityFormat?.visibilityTracks)) {
               console.log(`[JSON加载] 检测到新格式显隐轨道数据: ${anim.name}`);
               
               const visTracks: Record<string, VisibilityKeyframe[]> = {};
               
-              // 将对象路径映射转换为UUID映射
-              Object.entries(anim.timeline.visibilityTracks).forEach(([objectPath, keyframes]) => {
-                // 查找对应的对象（需要等模型加载后再处理）
-                console.log(`  [待转换显隐轨道] ${objectPath}: ${(keyframes as any[]).length}个关键帧`);
-                // 暂时保存路径映射，等模型加载后再转换为UUID
-                visTracks[objectPath] = (keyframes as any[]).map(k => ({
-                  time: k.time,
-                  value: k.visible
-                }));
-              });
+              // 优先使用Unity格式（对象路径映射），否则使用标准格式（数组）
+              if (anim.timeline._unityFormat?.visibilityTracks) {
+                console.log(`  使用Unity格式显隐轨道`);
+                Object.entries(anim.timeline._unityFormat.visibilityTracks).forEach(([objectPath, keyframes]) => {
+                  console.log(`  [Unity格式显隐轨道] ${objectPath}: ${(keyframes as any[]).length}个关键帧`);
+                  visTracks[objectPath] = (keyframes as any[]).map((k: any) => ({
+                    time: k.time,
+                    value: k.visible
+                  }));
+                });
+              } else if (anim.timeline.visTracks && Array.isArray(anim.timeline.visTracks)) {
+                console.log(`  使用标准格式显隐轨道`);
+                anim.timeline.visTracks.forEach((track: any) => {
+                  console.log(`  [标准格式显隐轨道] ${track.nodeKey}: ${track.keys.length}个关键帧`);
+                  visTracks[track.nodeKey] = track.keys.map((k: any) => ({
+                    time: k.time,
+                    value: k.visible
+                  }));
+                });
+              }
               
               timeline.visTracks = visTracks;
             }
