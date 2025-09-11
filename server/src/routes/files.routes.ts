@@ -304,4 +304,50 @@ router.delete('/:id', authenticate as any, async (req, res) => {
   res.json({ ok: true });
 });
 
+// 代理接口：解决公网URL的CORS问题
+router.get('/proxy', authenticate as any, async (req, res) => {
+  try {
+    const { url } = req.query;
+    
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ message: 'URL parameter is required' });
+    }
+    
+    // 只允许代理我们自己的公网域名
+    if (!url.startsWith('https://dl.yf-xr.com/') && !url.startsWith('https://video.yf-xr.com/')) {
+      return res.status(403).json({ message: 'Only whitelisted domains are allowed' });
+    }
+    
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      return res.status(response.status).json({ message: `Failed to fetch: ${response.statusText}` });
+    }
+    
+    // 转发所有相关的头部
+    const contentType = response.headers.get('content-type');
+    const contentLength = response.headers.get('content-length');
+    
+    if (contentType) {
+      res.setHeader('Content-Type', contentType);
+    }
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+    
+    // 添加CORS头
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    
+    // 流式传输响应
+    const stream = Readable.fromWeb(response.body as any);
+    stream.pipe(res);
+    
+  } catch (error) {
+    console.error('Proxy error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 export default router; 

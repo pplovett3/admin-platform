@@ -1541,20 +1541,33 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         .setKTX2Loader(ktx2)
         .setDRACOLoader(draco);
 
-      // 对于本地API文件，需要构建完整URL并添加认证
+      // 构建最终的加载URL
       let finalSrc = actualSrc;
+      let useProxy = false;
+      
       if (actualSrc.startsWith('/api/files/')) {
+        // 内部API文件：构建完整URL
         const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
         finalSrc = `${baseUrl}${actualSrc}`;
+      } else if (actualSrc.startsWith('https://dl.yf-xr.com/') || actualSrc.startsWith('https://video.yf-xr.com/')) {
+        // 公网URL：使用代理避免CORS问题
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        finalSrc = `${baseUrl}/api/files/proxy?url=${encodeURIComponent(actualSrc)}`;
+        useProxy = true;
       }
 
-      // 使用fetch来加载带认证的模型文件
+      // 使用fetch来加载模型文件（支持认证和代理）
       let root: THREE.Object3D;
-      if (actualSrc.startsWith('/api/files/')) {
+      if (actualSrc.startsWith('/api/files/') || useProxy) {
         const token = getToken?.();
-        const response = await fetch(finalSrc, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
+        const headers: Record<string, string> = {};
+        
+        // 对内部API和代理请求都需要认证
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        
+        const response = await fetch(finalSrc, { headers });
         if (!response.ok) {
           throw new Error(`Failed to load model: ${response.status} ${response.statusText}`);
         }
@@ -1639,6 +1652,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           console.log(`✅ 已加载${gltfClips.length}个原始动画到编辑器`);
         }
       } else {
+        // 对于其他URL（如外部链接），直接使用loader
         const gltf = await loader.loadAsync(finalSrc);
         root = gltf.scene || gltf.scenes[0];
         
