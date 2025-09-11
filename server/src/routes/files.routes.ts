@@ -304,6 +304,131 @@ router.delete('/:id', authenticate as any, async (req, res) => {
   res.json({ ok: true });
 });
 
+// 专门用于上传三维课件修改后的模型文件
+router.post('/courseware-upload', authenticate as any, upload.single('file'), async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string; role: string };
+    const file = req.file;
+    if (!file) return res.status(400).json({ message: 'No file provided' });
+
+    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const ext = path.extname(originalName).toLowerCase();
+    
+    // 只允许GLB文件
+    if (ext !== '.glb') {
+      return res.status(400).json({ message: 'Only GLB files are allowed for courseware models' });
+    }
+
+    // 生成文件哈希
+    const buffer = fs.readFileSync(file.path);
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    // 构建专门的modified模型存储路径: modifiedModels/用户ID/年月/文件名
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const relDir = `modifiedModels/${current.userId}/${yearMonth}`;
+    const filename = `${sha256}${ext}`;
+    const rel = `${relDir}/${filename}`;
+
+    // 确保目录存在
+    const targetDir = path.join(config.storageRoot, relDir);
+    try { 
+      fs.mkdirSync(targetDir, { recursive: true }); 
+    } catch (mkErr: any) {
+      console.error('ensure dir failed:', targetDir, mkErr?.message);
+      throw mkErr;
+    }
+    const finalPath = path.join(config.storageRoot, rel);
+
+    // 移动文件
+    await new Promise<void>((resolve, reject) => {
+      const rs = fs.createReadStream(file.path);
+      const ws = fs.createWriteStream(finalPath, { flags: 'w' });
+      rs.on('error', reject);
+      ws.on('error', reject);
+      ws.on('finish', () => resolve());
+      rs.pipe(ws);
+    });
+    fs.unlinkSync(file.path);
+
+    // 不保存到File模型，直接返回下载地址
+    const publicUrl = config.publicDownloadBase 
+      ? `${config.publicDownloadBase.replace(/\/$/, '')}/${rel.replace(/\\/g, '/')}`
+      : `/api/files/courseware-download?path=${encodeURIComponent(rel.replace(/\\/g, '/'))}`;
+
+    return res.json({ 
+      ok: true, 
+      downloadUrl: publicUrl,
+      filename: originalName,
+      size: file.size,
+      path: rel.replace(/\\/g, '/')
+    });
+  } catch (e: any) {
+    console.error('courseware upload failed:', e);
+    return res.status(500).json({ message: e?.message || 'upload failed' });
+  }
+});
+
+// 下载三维课件修改后的模型文件
+router.get('/courseware-download', authenticate as any, async (req, res) => {
+  try {
+    const { path: relPath } = req.query;
+    if (!relPath || typeof relPath !== 'string') {
+      return res.status(400).json({ message: 'Path parameter is required' });
+    }
+
+    // 安全检查：只允许访问modifiedModels目录下的文件
+    if (!relPath.startsWith('modifiedModels/')) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const fullPath = path.join(config.storageRoot, relPath);
+    
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    const stat = fs.statSync(fullPath);
+    const filename = path.basename(relPath);
+    
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    const stream = fs.createReadStream(fullPath);
+    stream.pipe(res);
+  } catch (error) {
+    console.error('Courseware download error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// 删除三维课件修改后的模型文件
+router.delete('/courseware-file', authenticate as any, async (req, res) => {
+  try {
+    const { path: relPath } = req.query;
+    if (!relPath || typeof relPath !== 'string') {
+      return res.status(400).json({ message: 'Path parameter is required' });
+    }
+
+    // 安全检查：只允许删除modifiedModels目录下的文件
+    if (!relPath.startsWith('modifiedModels/')) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const fullPath = path.join(config.storageRoot, relPath);
+    
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Courseware file delete error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // 代理接口：解决公网URL的CORS问题
 router.get('/proxy', authenticate as any, async (req, res) => {
   try {

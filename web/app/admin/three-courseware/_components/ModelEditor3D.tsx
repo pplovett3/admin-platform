@@ -3346,6 +3346,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // GLB导出器
   const exporterRef = useRef<GLTFExporter | null>(null);
   const lastUploadedFileIdRef = useRef<string | null>(null);
+  const lastUploadedFilePathRef = useRef<string | null>(null);
   
   // GLTF动画相关
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -4023,20 +4024,41 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
           // 若存在旧文件，先删除，确保资源中只有一个当前版本
           try {
-            const prev = (lastUploadedFileIdRef.current
-              ? `/api/files/${lastUploadedFileIdRef.current}/download`
-              : (coursewareData?.modifiedModelUrl || '')) as string;
-            const idMatch = prev.match(/\/api\/files\/([a-f0-9]{24})\//i);
-            const prevId = idMatch ? idMatch[1] : null;
-            if (prevId) {
-              await fetch(`${baseUrl}/api/files/${prevId}`, {
-                method: 'DELETE',
-                headers: token ? { Authorization: `Bearer ${token}` } : undefined
-              });
+            const prev = (lastUploadedFilePathRef.current || coursewareData?.modifiedModelUrl || '') as string;
+            
+            if (prev) {
+              // 先检查是否是相对路径格式（新格式）
+              if (prev.startsWith('modifiedModels/')) {
+                // 直接使用相对路径删除
+                await fetch(`${baseUrl}/api/files/courseware-file?path=${encodeURIComponent(prev)}`, {
+                  method: 'DELETE',
+                  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+                });
+              } else {
+                // 检查是否是新格式的公网URL（包含modifiedModels路径）
+                const publicUrlMatch = prev.match(/https:\/\/dl\.yf-xr\.com\/(.+)/);
+                if (publicUrlMatch && publicUrlMatch[1].startsWith('modifiedModels/')) {
+                  // 新格式：使用courseware-file删除接口
+                  await fetch(`${baseUrl}/api/files/courseware-file?path=${encodeURIComponent(publicUrlMatch[1])}`, {
+                    method: 'DELETE',
+                    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+                  });
+                } else {
+                  // 旧格式：尝试从File模型删除
+                  const idMatch = prev.match(/\/api\/files\/([a-f0-9]{24})\//i);
+                  const prevId = idMatch ? idMatch[1] : null;
+                  if (prevId) {
+                    await fetch(`${baseUrl}/api/files/${prevId}`, {
+                      method: 'DELETE',
+                      headers: token ? { Authorization: `Bearer ${token}` } : undefined
+                    });
+                  }
+                }
+              }
             }
           } catch (e) { console.warn('删除旧模型文件失败（忽略）：', e); }
 
-          const uploadResponse = await fetch(`${baseUrl}/api/files/upload`, {
+          const uploadResponse = await fetch(`${baseUrl}/api/files/courseware-upload`, {
             method: 'POST',
             body: formData,
             headers: token ? { 'Authorization': `Bearer ${token}` } : undefined
@@ -4047,10 +4069,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             // 兼容后端返回的字段名（downloadUrl 或 url）
             modifiedModelUrl = uploadResult.downloadUrl || uploadResult.url;
             console.log('✅ 模型文件上传成功:', modifiedModelUrl);
-            try {
-              const m = String(modifiedModelUrl||'').match(/\/api\/files\/([a-f0-9]{24})\//i);
-              lastUploadedFileIdRef.current = m ? m[1] : null;
-            } catch {}
+            
+            // 保存文件路径信息（用于删除）
+            lastUploadedFilePathRef.current = modifiedModelUrl;
+            if (uploadResult.path) {
+              // 新格式：保存相对路径
+              lastUploadedFilePathRef.current = uploadResult.path;
+            } else {
+              // 旧格式：尝试提取文件ID
+              try {
+                const m = String(modifiedModelUrl||'').match(/\/api\/files\/([a-f0-9]{24})\//i);
+                lastUploadedFileIdRef.current = m ? m[1] : null;
+              } catch {}
+            }
           } else {
             console.error('❌ 模型文件上传失败');
             throw new Error('模型文件上传失败');
