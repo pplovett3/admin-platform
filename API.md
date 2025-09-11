@@ -289,8 +289,8 @@
           "_id": "68bc53d55f017bd5c72d4013",
           "name": "小米su7轮胎",
           "description": "",
-          "modelUrl": "/api/files/68af267e83f0e85a3dd4d13f/download",
-          "modifiedModelUrl": "/api/files/68bc54af5f017bd5c72d402a/download",
+          "modelUrl": "https://dl.yf-xr.com/models/68af267e83f0e85a3dd4d13f.glb",
+          "modifiedModelUrl": "https://dl.yf-xr.com/models/68bc54af5f017bd5c72d402a.glb",
           "createdAt": "2025-09-06T15:31:33.035Z",
           "updatedAt": "2025-09-06T15:35:11.071Z",
           "createdBy": { "_id": "689c46d6191b483b08e9c560", "name": "Admin" },
@@ -306,6 +306,7 @@
     }
     ```
   - Postman示例：GET `http://106.15.229.165:4000/api/coursewares`，Headers带`Authorization: Bearer <token>`
+  - 说明：`modelUrl`和`modifiedModelUrl`使用公网直链格式 `https://dl.yf-xr.com/models/{文件ID}.glb`，可直接下载
 
 - 课件详情（包含完整的动画、标注、模型结构数据）
   - GET `/api/coursewares/:id`
@@ -319,7 +320,7 @@
     {
       "name": "课件名称",
       "description": "课件描述（可选）",
-      "modelUrl": "/api/files/xxx/download"
+      "modelUrl": "https://dl.yf-xr.com/models/文件ID.glb"
     }
     ```
 

@@ -2,6 +2,56 @@ import { Request, Response } from 'express';
 import { CoursewareModel } from '../models/Courseware';
 import { FileModel } from '../models/File';
 import { Types } from 'mongoose';
+import { config } from '../config/env';
+
+// 工具函数：将内部文件URL转换为公网URL
+async function convertFileUrlToPublic(url: string): Promise<string> {
+  if (!url) return url;
+  
+  // 如果已经是公网URL，直接返回
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  
+  // 提取文件ID：从 "/api/files/文件ID/download" 格式中提取
+  const match = url.match(/\/api\/files\/([^\/]+)\/download/);
+  if (!match) return url;
+  
+  const fileId = match[1];
+  
+  try {
+    // 查询文件信息获取存储路径
+    const file = await FileModel.findById(fileId).lean();
+    if (!file || !file.storageRelPath) return url;
+    
+    // 如果配置了公网下载地址，使用公网URL
+    if (config.publicDownloadBase) {
+      return `${config.publicDownloadBase.replace(/\/$/, '')}/${file.storageRelPath}`;
+    }
+    
+    return url;
+  } catch (error) {
+    console.error('Convert file URL error:', error);
+    return url;
+  }
+}
+
+// 转换课件对象的URL字段
+async function convertCoursewareUrls(courseware: any) {
+  if (!courseware) return courseware;
+  
+  const converted = { ...courseware };
+  
+  if (converted.modelUrl) {
+    converted.modelUrl = await convertFileUrlToPublic(converted.modelUrl);
+  }
+  
+  if (converted.modifiedModelUrl) {
+    converted.modifiedModelUrl = await convertFileUrlToPublic(converted.modifiedModelUrl);
+  }
+  
+  return converted;
+}
 
 // 获取课件列表
 export async function listCoursewares(req: Request, res: Response) {
@@ -38,8 +88,13 @@ export async function listCoursewares(req: Request, res: Response) {
       CoursewareModel.countDocuments(filter)
     ]);
 
+    // 转换课件URL为公网地址
+    const convertedItems = await Promise.all(
+      items.map(item => convertCoursewareUrls(item.toObject()))
+    );
+
     res.json({
-      items,
+      items: convertedItems,
       pagination: {
         page,
         limit,
@@ -76,7 +131,10 @@ export async function getCourseware(req: Request, res: Response) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    res.json(courseware);
+    // 转换URL为公网地址
+    const convertedCourseware = await convertCoursewareUrls(courseware.toObject());
+
+    res.json(convertedCourseware);
   } catch (error) {
     console.error('Get courseware error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -120,7 +178,10 @@ export async function createCourseware(req: Request, res: Response) {
       .populate('createdBy', 'name')
       .populate('updatedBy', 'name');
 
-    res.status(201).json(populated);
+    // 转换URL为公网地址
+    const convertedCourseware = await convertCoursewareUrls(populated!.toObject());
+
+    res.status(201).json(convertedCourseware);
   } catch (error) {
     console.error('Create courseware error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -161,7 +222,10 @@ export async function updateCourseware(req: Request, res: Response) {
       .populate('createdBy', 'name')
       .populate('updatedBy', 'name');
 
-    res.json(updated);
+    // 转换URL为公网地址
+    const convertedCourseware = await convertCoursewareUrls(updated!.toObject());
+
+    res.json(convertedCourseware);
   } catch (error) {
     console.error('Update courseware error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -330,9 +394,13 @@ export async function getAvailableModels(req: Request, res: Response) {
       size: model.size,
       type: model.visibility === 'public' ? 'public' : 'personal',
       createdAt: model.createdAt,
-      downloadUrl: `/api/files/${model._id}/download`,
+      downloadUrl: config.publicDownloadBase && model.storageRelPath 
+        ? `${config.publicDownloadBase.replace(/\/$/, '')}/${model.storageRelPath}`
+        : `/api/files/${model._id}/download`,
       // 构建预览URL（如果有公共访问地址）
-      viewUrl: model.storageRelPath ? `/api/files/${model._id}/download` : undefined
+      viewUrl: config.publicDownloadBase && model.storageRelPath 
+        ? `${config.publicDownloadBase.replace(/\/$/, '')}/${model.storageRelPath}`
+        : `/api/files/${model._id}/download`
     }));
 
     // 获取总数

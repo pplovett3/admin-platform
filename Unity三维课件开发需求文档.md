@@ -20,6 +20,7 @@ VR用户 → Unity客户端 → 后端API → GLB模型文件 + JSON数据
 - **服务器地址**: `http://106.15.229.165:4000`
 - **认证方式**: JWT Token，放在请求头 `Authorization: Bearer <token>`
 - **内容类型**: `application/json`
+- **模型下载**: 课件返回的`modelUrl`和`modifiedModelUrl`为`https://dl.yf-xr.com`公网直链，可直接下载GLB文件
 
 ### 3.2 登录认证
 ```http
@@ -62,8 +63,8 @@ Authorization: Bearer <token>
       "_id": "68bc53d55f017bd5c72d4013",
       "name": "小米su7轮胎",
       "description": "",
-      "modelUrl": "/api/files/68af267e83f0e85a3dd4d13f/download",
-      "modifiedModelUrl": "/api/files/68bc54af5f017bd5c72d402a/download",
+      "modelUrl": "https://dl.yf-xr.com/models/68af267e83f0e85a3dd4d13f.glb",
+      "modifiedModelUrl": "https://dl.yf-xr.com/models/68bc54af5f017bd5c72d402a.glb",
       "createdAt": "2025-09-06T15:31:33.035Z",
       "updatedAt": "2025-09-06T15:35:11.071Z",
       "createdBy": { "_id": "689c46d6191b483b08e9c560", "name": "Admin" },
@@ -96,8 +97,8 @@ Authorization: Bearer <token>
   "_id": "68bc53d55f017bd5c72d4013",
   "name": "小米su7轮胎",
   "description": "",
-  "modelUrl": "/api/files/68af267e83f0e85a3dd4d13f/download",
-  "modifiedModelUrl": "/api/files/68bc54af5f017bd5c72d402a/download",
+  "modelUrl": "https://dl.yf-xr.com/models/68af267e83f0e85a3dd4d13f.glb",
+  "modifiedModelUrl": "https://dl.yf-xr.com/models/68bc54af5f017bd5c72d402a.glb",
   "annotations": [...],     // 标注数据
   "animations": [...],      // 动画数据  
   "settings": {...},        // 场景设置
@@ -539,7 +540,7 @@ public class VisibilityTrackPlayer
 **当前服务器上的测试课件**:
 - 课件ID: `68bc53d55f017bd5c72d4013`  
 - 课件名称: `小米su7轮胎`
-- 模型URL: `/api/files/68bc54af5f017bd5c72d402a/download` (修改后的GLB)
+- 模型URL: `https://dl.yf-xr.com/models/68bc54af5f017bd5c72d402a.glb` (修改后的GLB)
 - 包含2个标注点，1个自定义动画（3个步骤），1个内置动画
 - 自定义动画包含轮胎显隐切换效果
 

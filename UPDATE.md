@@ -86,6 +86,9 @@ npm run build
 nssm start AdminPlatform-API
 
 # 3) 前端更新与重启
+nssm stop AdminPlatform-Web
+cd C:\admin-platform
+git pull
 cd C:\admin-platform\web
 $env:NEXT_PUBLIC_API_URL="http://106.15.229.165:4000"
 # 优先使用 npm ci；如遇 lock 不一致或 swc 依赖补丁提示，请改用 npm install
