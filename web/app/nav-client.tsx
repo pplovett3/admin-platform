@@ -51,6 +51,8 @@ export default function ClientNav() {
 			list.push({ key: '/admin/courses', icon: <ReadOutlined />, label: <Link href="/admin/courses">课程管理</Link> });
 			// 三维课件（仅超管起步；后续可开放 schoolAdmin）
 			list.push({ key: '/admin/three-courseware', icon: <FileOutlined />, label: <Link href="/admin/three-courseware">三维课件</Link> });
+			// AI课程编辑
+			list.push({ key: '/admin/ai-course', icon: <ReadOutlined />, label: <Link href="/admin/ai-course">AI课程编辑</Link> });
 			// 元宇宙大厅授权（仅超管）
 			list.push({ key: '/metaverse/authorize', icon: <SafetyOutlined />, label: <Link href="/metaverse/authorize">元宇宙大厅授权</Link> });
 		}

@@ -72,9 +72,22 @@
   - 视窗：选中高亮、对焦、标注点可见、动画播放控制
 - 新建页面：选择模型来源（平台资源/本地上传）
 
-#### B. AI讲课模块（待设计）
+#### B. AI课程编辑模块
 - 列表页 `/admin/ai-course`
 - 制作页 `/admin/ai-course/[id]`
+- 功能要点：
+  - 基础信息：课程名称、主题、受众、时长目标、语言/音色、难度与教学目标
+  - 关联三维课件：选择 `coursewareId`，展示模型与标注/动画统计
+  - AI生成初稿：后端基于课件摘要与主题生成“章节大纲 + 分段脚本”（文本、图片候选、三维动作建议）
+  - 可编辑大纲（所见即所得）：
+    - 段落树：顺序/并行结构；拖拽排序
+    - 段落项类型：`talk`（文本+TTS）、`image.explain`（图片+可选bbox指向）、`scene.action`（相机/显隐/高亮/标注/动画片段/指向）
+    - 三维动作向导：从结构树/标注/动画中拾取 `nodeKey`、`annotationId`、`animationId` 与时间片段
+    - 预览：浏览器侧模拟TTS（占位或实时合成）、图片叠加、三维动作与字幕
+  - TTS策略：
+    - 预览：实时合成试听（临时URL，不写入正式清单）
+    - 发布：分段批量合成并CDN缓存，写回 `course.json` 音频字段与 `assets.audio`
+  - 发布与版本：草稿/已发布；内容哈希增量合成；记录 `coursewareVersion` 与 `modelHash`
 
 ### 七、数据格式（对外约定）
 1) courseware.json（三维课件格式）
@@ -138,12 +151,18 @@
       "media": [
         { "type": "image", "src": "ai-generated/engine-detail.jpg", "title": "发动机结构图" }
       ],
-      "tts": { "voice": "zh-CN-XiaoyiNeural", "rate": 1.0 }
+      "tts": { "voice": "zh-CN-XiaoyiNeural", "rate": 1.0 },
+      "audio": {
+        "url": "https://cdn/app/audio/ai/68.../script-1_ab12.mp3",
+        "duration": 6.2,
+        "hash": "ab12...",
+        "markers": { "words": [{ "t": 0.12, "d": 0.30, "text": "首先" }] }
+      }
     }
   ]
 }
 ```
-说明：AI讲课引用三维课件ID，可控制动画播放、标注显示，并添加AI检索的富媒体内容。
+说明：AI讲课引用三维课件ID，可控制动画播放、标注显示，并添加AI检索的富媒体内容；发布后写入 `audio` 字段与 `assets.audio` 清单，客户端按清单预取。
 
 ### 八、后端 API（概要）
 #### A. 资源管理
@@ -156,10 +175,14 @@
 - GET/PUT/DELETE `/api/coursewares/:id`  课件详情/更新/删除
 - POST `/api/coursewares/:id/export`  导出课件为 `courseware.json`
 
-#### C. AI讲课（待实现）
+#### C. AI讲课
 - GET/POST `/api/ai-courses`  AI讲课列表/创建
-- GET/PUT/DELETE `/api/ai-courses/:id`  AI讲课详情/更新/删除
-- POST `/api/ai/generate-course`  基于三维课件生成 AI 脚本
+- GET/PUT/DELETE `/api/ai-courses/:id`  AI讲课详情/更新/删除（写入 `course.json`）
+- POST `/api/ai-courses/:id/publish`  发布/下线（触发分段TTS批量合成与清单写回）
+- POST `/api/ai/generate-course`  基于三维课件生成 AI 脚本（初稿）
+- POST `/api/ai/search-images`  图片检索（返回URL/标题/摘要/来源/版权/可选bbox）
+- POST `/api/ai/tts`  草稿预览实时合成（返回临时URL，不写入清单）
+- POST `/api/ai/tts/batch`  发布流程内增量合成并写回清单与 `assets.audio`
 
 ### 九、交互关键点
 - 选中高亮：OutlinePass 或材质描边，高亮与可见性互不干扰
@@ -188,8 +211,11 @@
 - M3 动画完善（1-2周）：动画管理、步骤编辑、时间线优化
 - M4 课件保存（1周）：courseware.json格式、导出导入、Unity对接测试
 
-#### 第二阶段：AI讲课制作器（待规划）
-- 详细设计和开发计划待第一阶段完成后确定
+#### 第二阶段：AI课程编辑与发布（4-6周）
+- M1（1周）：AI课程模块骨架（列表/创建/编辑），`course.json` Schema 定稿
+- M2（1–2周）：AI生成后端（纲要+讲稿+图片候选），编辑器段落/图片/三维动作向导与预览
+- M3（1–2周）：TTS策略落地（预览实时合成、发布批量合成与清单写回）、版权校验与CDN
+- M4（1周）：发布流程、版本化、跨端联测（Unity/Web），验收
 
 ### 十二、风险与对策
 - FBX转换失败/坐标轴差异 → 保留日志与回退；统一单位与坐标；允许手工修正

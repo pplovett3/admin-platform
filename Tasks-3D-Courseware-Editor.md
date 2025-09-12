@@ -50,65 +50,51 @@
 - [x] Web: 移除资源管理中的旧编辑入口
 - [ ] Web: 错误处理与用户体验优化
 
-### 阶段三：AI讲课系统（后期开发）
-#### AI课程生成
-- [ ] Server: DeepSeek API 集成
-- [ ] Server: AI课程生成接口（course.json格式）
-- [ ] Web: AI讲课制作页面（独立模块）
-- [ ] Web: 课程脚本编辑器
-- [ ] Web: TTS语音生成集成
+### 阶段三：AI课程系统（Web + Server）
+#### 3.1 后端（Server）
+- [ ] Server: DeepSeek/通义等大模型接入与抽象层
+- [ ] Server: `/api/ai/generate-course` 初稿生成（大纲+讲稿+图片候选+三维动作建议）
+- [ ] Server: `/api/ai/search-images` 图片检索与版权信息回填
+- [ ] Server: `/api/ai/tts` 实时合成（预览用，临时URL，不写清单）
+- [ ] Server: `/api/ai/tts/batch` 批量增量合成（发布用，写回清单与 `assets.audio`）
+- [ ] Server: `/api/ai-courses` CRUD，`/api/ai-courses/:id/publish` 发布流程（含合成队列）
 
-#### 课程播放系统
-- [ ] Web: course.json 播放器
-- [ ] Web: 动画与标注联动播放
-- [ ] Web: 字幕与语音同步
-- [ ] Web: VR/数字人集成预留
+#### 3.2 前端（Web）
+- [ ] Web: 导航与路由新增“AI课程编辑” → `/admin/ai-course`
+- [ ] Web: 列表页（搜索/创建/删除/发布状态）
+- [ ] Web: 新建页（基础信息+选择 `coursewareId`）
+- [ ] Web: 编辑页骨架（段落树 | 3D视窗/媒体预览 | 属性面板）
+- [ ] Web: AI生成初稿（触发接口、结果合并与版本管理）
+- [ ] Web: 段落编辑（`talk`/`image.explain`/`scene.action`）、并行/顺序切换
+- [ ] Web: 三维动作向导（拾取 `nodeKey`/`annotationId`/`animationId` 与时间片段）
+- [ ] Web: 预览（TTS实时试听、图片叠加、相机/显隐/高亮/标注/动画片段）
+- [ ] Web: 发布流程（触发批量TTS、写回清单、CDN状态显示）
 
-### 阶段四：Unity对接与发布
-#### Unity集成
-- [ ] Unity: glTFast加载GLB模型
-- [ ] Unity: 解析courseware.json数据
-- [ ] Unity: 标注点Prefab与交互
-- [ ] Unity: 时间线回放系统
-- [ ] Unity: VR教学大厅集成
+#### 3.3 播放（Web 可选）
+- [ ] Web: `course.json` 播放器（字幕与音频、三维动作调度）
 
-#### 平台完善
-- [ ] Platform: 权限与角色管理
-- [ ] Platform: 课件发布与版本控制
-- [ ] Platform: CDN与资源优化
-- [ ] QA: 性能测试与稳定性验证
+### 阶段四：Unity集成与发布
+#### 4.1 三维课件（已完成，按“Unity三维课件开发需求文档.md”）
+- [x] Unity: API 客户端与认证
+- [x] Unity: 课件列表与详情拉取、GLB 下载缓存
+- [x] Unity: GLB 加载（glTFast），结构树映射（nodeKey→GameObject）
+- [x] Unity: 标注系统（渲染/射线点击/详情面板）
+- [x] Unity: 高亮系统（描边/半透明）
+- [x] Unity: 动画系统（显隐轨道播放、步骤控制、正/倒向播放）
+- [x] Unity: 相机系统（对焦/飞行/缓动）
+- [x] Unity: 与后端课件数据一致性校验（modelHash/nodeKey）
 
-### 当前阶段重点任务
-#### 立即开始
-- [ ] 🔄 实现后端Courseware数据模型
-- [ ] ⏳ 创建课件CRUD API
-- [ ] ⏳ 编辑器数据持久化集成
+#### 4.2 AI课程解析与数字人授课（新增）
+- [ ] Unity: 解析 `course.json`（Segment/Item/SceneAction/Assets）
+- [ ] Unity: TTS 播放与抽象层（对接本地或云端SDK，优先用清单音频）
+- [ ] Unity: 字幕渲染与时间轴同步（优先用词级/音素级标记）
+- [ ] Unity: 数字人方案V1（2D说话头像：口型/眼神/头部朝向）
+- [ ] Unity: 指向系统（3D节点与图片bbox）
+- [ ] Unity: 三维动作执行器（camera.focus/visibility/highlight/annotation/animation片段）
+- [ ] Unity: 段落与并行/顺序调度、播放控制（上一步/下一步/暂停/倍速）
+- [ ] Unity: 预加载与容错（资源缺失降级、离线占位音）
+- [ ] Unity: 与 Web 一致性联测与验收
 
-#### 接下来
-- [ ] ⏳ 模型选择功能开发
-- [ ] ⏳ 标注系统简化
-- [ ] ⏳ 旧入口清理
 
-### 验收标准
-#### 阶段一验收 ✅
-- [x] 三维编辑器功能完整可用
-- [x] 动画系统支持关键帧编辑与预览
-- [x] 标注系统基础功能实现
-
-#### 阶段二验收
-- [ ] 课件可完整保存到数据库
-- [ ] 新建课件支持模型选择
-- [ ] 编辑器数据与后端完全同步
-- [ ] 标注功能符合简化需求
-
-#### 阶段三验收（待规划）
-- [ ] AI课程生成功能可用
-- [ ] 课程播放系统完整
-- [ ] 前端页面分离清晰
-
-#### 阶段四验收（待规划）
-- [ ] Unity成功解析课件数据
-- [ ] 跨平台数据一致性验证
-- [ ] 发布流程完整可用
 
 
