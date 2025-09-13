@@ -12,8 +12,8 @@ export async function listAICourses(req: Request, res: Response) {
     const filter: any = {};
     if (q) {
       filter.$or = [
-        { title: new RegExp(q, 'i') },
-        { theme: new RegExp(q, 'i') }
+        { title: { $regex: q, $options: 'i' } },
+        { theme: { $regex: q, $options: 'i' } }
       ];
     }
 

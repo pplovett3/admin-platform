@@ -16,6 +16,7 @@ import analyticsRoutes from './routes/analytics.routes';
 import filesRoutes from './routes/files.routes';
 import coursewaresRoutes from './routes/coursewares.routes';
 import aiCoursesRoutes from './routes/ai-courses.routes';
+import aiRoutes from './routes/ai.routes';
 
 async function migrateLegacyRoles(): Promise<void> {
   await UserModel.updateMany({ role: 'admin' as any }, { $set: { role: 'superadmin' } }).catch(() => undefined);
@@ -110,6 +111,7 @@ async function bootstrap() {
 	app.use('/api/files', filesRoutes);
   app.use('/api/coursewares', coursewaresRoutes);
   app.use('/api/ai-courses', aiCoursesRoutes);
+  app.use('/api/ai', aiRoutes);
 
   app.listen(config.port, () => {
     console.log('Server listening on port ' + config.port);

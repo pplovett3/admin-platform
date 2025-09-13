@@ -55,8 +55,10 @@ const AICourseSchema = new Schema<IAICourse>({
   courseVersion: { type: Number, default: 1 }
 }, { timestamps: true });
 
-// AICourseSchema.index({ title: 'text', theme: 'text' }); // 暂时注释掉文本索引
-AICourseSchema.index({ createdBy: 1, status: 1 });
+// 暂时移除所有索引，避免冲突
+// AICourseSchema.index({ title: 1 });
+// AICourseSchema.index({ theme: 1 });
+// AICourseSchema.index({ createdBy: 1, status: 1 });
 
 export const AICourseModel = mongoose.model<IAICourse>('AICourse', AICourseSchema);
 
