@@ -61,3 +61,4 @@ AICourseSchema.index({ createdBy: 1, status: 1 });
 export const AICourseModel = mongoose.model<IAICourse>('AICourse', AICourseSchema);
 
 
+
