@@ -115,9 +115,9 @@ export default function EditAICoursePage() {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--color-bg-container)' }}>
       {/* 顶部工具栏 */}
-      <div style={{ padding: '12px 24px', borderBottom: '1px solid #f0f0f0', background: '#fff' }}>
+      <div style={{ padding: '12px 24px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-container)' }}>
         <Space>
           <Button onClick={load} loading={loading}>刷新</Button>
           <Button type="primary" onClick={onSave} loading={saving}>保存</Button>
@@ -128,7 +128,7 @@ export default function EditAICoursePage() {
       </div>
 
       {/* 基础信息表单 */}
-      <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0', background: '#fff' }}>
+      <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-container)' }}>
         <Form layout="inline" form={form} size="small">
           <Form.Item label="课程名称" name="title" rules={[{ required: true }]}>
             <Input style={{ width: 200 }} />
@@ -151,8 +151,8 @@ export default function EditAICoursePage() {
       {/* 三栏布局 */}
       <Layout style={{ flex: 1 }}>
         {/* 左侧：段落树 */}
-        <Sider width={350} style={{ background: '#fff', borderRight: '1px solid #f0f0f0' }}>
-          <div style={{ padding: '16px 0', borderBottom: '1px solid #f0f0f0' }}>
+        <Sider width={350} style={{ background: 'var(--color-bg-container)', borderRight: '1px solid var(--color-border)' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid var(--color-border)' }}>
             <h4 style={{ margin: 0, paddingLeft: 16, fontSize: 14, fontWeight: 'bold' }}>课程大纲</h4>
           </div>
           <OutlineEditor
@@ -163,8 +163,8 @@ export default function EditAICoursePage() {
         </Sider>
 
         {/* 中间：三维视窗 */}
-        <Content style={{ background: '#fff', position: 'relative' }}>
-          <div style={{ padding: '16px 0', borderBottom: '1px solid #f0f0f0', paddingLeft: 16 }}>
+        <Content style={{ background: 'var(--color-bg-container)', position: 'relative' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid var(--color-border)', paddingLeft: 16 }}>
             <h4 style={{ margin: 0, fontSize: 14, fontWeight: 'bold' }}>三维预览</h4>
           </div>
           <div style={{ height: 'calc(100% - 57px)' }}>
@@ -176,14 +176,15 @@ export default function EditAICoursePage() {
         </Content>
 
         {/* 右侧：属性面板 */}
-        <Sider width={400} style={{ background: '#fff', borderLeft: '1px solid #f0f0f0' }}>
-          <div style={{ padding: '16px 0', borderBottom: '1px solid #f0f0f0', paddingLeft: 16 }}>
+        <Sider width={400} style={{ background: 'var(--color-bg-container)', borderLeft: '1px solid var(--color-border)' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid var(--color-border)', paddingLeft: 16 }}>
             <h4 style={{ margin: 0, fontSize: 14, fontWeight: 'bold' }}>属性编辑</h4>
           </div>
           <div style={{ height: 'calc(100% - 57px)' }}>
             <PropertyPanel
               selectedItem={selectedItem}
               onItemChange={onItemChange}
+              coursewareId={courseData?.coursewareId}
             />
           </div>
         </Sider>

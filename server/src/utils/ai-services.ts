@@ -278,3 +278,133 @@ function extractDomain(url: string): string {
     return 'unknown';
   }
 }
+
+// Minimax TTS 接口
+export interface MinimaxTTSParams {
+  text: string;
+  voice_setting: {
+    voice_id: string;
+    speed?: number;
+    vol?: number;
+    pitch?: number;
+  };
+  audio_setting?: {
+    sample_rate?: number;
+    bitrate?: number;
+    format?: string;
+    channel?: number;
+  };
+  model?: string;
+}
+
+export interface MinimaxTTSResult {
+  task_id?: string;
+  file_id?: number;
+  task_token?: string;
+  usage_characters?: number;
+  base_resp?: {
+    status_code?: number;
+    status_msg?: string;
+  };
+}
+
+export interface MinimaxTTSQueryResult {
+  task_id?: string;
+  status?: string;
+  file_id?: number;
+  base_resp?: {
+    status_code?: number;
+    status_msg?: string;
+  };
+}
+
+export async function generateTTSWithMinimax(params: MinimaxTTSParams): Promise<MinimaxTTSResult> {
+  try {
+    if (!config.minimaxApiKey || config.minimaxApiKey === '') {
+      console.warn('Minimax API Key not configured, returning mock data');
+      return {
+        task_id: 'mock_task_' + Date.now(),
+        file_id: Date.now(),
+        task_token: 'mock_token',
+        usage_characters: params.text.length,
+        base_resp: {
+          status_code: 0,
+          status_msg: 'success'
+        }
+      };
+    }
+
+    const response = await fetch(`${config.minimaxBaseUrl}/v1/t2a_async_v2`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.minimaxApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: params.model || 'speech-01-turbo',
+        text: params.text,
+        voice_setting: {
+          voice_id: params.voice_setting.voice_id,
+          speed: params.voice_setting.speed || 1.0,
+          vol: params.voice_setting.vol || 1.0,
+          pitch: params.voice_setting.pitch || 0
+        },
+        audio_setting: {
+          sample_rate: params.audio_setting?.sample_rate || 32000,
+          bitrate: params.audio_setting?.bitrate || 128000,
+          format: params.audio_setting?.format || 'mp3',
+          channel: params.audio_setting?.channel || 2
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Minimax TTS API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Minimax TTS error:', error);
+    throw error;
+  }
+}
+
+// 查询TTS任务状态
+export async function queryTTSStatus(taskId: string): Promise<MinimaxTTSQueryResult> {
+  try {
+    if (!config.minimaxApiKey || config.minimaxApiKey === '') {
+      console.warn('Minimax API Key not configured, returning mock data');
+      return {
+        task_id: taskId,
+        status: 'Success',
+        file_id: Date.now(),
+        base_resp: {
+          status_code: 0,
+          status_msg: 'success'
+        }
+      };
+    }
+
+    const response = await fetch(
+      `${config.minimaxBaseUrl}/v1/query/t2a_async_query_v2?task_id=${taskId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${config.minimaxApiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Minimax TTS Query API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Minimax TTS query error:', error);
+    throw error;
+  }
+}

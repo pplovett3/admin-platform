@@ -12,5 +12,7 @@ export const config = {
   deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
   deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
   metasoApiKey: process.env.METASO_API_KEY || '',
-  metasoBaseUrl: process.env.METASO_BASE_URL || 'https://metaso.cn'
+  metasoBaseUrl: process.env.METASO_BASE_URL || 'https://metaso.cn',
+  minimaxApiKey: process.env.MINIMAX_API_KEY || '',
+  minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.com'
 } as const; 

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { CoursewareModel } from '../models/Courseware';
-import { generateCourseWithDeepSeek, searchImagesWithMetaso } from '../utils/ai-services';
+import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus } from '../utils/ai-services';
 
 // 生成AI课程
 export async function generateCourse(req: Request, res: Response) {
@@ -115,28 +115,83 @@ export async function searchImages(req: Request, res: Response) {
   }
 }
 
-// TTS 预览合成（占位实现）
+// TTS 预览合成 - 使用Minimax异步API
 export async function ttsPreview(req: Request, res: Response) {
   try {
-    const { text, voice } = req.body || {};
+    const { text, voice_id, speed, vol, pitch, model } = req.body || {};
     
     if (!text?.trim()) {
       return res.status(400).json({ message: 'Text is required' });
     }
 
-    // TODO: 实现真实的TTS合成
-    // 目前返回占位数据
-    const mockAudioUrl = `https://via.placeholder.com/1x1.mp3?text=${encodeURIComponent(text.slice(0, 50))}`;
+    if (!voice_id) {
+      return res.status(400).json({ message: 'voice_id is required' });
+    }
+
+    // 调用Minimax TTS异步API
+    const result = await generateTTSWithMinimax({
+      text: text.trim(),
+      model: model || 'speech-01-turbo',
+      voice_setting: {
+        voice_id,
+        speed: speed || 1.0,
+        vol: vol || 1.0,
+        pitch: pitch || 0
+      },
+      audio_setting: {
+        sample_rate: 32000,
+        bitrate: 128000,
+        format: 'mp3',
+        channel: 2
+      }
+    });
+
+    if (result.base_resp?.status_code !== 0) {
+      throw new Error(result.base_resp?.status_msg || 'TTS generation failed');
+    }
     
     res.json({
       text: text.trim(),
-      voice: voice || { provider: 'azure', voice: 'zh-CN-XiaoyiNeural' },
-      audioUrl: mockAudioUrl,
-      duration: Math.max(2, text.trim().length * 0.1), // 粗略估算时长
-      isPreview: true
+      voice_id,
+      taskId: result.task_id,
+      fileId: result.file_id,
+      usageCharacters: result.usage_characters,
+      isPreview: true,
+      message: 'TTS任务已创建，请使用taskId查询生成状态'
     });
   } catch (error) {
     console.error('TTS preview error:', error);
+    const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}
+
+// 查询TTS任务状态
+export async function queryTTS(req: Request, res: Response) {
+  try {
+    const { task_id } = req.query;
+    
+    if (!task_id) {
+      return res.status(400).json({ message: 'task_id is required' });
+    }
+
+    const result = await queryTTSStatus(task_id as string);
+
+    if (result.base_resp?.status_code !== 0) {
+      throw new Error(result.base_resp?.status_msg || 'Query TTS status failed');
+    }
+    
+    res.json({
+      taskId: result.task_id,
+      status: result.status,
+      fileId: result.file_id,
+      // 如果任务完成，返回文件下载信息
+      downloadUrl: result.status === 'Success' && result.file_id 
+        ? `https://api.minimaxi.com/v1/files/${result.file_id}/content` 
+        : null
+    });
+  } catch (error) {
+    console.error('Query TTS error:', error);
     const message = (error as any)?.message || 'Internal server error';
     res.status(500).json({ message });
   }

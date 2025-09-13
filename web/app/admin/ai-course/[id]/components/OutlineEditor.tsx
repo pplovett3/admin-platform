@@ -177,10 +177,14 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
               <Collapse key={segIndex} style={{ marginBottom: 16 }}>
                 <Collapse.Panel
                   header={
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span>{segment.title || `段落 ${segIndex + 1}`}</span>
-                      <Space onClick={(e) => e.stopPropagation()}>
-                        <Tag color="blue">{segment.mode}</Tag>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {segment.title || `段落 ${segIndex + 1}`}
+                        </span>
+                        <Tag color="blue" style={{ marginLeft: 8, flexShrink: 0 }}>{segment.mode}</Tag>
+                      </div>
+                      <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }}>
                         <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addItem(segIndex)}>
                           添加项目
                         </Button>

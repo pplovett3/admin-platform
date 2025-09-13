@@ -7,15 +7,17 @@ import { authFetch } from '@/app/_lib/api';
 interface PropertyPanelProps {
   selectedItem: any;
   onItemChange: (updatedItem: any) => void;
+  coursewareId?: string;
 }
 
-export default function PropertyPanel({ selectedItem, onItemChange }: PropertyPanelProps) {
+export default function PropertyPanel({ selectedItem, onItemChange, coursewareId }: PropertyPanelProps) {
   const [form] = Form.useForm();
   const [actions, setActions] = useState<any[]>([]);
   const [imageSearchVisible, setImageSearchVisible] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchKeywords, setSearchKeywords] = useState('');
+  const [coursewareData, setCoursewareData] = useState<any>(null);
 
   useEffect(() => {
     if (selectedItem) {
@@ -23,6 +25,30 @@ export default function PropertyPanel({ selectedItem, onItemChange }: PropertyPa
       setActions(selectedItem.actions || []);
     }
   }, [selectedItem, form]);
+
+  // 加载courseware数据
+  useEffect(() => {
+    if (coursewareId) {
+      loadCoursewareData();
+    }
+  }, [coursewareId]);
+
+  async function loadCoursewareData() {
+    if (!coursewareId) return;
+    try {
+      const data = await authFetch<any>(`/api/courseware/${coursewareId}`);
+      setCoursewareData(data);
+    } catch (error) {
+      console.error('加载课件数据失败:', error);
+    }
+  }
+
+  // 根据动画ID获取动画名称
+  const getAnimationName = (animationId: string) => {
+    if (!coursewareData?.animations) return animationId;
+    const animation = coursewareData.animations.find((anim: any) => anim.id === animationId);
+    return animation ? animation.name : animationId;
+  };
 
   const onFormChange = (changedValues: any, allValues: any) => {
     if (selectedItem) {
@@ -224,13 +250,27 @@ export default function PropertyPanel({ selectedItem, onItemChange }: PropertyPa
                 
                 {action.type === 'animation.play' && (
                   <>
-                    <Form.Item label="动画ID" style={{ marginBottom: 8 }}>
-                      <Input
+                    <Form.Item label="选择动画" style={{ marginBottom: 8 }}>
+                      <Select
                         value={action.animationId || ''}
-                        onChange={(e) => updateAction(index, 'animationId', e.target.value)}
-                        placeholder="动画ID"
+                        onChange={(value) => updateAction(index, 'animationId', value)}
+                        placeholder="选择动画"
                         size="small"
-                      />
+                        showSearch
+                        optionFilterProp="children"
+                        style={{ width: '100%' }}
+                      >
+                        {coursewareData?.animations?.map((anim: any) => (
+                          <Select.Option key={anim.id} value={anim.id}>
+                            {anim.name}
+                            {anim.description && (
+                              <div style={{ fontSize: '11px', color: '#999', marginTop: 2 }}>
+                                {anim.description}
+                              </div>
+                            )}
+                          </Select.Option>
+                        ))}
+                      </Select>
                     </Form.Item>
                     <Space style={{ width: '100%' }}>
                       <Form.Item label="开始时间" style={{ marginBottom: 8, flex: 1 }}>
@@ -288,24 +328,140 @@ export default function PropertyPanel({ selectedItem, onItemChange }: PropertyPa
           </Card>
         )}
 
-        <Card title="TTS配置" size="small">
-          <Form.Item label="语音提供商" name={['tts', 'provider']}>
-            <Select placeholder="选择TTS提供商">
-              <Select.Option value="azure">Azure</Select.Option>
-              <Select.Option value="baidu">百度</Select.Option>
-              <Select.Option value="tencent">腾讯</Select.Option>
+        <Card title="TTS配置 (Minimax)" size="small">
+          <Form.Item label="性别" name={['tts', 'gender']}>
+            <Select placeholder="选择性别" onChange={(value) => {
+              // 性别改变时重置音色
+              form.setFieldValue(['tts', 'voice_id'], undefined);
+            }}>
+              <Select.Option value="female">女声</Select.Option>
+              <Select.Option value="male">男声</Select.Option>
             </Select>
           </Form.Item>
           
-          <Form.Item label="语音" name={['tts', 'voice']}>
-            <Input placeholder="如：zh-CN-XiaoyiNeural" />
+          <Form.Item label="音色" name={['tts', 'voice_id']}>
+            <Select placeholder="选择音色" disabled={!form.getFieldValue(['tts', 'gender'])}>
+              {form.getFieldValue(['tts', 'gender']) === 'female' && (
+                <>
+                  <Select.Option value="female-shaonv">少女音色</Select.Option>
+                  <Select.Option value="female-yujie">御姐音色</Select.Option>
+                  <Select.Option value="female-chengshu">成熟女性音色</Select.Option>
+                  <Select.Option value="female-tianmei">甜美女性音色</Select.Option>
+                  <Select.Option value="presenter_female">女性主持人</Select.Option>
+                  <Select.Option value="audiobook_female_1">女性有声书1</Select.Option>
+                  <Select.Option value="audiobook_female_2">女性有声书2</Select.Option>
+                  <Select.Option value="lovely_girl">萌萌女童</Select.Option>
+                  <Select.Option value="tianxin_xiaoling">甜心小玲</Select.Option>
+                  <Select.Option value="qiaopi_mengmei">俏皮萌妹</Select.Option>
+                  <Select.Option value="wumei_yujie">妩媚御姐</Select.Option>
+                  <Select.Option value="diadia_xuemei">嗲嗲学妹</Select.Option>
+                  <Select.Option value="danya_xuejie">淡雅学姐</Select.Option>
+                </>
+              )}
+              {form.getFieldValue(['tts', 'gender']) === 'male' && (
+                <>
+                  <Select.Option value="male-qn-qingse">青涩青年音色</Select.Option>
+                  <Select.Option value="male-qn-jingying">精英青年音色</Select.Option>
+                  <Select.Option value="male-qn-badao">霸道青年音色</Select.Option>
+                  <Select.Option value="male-qn-daxuesheng">青年大学生音色</Select.Option>
+                  <Select.Option value="presenter_male">男性主持人</Select.Option>
+                  <Select.Option value="audiobook_male_1">男性有声书1</Select.Option>
+                  <Select.Option value="audiobook_male_2">男性有声书2</Select.Option>
+                  <Select.Option value="clever_boy">聪明男童</Select.Option>
+                  <Select.Option value="cute_boy">可爱男童</Select.Option>
+                  <Select.Option value="bingjiao_didi">病娇弟弟</Select.Option>
+                  <Select.Option value="junlang_nanyou">俊朗男友</Select.Option>
+                  <Select.Option value="chunzhen_xuedi">纯真学弟</Select.Option>
+                  <Select.Option value="lengdan_xiongzhang">冷淡学长</Select.Option>
+                  <Select.Option value="badao_shaoye">霸道少爷</Select.Option>
+                </>
+              )}
+            </Select>
           </Form.Item>
           
-          <Form.Item label="语速" name={['tts', 'rate']}>
-            <Input type="number" step="0.1" placeholder="1.0" />
+          <Form.Item label="语速" name={['tts', 'speed']}>
+            <Input type="number" step="0.1" placeholder="1.0" min="0.5" max="2.0" />
+          </Form.Item>
+
+          <Form.Item label="音量" name={['tts', 'vol']}>
+            <Input type="number" step="0.1" placeholder="1.0" min="0.1" max="2.0" />
+          </Form.Item>
+
+          <Form.Item label="音调" name={['tts', 'pitch']}>
+            <Input type="number" step="1" placeholder="0" min="-12" max="12" />
           </Form.Item>
           
-          <Button onClick={() => message.info('TTS试听功能开发中...')}>
+          <Button 
+            loading={false}
+            onClick={async () => {
+              const ttsConfig = form.getFieldValue('tts');
+              if (!selectedItem?.say?.trim()) {
+                message.warning('请先输入要试听的文本');
+                return;
+              }
+              if (!ttsConfig?.voice_id) {
+                message.warning('请先选择音色');
+                return;
+              }
+              
+              const hide = message.loading('正在生成语音，请稍候...', 0);
+              
+              try {
+                // 1. 创建TTS任务
+                const createResponse = await authFetch<any>('/api/ai/tts', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    text: selectedItem.say.slice(0, 100), // 限制试听文本长度
+                    voice_id: ttsConfig.voice_id,
+                    speed: ttsConfig.speed || 1.0,
+                    vol: ttsConfig.vol || 1.0,
+                    pitch: ttsConfig.pitch || 0,
+                    model: 'speech-01-turbo'
+                  })
+                });
+                
+                if (!createResponse.taskId) {
+                  throw new Error('任务创建失败');
+                }
+
+                // 2. 轮询任务状态
+                let attempts = 0;
+                const maxAttempts = 30; // 最多等待30秒
+                
+                const pollStatus = async (): Promise<void> => {
+                  if (attempts >= maxAttempts) {
+                    throw new Error('语音生成超时，请重试');
+                  }
+                  
+                  attempts++;
+                  const statusResponse = await authFetch<any>(`/api/ai/tts/status?task_id=${createResponse.taskId}`);
+                  
+                  if (statusResponse.status === 'Success' && statusResponse.downloadUrl) {
+                    hide();
+                    // 播放音频
+                    const audio = new Audio(statusResponse.downloadUrl);
+                    audio.play();
+                    message.success('开始播放试听音频');
+                  } else if (statusResponse.status === 'Failed') {
+                    throw new Error('语音生成失败');
+                  } else if (statusResponse.status === 'Processing') {
+                    // 继续等待
+                    setTimeout(pollStatus, 1000);
+                  } else {
+                    throw new Error(`未知状态: ${statusResponse.status}`);
+                  }
+                };
+                
+                // 开始轮询
+                setTimeout(pollStatus, 1000);
+                
+              } catch (error: any) {
+                hide();
+                message.error(error?.message || 'TTS试听失败');
+              }
+            }}
+          >
             试听
           </Button>
         </Card>

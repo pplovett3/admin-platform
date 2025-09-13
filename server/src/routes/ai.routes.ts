@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requireRole } from '../middlewares/auth';
-import { generateCourse, searchImages, ttsPreview } from '../controllers/ai.controller';
+import { generateCourse, searchImages, ttsPreview, queryTTS } from '../controllers/ai.controller';
 
 const router = Router();
 
@@ -14,5 +14,8 @@ router.post('/search-images', requireRole(['superadmin', 'schoolAdmin', 'teacher
 
 // TTS 预览
 router.post('/tts', requireRole(['superadmin', 'schoolAdmin', 'teacher']), ttsPreview);
+
+// 查询TTS任务状态
+router.get('/tts/status', requireRole(['superadmin', 'schoolAdmin', 'teacher']), queryTTS);
 
 export default router;
