@@ -1,8 +1,13 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Button, Form, Input, Space, message } from 'antd';
+import { Button, Form, Input, Space, message, Layout } from 'antd';
 import { authFetch } from '@/app/_lib/api';
+import OutlineEditor from './components/OutlineEditor';
+import PropertyPanel from './components/PropertyPanel';
+import CoursewareViewer from './components/CoursewareViewer';
+
+const { Sider, Content } = Layout;
 
 export default function EditAICoursePage() {
   const params = useParams();
@@ -12,6 +17,7 @@ export default function EditAICoursePage() {
   const [generating, setGenerating] = useState(false);
   const [form] = Form.useForm();
   const [courseData, setCourseData] = useState<any>(null);
+  const [selectedItem, setSelectedItem] = useState<any>(null);
 
   async function load() {
     if (!id) return;
@@ -79,45 +85,109 @@ export default function EditAICoursePage() {
 
   useEffect(() => { load(); }, [id]);
 
+  const onOutlineChange = (newOutline: any[]) => {
+    setCourseData({ ...courseData, outline: newOutline });
+  };
+
+  const onItemChange = (updatedItem: any) => {
+    if (!courseData?.outline || !selectedItem) return;
+    
+    // 找到并更新对应的 item
+    const newOutline = [...courseData.outline];
+    let found = false;
+    
+    for (let segIndex = 0; segIndex < newOutline.length; segIndex++) {
+      const segment = newOutline[segIndex];
+      if (segment.items) {
+        for (let itemIndex = 0; itemIndex < segment.items.length; itemIndex++) {
+          if (segment.items[itemIndex].id === selectedItem.id) {
+            newOutline[segIndex].items[itemIndex] = updatedItem;
+            found = true;
+            break;
+          }
+        }
+      }
+      if (found) break;
+    }
+    
+    setCourseData({ ...courseData, outline: newOutline });
+    setSelectedItem(updatedItem);
+  };
+
   return (
-    <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 12 }}>
-        <Button onClick={load} loading={loading}>刷新</Button>
-        <Button type="primary" onClick={onSave} loading={saving}>保存</Button>
-        <Button onClick={onGenerateAI} loading={generating} style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: 'white' }}>
-          AI生成初稿
-        </Button>
-      </Space>
-      <Form layout="vertical" form={form} style={{ maxWidth: 900 }}>
-        <Form.Item label="课程名称" name="title" rules={[{ required: true }]}>
-          <Input />
-        </Form.Item>
-        <Form.Item label="课程主题" name="theme">
-          <Input />
-        </Form.Item>
-        <Form.Item label="受众" name="audience">
-          <Input />
-        </Form.Item>
-        <Form.Item label="语言" name="language">
-          <Input placeholder="zh-CN" />
-        </Form.Item>
-        <Form.Item label="课程目标时长(分钟)" name="durationTarget">
-          <Input type="number" />
-        </Form.Item>
-        <Form.Item label="coursewareId" name="coursewareId" rules={[{ required: true }]}>
-          <Input disabled />
-        </Form.Item>
-      </Form>
-      
-      {/* 显示生成的课程大纲 */}
-      {courseData?.outline && courseData.outline.length > 0 && (
-        <div style={{ marginTop: 24, padding: 16, border: '1px solid #d9d9d9', borderRadius: 6 }}>
-          <h3>生成的课程大纲</h3>
-          <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, overflow: 'auto', maxHeight: 400 }}>
-            {JSON.stringify(courseData.outline, null, 2)}
-          </pre>
-        </div>
-      )}
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* 顶部工具栏 */}
+      <div style={{ padding: '12px 24px', borderBottom: '1px solid #f0f0f0', background: '#fff' }}>
+        <Space>
+          <Button onClick={load} loading={loading}>刷新</Button>
+          <Button type="primary" onClick={onSave} loading={saving}>保存</Button>
+          <Button onClick={onGenerateAI} loading={generating} style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: 'white' }}>
+            AI生成初稿
+          </Button>
+        </Space>
+      </div>
+
+      {/* 基础信息表单 */}
+      <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0', background: '#fff' }}>
+        <Form layout="inline" form={form} size="small">
+          <Form.Item label="课程名称" name="title" rules={[{ required: true }]}>
+            <Input style={{ width: 200 }} />
+          </Form.Item>
+          <Form.Item label="课程主题" name="theme">
+            <Input style={{ width: 150 }} />
+          </Form.Item>
+          <Form.Item label="受众" name="audience">
+            <Input style={{ width: 120 }} />
+          </Form.Item>
+          <Form.Item label="时长(分钟)" name="durationTarget">
+            <Input type="number" style={{ width: 80 }} />
+          </Form.Item>
+          <Form.Item label="语言" name="language">
+            <Input placeholder="zh-CN" style={{ width: 80 }} />
+          </Form.Item>
+        </Form>
+      </div>
+
+      {/* 三栏布局 */}
+      <Layout style={{ flex: 1 }}>
+        {/* 左侧：段落树 */}
+        <Sider width={350} style={{ background: '#fff', borderRight: '1px solid #f0f0f0' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid #f0f0f0' }}>
+            <h4 style={{ margin: 0, paddingLeft: 16, fontSize: 14, fontWeight: 'bold' }}>课程大纲</h4>
+          </div>
+          <OutlineEditor
+            outline={courseData?.outline || []}
+            onChange={onOutlineChange}
+            onSelectItem={setSelectedItem}
+          />
+        </Sider>
+
+        {/* 中间：三维视窗 */}
+        <Content style={{ background: '#fff', position: 'relative' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid #f0f0f0', paddingLeft: 16 }}>
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 'bold' }}>三维预览</h4>
+          </div>
+          <div style={{ height: 'calc(100% - 57px)' }}>
+            <CoursewareViewer
+              coursewareId={courseData?.coursewareId || ''}
+              selectedItem={selectedItem}
+            />
+          </div>
+        </Content>
+
+        {/* 右侧：属性面板 */}
+        <Sider width={400} style={{ background: '#fff', borderLeft: '1px solid #f0f0f0' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid #f0f0f0', paddingLeft: 16 }}>
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 'bold' }}>属性编辑</h4>
+          </div>
+          <div style={{ height: 'calc(100% - 57px)' }}>
+            <PropertyPanel
+              selectedItem={selectedItem}
+              onItemChange={onItemChange}
+            />
+          </div>
+        </Sider>
+      </Layout>
     </div>
   );
 }

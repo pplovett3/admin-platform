@@ -120,6 +120,37 @@ export async function generateCourseWithDeepSeek(params: CourseGenerationParams)
   ];
 
   try {
+    // 如果没有配置 API Key，返回模拟数据
+    if (!config.deepseekApiKey || config.deepseekApiKey === '') {
+      console.warn('DeepSeek API Key not configured, returning mock data');
+      return {
+        outline: [
+          {
+            id: "seg-1",
+            title: "课程导入",
+            mode: "sequence",
+            items: [
+              {
+                type: "talk",
+                id: "item-1",
+                say: `欢迎学习${params.coursewareData.name}课程。本课程将围绕${params.theme}展开，适合${params.audience}学习。`,
+                estimatedDuration: 30
+              },
+              {
+                type: "scene.action",
+                id: "item-2",
+                say: "让我们先来看看整体模型结构",
+                actions: [
+                  { type: "camera.focus", target: { nodeKey: params.coursewareData.annotations[0]?.nodeKey || "Root" } }
+                ],
+                estimatedDuration: 45
+              }
+            ]
+          }
+        ]
+      };
+    }
+
     const response = await fetch(`${config.deepseekBaseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -173,24 +204,26 @@ export interface MetasoImageResult {
 
 export async function searchImagesWithMetaso(keywords: string): Promise<MetasoImageResult[]> {
   try {
-    // 注意：这里需要根据秘塔的实际API文档调整
-    // 如果没有官方API，可能需要使用爬虫或其他方式
-    const response = await fetch(`${config.metasoBaseUrl}/api/search`, {
+    // 使用秘塔官方API进行图片搜索
+    const response = await fetch(`${config.metasoBaseUrl}/api/v1/search`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.metasoApiKey}`,
+        'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        query: keywords,
-        type: 'image',
-        limit: 10
+        q: keywords,
+        scope: 'image',
+        size: 10,
+        includeSummary: true,
+        conciseSnippet: true
       })
     });
 
     if (!response.ok) {
+      console.warn(`Metaso API error: ${response.status} ${response.statusText}`);
       // 如果API不可用，返回模拟数据
-      console.warn('Metaso API not available, returning mock data');
       return [
         {
           url: `https://via.placeholder.com/800x600?text=${encodeURIComponent(keywords)}`,
@@ -203,7 +236,24 @@ export async function searchImagesWithMetaso(keywords: string): Promise<MetasoIm
     }
 
     const data = await response.json();
-    return data.images || [];
+    
+    // 转换秘塔API返回格式为我们的标准格式
+    if (data.images && Array.isArray(data.images)) {
+      return data.images.map((img: any) => ({
+        url: img.imageUrl,
+        title: img.title || '无标题',
+        source: extractDomain(img.imageUrl),
+        license: 'Unknown', // 秘塔API没有提供版权信息，标记为未知
+        size: {
+          width: img.imageWidth || 0,
+          height: img.imageHeight || 0
+        },
+        position: img.position,
+        score: img.score
+      }));
+    }
+
+    return [];
   } catch (error) {
     console.error('Metaso search error:', error);
     // 返回占位图片
@@ -216,5 +266,15 @@ export async function searchImagesWithMetaso(keywords: string): Promise<MetasoIm
         size: { width: 800, height: 600 }
       }
     ];
+  }
+}
+
+// 辅助函数：从URL提取域名
+function extractDomain(url: string): string {
+  try {
+    const domain = new URL(url).hostname;
+    return domain.replace('www.', '');
+  } catch {
+    return 'unknown';
   }
 }
