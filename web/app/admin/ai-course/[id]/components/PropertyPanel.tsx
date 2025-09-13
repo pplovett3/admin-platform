@@ -404,7 +404,7 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                 return;
               }
               
-              const hide = message.loading('正在生成语音，请稍候...', 0);
+              let hide = message.loading('正在创建TTS任务...', 0);
               
               try {
                 // 1. 创建TTS任务
@@ -425,36 +425,65 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                   throw new Error('任务创建失败');
                 }
 
+                // 更新loading状态
+                hide();
+                hide = message.loading(`正在生成语音 (预计1-2分钟)...`, 0);
+
                 // 2. 轮询任务状态
                 let attempts = 0;
-                const maxAttempts = 30; // 最多等待30秒
+                const maxAttempts = 120; // 最多等待2分钟
+                let pollInterval = 1000; // 初始轮询间隔1秒
                 
                 const pollStatus = async (): Promise<void> => {
                   if (attempts >= maxAttempts) {
-                    throw new Error('语音生成超时，请重试');
+                    throw new Error('语音生成超时，请检查网络或稍后重试');
                   }
                   
                   attempts++;
-                  const statusResponse = await authFetch<any>(`/api/ai/tts/status?task_id=${createResponse.taskId}`);
                   
-                  if (statusResponse.status === 'Success' && statusResponse.downloadUrl) {
-                    hide();
-                    // 播放音频
-                    const audio = new Audio(statusResponse.downloadUrl);
-                    audio.play();
-                    message.success('开始播放试听音频');
-                  } else if (statusResponse.status === 'Failed') {
-                    throw new Error('语音生成失败');
-                  } else if (statusResponse.status === 'Processing') {
-                    // 继续等待
-                    setTimeout(pollStatus, 1000);
-                  } else {
-                    throw new Error(`未知状态: ${statusResponse.status}`);
+                  try {
+                    const statusResponse = await authFetch<any>(`/api/ai/tts/status?task_id=${createResponse.taskId}`);
+                    
+                    if (statusResponse.status === 'Success' && statusResponse.downloadUrl) {
+                      hide();
+                      // 播放音频
+                      const audio = new Audio(statusResponse.downloadUrl);
+                      audio.play();
+                      message.success('开始播放试听音频');
+                    } else if (statusResponse.status === 'Failed') {
+                      throw new Error('语音生成失败，请重试');
+                    } else if (statusResponse.status === 'Processing') {
+                      // 动态调整轮询间隔，避免频繁请求
+                      if (attempts > 10) pollInterval = 2000; // 10秒后改为2秒间隔
+                      if (attempts > 30) pollInterval = 3000; // 30秒后改为3秒间隔
+                      
+                      // 更新progress信息
+                      if (attempts % 10 === 0) {
+                        hide();
+                        const elapsed = Math.floor(attempts * pollInterval / 1000);
+                        hide = message.loading(`正在生成语音 (已等待${elapsed}秒)...`, 0);
+                      }
+                      
+                      // 继续等待
+                      setTimeout(pollStatus, pollInterval);
+                    } else if (statusResponse.status === 'Expired') {
+                      throw new Error('任务已过期，请重新生成');
+                    } else {
+                      throw new Error(`未知状态: ${statusResponse.status}`);
+                    }
+                  } catch (error: any) {
+                    // 网络错误或API错误，等待后重试
+                    if (attempts < maxAttempts && error?.message?.includes('fetch')) {
+                      console.warn(`轮询失败，第${attempts}次重试:`, error);
+                      setTimeout(pollStatus, pollInterval);
+                    } else {
+                      throw error;
+                    }
                   }
                 };
                 
-                // 开始轮询
-                setTimeout(pollStatus, 1000);
+                // 开始轮询，延迟2秒开始（给服务器处理时间）
+                setTimeout(pollStatus, 2000);
                 
               } catch (error: any) {
                 hide();

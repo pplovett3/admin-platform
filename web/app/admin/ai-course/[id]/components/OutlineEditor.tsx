@@ -178,16 +178,16 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
                 <Collapse.Panel
                   header={
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 8 }}>
-                        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 12 }}>
+                        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120, display: 'inline-block' }}>
                           {segment.title || `段落 ${segIndex + 1}`}
                         </span>
-                        <Tag color="blue" style={{ marginLeft: 8, flexShrink: 0, fontSize: '11px' }}>{segment.mode}</Tag>
+                        <Tag color="blue" style={{ marginLeft: 6, flexShrink: 0, fontSize: '10px', padding: '0 4px', lineHeight: '16px' }}>{segment.mode}</Tag>
                       </div>
-                      <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size="small">
-                        <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addItem(segIndex)} title="添加项目" />
-                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editSegment(segment, segIndex)} title="编辑段落" />
-                        <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteSegment(segIndex)} title="删除段落" />
+                      <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
+                        <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addItem(segIndex)} title="添加项目" style={{ padding: '0 4px' }} />
+                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editSegment(segment, segIndex)} title="编辑段落" style={{ padding: '0 4px' }} />
+                        <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteSegment(segIndex)} title="删除段落" style={{ padding: '0 4px' }} />
                       </Space>
                     </div>
                   }
@@ -216,9 +216,9 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
                             <Tag style={{ marginLeft: 8, fontSize: '11px' }}>{item.estimatedDuration}s</Tag>
                           )}
                         </div>
-                        <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size="small">
-                          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editItem(item, segIndex, itemIndex)} title="编辑项目" />
-                          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteItem(segIndex, itemIndex)} title="删除项目" />
+                        <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
+                          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editItem(item, segIndex, itemIndex)} title="编辑项目" style={{ padding: '0 4px' }} />
+                          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteItem(segIndex, itemIndex)} title="删除项目" style={{ padding: '0 4px' }} />
                         </Space>
                       </div>
                     </div>

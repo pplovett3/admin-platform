@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { CoursewareModel } from '../models/Courseware';
-import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus } from '../utils/ai-services';
+import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl } from '../utils/ai-services';
 
 // 生成AI课程
 export async function generateCourse(req: Request, res: Response) {
@@ -205,7 +205,7 @@ export async function queryTTS(req: Request, res: Response) {
       fileId: result.file_id,
       // 如果任务完成，返回文件下载信息
       downloadUrl: result.status === 'Success' && result.file_id 
-        ? `https://api.minimaxi.com/v1/files/${result.file_id}/content` 
+        ? await getFileDownloadUrl(result.file_id) 
         : null
     });
   } catch (error) {

@@ -432,3 +432,34 @@ export async function queryTTSStatus(taskId: string): Promise<MinimaxTTSQueryRes
     throw error;
   }
 }
+
+// 获取文件下载URL
+export async function getFileDownloadUrl(fileId: number): Promise<string | null> {
+  try {
+    if (!config.minimaxApiKey || config.minimaxApiKey === '') {
+      console.warn('Minimax API Key not configured, returning mock URL');
+      return `https://www.soundjay.com/misc/sounds/bell-ringing-05.wav`;
+    }
+
+    const response = await fetch(
+      `${config.minimaxBaseUrl}/v1/files/retrieve?file_id=${fileId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${config.minimaxApiKey}`
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Failed to get file download URL: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.file?.download_url || null;
+  } catch (error) {
+    console.error('Get file download URL error:', error);
+    return null;
+  }
+}
