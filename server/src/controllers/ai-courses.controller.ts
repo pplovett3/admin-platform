@@ -19,6 +19,9 @@ export async function listAICourses(req: Request, res: Response) {
 
     const user = (req as any).user;
     if (user.role !== 'superadmin') {
+      if (!user?.userId || !Types.ObjectId.isValid(user.userId)) {
+        return res.status(401).json({ message: 'Invalid user' });
+      }
       filter.createdBy = new Types.ObjectId(user.userId);
     }
 
@@ -51,7 +54,8 @@ export async function getAICourse(req: Request, res: Response) {
     const doc = await AICourseModel.findById(id).populate('createdBy', 'name').populate('updatedBy', 'name');
     if (!doc) return res.status(404).json({ message: 'Not found' });
     const user = (req as any).user;
-    if (user.role !== 'superadmin' && doc.createdBy.toString() !== user.userId) {
+    const createdById = (doc as any).createdBy?._id?.toString?.() || (doc as any).createdBy?.toString?.();
+    if (user.role !== 'superadmin' && createdById !== user.userId) {
       return res.status(403).json({ message: 'Access denied' });
     }
     res.json(doc);
@@ -67,6 +71,9 @@ export async function createAICourse(req: Request, res: Response) {
     if (!title?.trim()) return res.status(400).json({ message: 'Title is required' });
     if (!coursewareId || !Types.ObjectId.isValid(coursewareId)) return res.status(400).json({ message: 'coursewareId is required' });
     const user = (req as any).user;
+    if (!user?.userId || !Types.ObjectId.isValid(user.userId)) {
+      return res.status(401).json({ message: 'Invalid user' });
+    }
     const userId = new Types.ObjectId(user.userId);
     const doc = await AICourseModel.create({
       title: title.trim(),
@@ -81,7 +88,8 @@ export async function createAICourse(req: Request, res: Response) {
     res.status(201).json(populated);
   } catch (err) {
     console.error('createAICourse error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    const message = (err as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
   }
 }
 

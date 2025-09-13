@@ -1,5 +1,5 @@
 "use client";
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button, Form, Input, Select, message } from 'antd';
 import { authFetch } from '@/app/_lib/api';
 import { useRouter } from 'next/navigation';
@@ -7,6 +7,22 @@ import { useRouter } from 'next/navigation';
 export default function NewAICoursePage() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
+  const [loadingCw, setLoadingCw] = useState(false);
+  const [coursewares, setCoursewares] = useState<any[]>([]);
+
+  async function loadCoursewares() {
+    setLoadingCw(true);
+    try {
+      const res = await authFetch<{ items: any[] }>(`/api/coursewares?page=1&limit=50`);
+      setCoursewares(res.items || []);
+    } catch (e: any) {
+      message.error(e?.message || '课件列表加载失败');
+    } finally {
+      setLoadingCw(false);
+    }
+  }
+
+  useEffect(() => { loadCoursewares(); }, []);
 
   async function onFinish(values: any) {
     setSubmitting(true);
@@ -32,8 +48,13 @@ export default function NewAICoursePage() {
           <Input placeholder="如：汽车结构AI讲解" />
         </Form.Item>
         <Form.Item label="选择三维课件" name="coursewareId" rules={[{ required: true, message: '请选择三维课件' }]}>
-          {/* TODO: 替换为真实课件选择器，这里先输入ID占位 */}
-          <Input placeholder="输入coursewareId（占位）" />
+          <Select
+            loading={loadingCw}
+            showSearch
+            placeholder="选择一个已有的三维课件"
+            optionFilterProp="label"
+            options={coursewares.map((cw) => ({ label: cw.name || cw.title || cw._id, value: cw._id }))}
+          />
         </Form.Item>
         <Form.Item label="课程主题" name="theme">
           <Input placeholder="如：发动机与传动基础" />
