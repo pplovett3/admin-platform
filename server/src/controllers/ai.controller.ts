@@ -147,7 +147,16 @@ export async function ttsPreview(req: Request, res: Response) {
     });
 
     if (result.base_resp?.status_code !== 0) {
-      throw new Error(result.base_resp?.status_msg || 'TTS generation failed');
+      const errorMsg = result.base_resp?.status_msg || 'TTS generation failed';
+      // 处理常见错误信息
+      if (errorMsg.includes('insufficient balance')) {
+        throw new Error('Minimax账户余额不足，请充值后重试');
+      } else if (errorMsg.includes('rate limit')) {
+        throw new Error('请求频率过高，请稍后重试');
+      } else if (errorMsg.includes('authentication')) {
+        throw new Error('API密钥验证失败，请检查配置');
+      }
+      throw new Error(`TTS生成失败: ${errorMsg}`);
     }
     
     res.json({
@@ -178,7 +187,16 @@ export async function queryTTS(req: Request, res: Response) {
     const result = await queryTTSStatus(task_id as string);
 
     if (result.base_resp?.status_code !== 0) {
-      throw new Error(result.base_resp?.status_msg || 'Query TTS status failed');
+      const errorMsg = result.base_resp?.status_msg || 'Query TTS status failed';
+      // 处理常见错误信息
+      if (errorMsg.includes('insufficient balance')) {
+        throw new Error('Minimax账户余额不足，请充值后重试');
+      } else if (errorMsg.includes('rate limit')) {
+        throw new Error('请求频率过高，请稍后重试');
+      } else if (errorMsg.includes('authentication')) {
+        throw new Error('API密钥验证失败，请检查配置');
+      }
+      throw new Error(`查询TTS状态失败: ${errorMsg}`);
     }
     
     res.json({

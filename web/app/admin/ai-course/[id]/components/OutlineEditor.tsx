@@ -158,7 +158,7 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
 
   return (
     <div style={{ height: '100%', overflow: 'auto' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={addSegment}>
             添加段落
@@ -174,22 +174,20 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
         ) : (
           <div>
             {outline.map((segment, segIndex) => (
-              <Collapse key={segIndex} style={{ marginBottom: 16 }}>
+              <Collapse key={segIndex} style={{ marginBottom: 16, background: 'var(--color-bg-container)' }}>
                 <Collapse.Panel
                   header={
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 8 }}>
+                        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
                           {segment.title || `段落 ${segIndex + 1}`}
                         </span>
-                        <Tag color="blue" style={{ marginLeft: 8, flexShrink: 0 }}>{segment.mode}</Tag>
+                        <Tag color="blue" style={{ marginLeft: 8, flexShrink: 0, fontSize: '11px' }}>{segment.mode}</Tag>
                       </div>
-                      <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }}>
-                        <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addItem(segIndex)}>
-                          添加项目
-                        </Button>
-                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editSegment(segment, segIndex)} />
-                        <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteSegment(segIndex)} />
+                      <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size="small">
+                        <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addItem(segIndex)} title="添加项目" />
+                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editSegment(segment, segIndex)} title="编辑段落" />
+                        <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteSegment(segIndex)} title="删除段落" />
                       </Space>
                     </div>
                   }
@@ -200,25 +198,27 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
                       key={itemIndex}
                       style={{
                         padding: 12,
-                        border: '1px solid #f0f0f0',
+                        border: '1px solid var(--color-border)',
                         borderRadius: 6,
                         marginBottom: 8,
                         cursor: 'pointer',
-                        backgroundColor: selectedKeys.includes(`${segIndex}-${itemIndex}`) ? '#e6f7ff' : '#fff'
+                        backgroundColor: selectedKeys.includes(`${segIndex}-${itemIndex}`) ? 'var(--color-primary-bg)' : 'var(--color-bg-container)'
                       }}
                       onClick={() => onTreeSelect([`${segIndex}-${itemIndex}`], { node: { key: `${segIndex}-${itemIndex}` } })}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{ flex: 1 }}>
-                          <Tag color={getItemColor(item.type)}>{item.type}</Tag>
-                          <span style={{ marginLeft: 8 }}>{item.say?.slice(0, 50)}...</span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }}>
+                        <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                          <Tag color={getItemColor(item.type)} style={{ fontSize: '11px' }}>{item.type}</Tag>
+                          <span style={{ marginLeft: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 180 }}>
+                            {item.say?.slice(0, 50)}...
+                          </span>
                           {item.estimatedDuration && (
-                            <Tag style={{ marginLeft: 8 }}>{item.estimatedDuration}s</Tag>
+                            <Tag style={{ marginLeft: 8, fontSize: '11px' }}>{item.estimatedDuration}s</Tag>
                           )}
                         </div>
-                        <Space onClick={(e) => e.stopPropagation()}>
-                          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editItem(item, segIndex, itemIndex)} />
-                          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteItem(segIndex, itemIndex)} />
+                        <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size="small">
+                          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editItem(item, segIndex, itemIndex)} title="编辑项目" />
+                          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteItem(segIndex, itemIndex)} title="删除项目" />
                         </Space>
                       </div>
                     </div>

@@ -359,7 +359,19 @@ export async function generateTTSWithMinimax(params: MinimaxTTSParams): Promise<
     });
 
     if (!response.ok) {
-      throw new Error(`Minimax TTS API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      let errorMsg = `Minimax TTS API error: ${response.status} ${response.statusText}`;
+      
+      try {
+        const errorData = JSON.parse(errorText);
+        if (errorData.message) {
+          errorMsg = errorData.message;
+        }
+      } catch (e) {
+        // 如果不是JSON格式，使用原始错误信息
+      }
+      
+      throw new Error(errorMsg);
     }
 
     const data = await response.json();
@@ -398,7 +410,19 @@ export async function queryTTSStatus(taskId: string): Promise<MinimaxTTSQueryRes
     );
 
     if (!response.ok) {
-      throw new Error(`Minimax TTS Query API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      let errorMsg = `Minimax TTS Query API error: ${response.status} ${response.statusText}`;
+      
+      try {
+        const errorData = JSON.parse(errorText);
+        if (errorData.message) {
+          errorMsg = errorData.message;
+        }
+      } catch (e) {
+        // 如果不是JSON格式，使用原始错误信息
+      }
+      
+      throw new Error(errorMsg);
     }
 
     const data = await response.json();

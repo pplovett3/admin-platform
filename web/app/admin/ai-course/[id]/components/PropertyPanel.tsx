@@ -458,7 +458,22 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                 
               } catch (error: any) {
                 hide();
-                message.error(error?.message || 'TTS试听失败');
+                const errorMsg = error?.message || 'TTS试听失败';
+                
+                // 特殊处理余额不足错误
+                if (errorMsg.includes('余额不足') || errorMsg.includes('insufficient balance')) {
+                  Modal.error({
+                    title: 'Minimax账户余额不足',
+                    content: (
+                      <div>
+                        <p>您的Minimax账户余额不足，无法生成TTS音频。</p>
+                        <p>请登录 <a href="https://platform.minimaxi.com/" target="_blank" rel="noopener noreferrer">Minimax控制台</a> 充值后重试。</p>
+                      </div>
+                    ),
+                  });
+                } else {
+                  message.error(errorMsg);
+                }
               }
             }}
           >
