@@ -11,6 +11,7 @@ interface CoursewareViewerProps {
 
 export default function CoursewareViewer({ coursewareId, selectedItem }: CoursewareViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewerControlsRef = useRef<any>(null);
   const [loading, setLoading] = useState(false);
   const [coursewareData, setCoursewareData] = useState<any>(null);
 
@@ -41,25 +42,60 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
   };
 
   const simulateSceneActions = (actions: any[]) => {
-    console.log('模拟执行三维动作:', actions);
-    // 这里应该实际执行三维动作
+    console.log('执行三维动作:', actions);
+    
+    const viewerControls = viewerControlsRef.current;
+    if (!viewerControls) {
+      console.error('无法获取三维控制接口，请等待模型加载完成');
+      return;
+    }
+
     actions.forEach((action, index) => {
       setTimeout(() => {
         switch (action.type) {
           case 'camera.focus':
             console.log(`对焦到: ${action.target?.nodeKey}`);
+            if (action.target?.nodeKey) {
+              viewerControls.focusOnNode(action.target.nodeKey);
+            }
             break;
           case 'highlight.show':
             console.log(`高亮显示: ${action.target?.nodeKey}`);
+            if (action.target?.nodeKey) {
+              viewerControls.highlightNode(action.target.nodeKey, true);
+            }
+            break;
+          case 'highlight.hide':
+            console.log(`隐藏高亮: ${action.target?.nodeKey}`);
+            if (action.target?.nodeKey) {
+              viewerControls.highlightNode(action.target.nodeKey, false);
+            }
             break;
           case 'annotation.show':
             console.log(`显示标注: ${action.ids?.join(', ')}`);
+            if (action.ids) {
+              viewerControls.showAnnotations(action.ids);
+            }
+            break;
+          case 'annotation.hide':
+            console.log(`隐藏标注: ${action.ids?.join(', ')}`);
+            if (action.ids) {
+              viewerControls.hideAnnotations(action.ids);
+            }
             break;
           case 'animation.play':
             console.log(`播放动画: ${action.animationId} (${action.startTime}s - ${action.endTime}s)`);
+            if (action.animationId) {
+              viewerControls.playAnimation(action.animationId, action.startTime, action.endTime);
+            }
             break;
           case 'visibility.set':
             console.log(`设置显隐: ${JSON.stringify(action.items)}`);
+            if (action.items) {
+              action.items.forEach((item: any) => {
+                viewerControls.setNodeVisibility(item.nodeKey, item.visible);
+              });
+            }
             break;
         }
       }, index * 500);
@@ -105,6 +141,10 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
           height={containerRef.current?.clientHeight || 600}
           onModelLoaded={(model) => {
             console.log('编辑器中的三维模型加载完成:', model);
+          }}
+          onControlsReady={(controls) => {
+            console.log('编辑器接收到三维控制接口:', Object.keys(controls));
+            viewerControlsRef.current = controls;
           }}
         />
 

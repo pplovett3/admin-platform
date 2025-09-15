@@ -15,9 +15,10 @@ interface ThreeDViewerProps {
   width?: number;
   height?: number;
   onModelLoaded?: (model: THREE.Object3D) => void;
+  onControlsReady?: (controls: any) => void;
 }
 
-export default function ThreeDViewer({ coursewareData, width = 800, height = 600, onModelLoaded }: ThreeDViewerProps) {
+export default function ThreeDViewer({ coursewareData, width = 800, height = 600, onModelLoaded, onControlsReady }: ThreeDViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -48,8 +49,16 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   // 当课件数据变化时加载模型和应用设置
   useEffect(() => {
-    if (coursewareData?.modelUrl) {
-      loadModel(coursewareData.modelUrl);
+    // 优先使用修改后的模型URL，否则使用原始URL
+    const modelUrl = coursewareData?.modifiedModelUrl || coursewareData?.modelUrl;
+    if (modelUrl) {
+      console.log('加载模型URL:', modelUrl);
+      console.log('课件数据:', {
+        originalUrl: coursewareData?.modelUrl,
+        modifiedUrl: coursewareData?.modifiedModelUrl,
+        finalUrl: modelUrl
+      });
+      loadModel(modelUrl);
     }
     if (coursewareData?.settings) {
       applySettings(coursewareData.settings);
@@ -844,23 +853,30 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   // 暴露控制方法给父组件
   useEffect(() => {
+    const controls = {
+      focusOnNode,
+      highlightNode,
+      setNodeVisibility,
+      playAnimation,
+      showAnnotations,
+      hideAnnotations,
+      showAllAnnotations,
+      hideAllAnnotations,
+      getNodeMap: () => nodeMapRef.current,
+      getAnnotations: () => annotationsRef.current
+    };
+
     if (containerRef.current) {
-      (containerRef.current as any)._viewerControls = {
-        focusOnNode,
-        highlightNode,
-        setNodeVisibility,
-        playAnimation,
-        showAnnotations,
-        hideAnnotations,
-        showAllAnnotations,
-        hideAllAnnotations,
-        getNodeMap: () => nodeMapRef.current,
-        getAnnotations: () => annotationsRef.current
-      };
-      
-      console.log('三维查看器控制接口已暴露:', Object.keys((containerRef.current as any)._viewerControls));
+      (containerRef.current as any)._viewerControls = controls;
+      console.log('三维查看器控制接口已暴露到容器:', Object.keys(controls));
     }
-  }, [coursewareData]); // 依赖于coursewareData，确保模型加载后重新暴露接口
+
+    // 通过回调也暴露控制接口
+    if (onControlsReady) {
+      onControlsReady(controls);
+      console.log('三维查看器控制接口已通过回调暴露:', Object.keys(controls));
+    }
+  }, [coursewareData, onControlsReady]); // 依赖于coursewareData，确保模型加载后重新暴露接口
 
   return (
     <div 

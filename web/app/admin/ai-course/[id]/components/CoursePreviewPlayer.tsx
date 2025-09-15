@@ -21,6 +21,7 @@ interface PlaybackState {
 
 export default function CoursePreviewPlayer({ courseData, visible, onClose }: CoursePreviewPlayerProps) {
   const threeDViewerRef = useRef<HTMLDivElement>(null);
+  const viewerControlsRef = useRef<any>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     isPlaying: false,
     currentSegmentIndex: 0,
@@ -225,20 +226,24 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     console.log('执行三维动作:', actions);
 
     // 获取三维查看器的控制方法
-    const viewerControls = (threeDViewerRef.current as any)?._viewerControls;
+    const viewerControls = viewerControlsRef.current || (threeDViewerRef.current as any)?._viewerControls;
     
     if (!viewerControls) {
       console.error('无法获取三维查看器控制接口，可能模型未加载完成');
-      // 延迟重试
+      // 延迟重试，尝试多种方式获取控制接口
       setTimeout(() => {
-        const retryControls = (threeDViewerRef.current as any)?._viewerControls;
+        const retryControls = viewerControlsRef.current || (threeDViewerRef.current as any)?._viewerControls;
         if (retryControls) {
           console.log('重试成功，执行三维动作');
           executeActionsWithControls(actions, retryControls);
         } else {
           console.error('重试失败，无法执行三维动作');
+          console.log('尝试查找控制接口:');
+          console.log('viewerControlsRef.current:', viewerControlsRef.current);
+          console.log('threeDViewerRef.current:', threeDViewerRef.current);
+          console.log('_viewerControls:', (threeDViewerRef.current as any)?._viewerControls);
         }
-      }, 1000);
+      }, 2000); // 增加延迟时间到2秒
       return;
     }
     
@@ -363,6 +368,31 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     setCurrentImage(null);
   };
 
+  // 调试：测试相机对焦功能
+  const testCameraFocus = () => {
+    console.log('测试相机对焦功能...');
+    const viewerControls = viewerControlsRef.current || (threeDViewerRef.current as any)?._viewerControls;
+    
+    if (!viewerControls) {
+      console.error('无法获取控制接口进行测试');
+      return;
+    }
+
+    console.log('可用控制方法:', Object.keys(viewerControls));
+    
+    // 获取节点映射
+    const nodeMap = viewerControls.getNodeMap();
+    const availableNodes = Array.from(nodeMap.keys()).slice(0, 5);
+    console.log('可用节点 (前5个):', availableNodes);
+    
+    // 测试对焦到第一个可用节点
+    if (availableNodes.length > 0) {
+      const testNode = availableNodes[0];
+      console.log('测试对焦到节点:', testNode);
+      viewerControls.focusOnNode(testNode);
+    }
+  };
+
   const currentItem = getCurrentItem();
   const currentPosition = getCurrentPosition();
   const totalItems = getTotalItems();
@@ -390,6 +420,10 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
                 height={500}
                 onModelLoaded={(model) => {
                   console.log('三维模型加载完成:', model);
+                }}
+                onControlsReady={(controls) => {
+                  console.log('接收到三维控制接口:', Object.keys(controls));
+                  viewerControlsRef.current = controls;
                 }}
               />
             </div>
@@ -538,6 +572,10 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
 
             <Button onClick={resetPlayback}>
               重置
+            </Button>
+
+            <Button onClick={testCameraFocus} type="dashed">
+              测试对焦
             </Button>
           </div>
 
