@@ -238,11 +238,15 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
             break;
           case 'annotation.show':
             console.log(`[${index + 1}] 显示标注:`, action.ids);
-            // TODO: 实现标注显示
+            if (viewerControls && action.ids) {
+              viewerControls.showAnnotations(action.ids);
+            }
             break;
           case 'annotation.hide':
             console.log(`[${index + 1}] 隐藏标注:`, action.ids);
-            // TODO: 实现标注隐藏
+            if (viewerControls && action.ids) {
+              viewerControls.hideAnnotations(action.ids);
+            }
             break;
           case 'animation.play':
             console.log(`[${index + 1}] 播放动画:`, action.animationId);

@@ -46,12 +46,15 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     };
   }, []);
 
-  // 当课件数据变化时加载模型
+  // 当课件数据变化时加载模型和应用设置
   useEffect(() => {
     if (coursewareData?.modelUrl) {
       loadModel(coursewareData.modelUrl);
     }
-  }, [coursewareData?.modelUrl]);
+    if (coursewareData?.settings) {
+      applySettings(coursewareData.settings);
+    }
+  }, [coursewareData]);
 
   // 窗口大小变化时调整视图
   useEffect(() => {
@@ -137,6 +140,87 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 补光
     const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.3);
     scene.add(hemisphereLight);
+  };
+
+  const applySettings = (settings: any) => {
+    if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
+
+    // 应用背景色
+    if (settings.background) {
+      sceneRef.current.background = new THREE.Color(settings.background);
+    }
+
+    // 应用相机位置
+    if (settings.cameraPosition) {
+      cameraRef.current.position.set(
+        settings.cameraPosition.x,
+        settings.cameraPosition.y,
+        settings.cameraPosition.z
+      );
+    }
+
+    // 应用相机目标
+    if (settings.cameraTarget) {
+      const target = new THREE.Vector3(
+        settings.cameraTarget.x,
+        settings.cameraTarget.y,
+        settings.cameraTarget.z
+      );
+      controlsRef.current.target.copy(target);
+      cameraRef.current.lookAt(target);
+    }
+
+    // 应用灯光设置
+    if (settings.lighting) {
+      applyLightingSettings(settings.lighting);
+    }
+
+    controlsRef.current.update();
+  };
+
+  const applyLightingSettings = (lighting: any) => {
+    if (!sceneRef.current) return;
+
+    // 清除现有灯光（除了环境光）
+    const lightsToRemove = sceneRef.current.children.filter(child => 
+      child instanceof THREE.DirectionalLight || 
+      child instanceof THREE.HemisphereLight ||
+      child instanceof THREE.PointLight
+    );
+    lightsToRemove.forEach(light => sceneRef.current!.remove(light));
+
+    // 重新设置灯光
+    if (lighting.ambient) {
+      const ambientLight = new THREE.AmbientLight(lighting.ambient.color || 0x404040, lighting.ambient.intensity || 0.4);
+      sceneRef.current.add(ambientLight);
+    }
+
+    if (lighting.directional) {
+      const directionalLight = new THREE.DirectionalLight(
+        lighting.directional.color || 0xffffff, 
+        lighting.directional.intensity || 1
+      );
+      if (lighting.directional.position) {
+        directionalLight.position.set(
+          lighting.directional.position.x || 10,
+          lighting.directional.position.y || 10,
+          lighting.directional.position.z || 5
+        );
+      }
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      sceneRef.current.add(directionalLight);
+    }
+
+    if (lighting.hemisphere) {
+      const hemisphereLight = new THREE.HemisphereLight(
+        lighting.hemisphere.skyColor || 0xffffff,
+        lighting.hemisphere.groundColor || 0x444444,
+        lighting.hemisphere.intensity || 0.3
+      );
+      sceneRef.current.add(hemisphereLight);
+    }
   };
 
   const loadModel = async (modelUrl: string) => {
@@ -290,6 +374,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const createAnnotations = (annotations: any[]) => {
     if (!sceneRef.current) return;
 
+    console.log('创建标注:', annotations.length, '个');
+
     // 清除旧标注
     annotationsRef.current.forEach(annotation => {
       sceneRef.current!.remove(annotation);
@@ -297,50 +383,148 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     annotationsRef.current = [];
 
     // 创建新标注
-    annotations.forEach(annotation => {
-      const targetObject = nodeMapRef.current.get(annotation.nodeKey);
+    annotations.forEach((annotation, index) => {
+      console.log(`处理标注 ${index + 1}:`, annotation.title, 'nodeKey:', annotation.nodeKey);
+      
+      // 尝试多种nodeKey匹配方式
+      let targetObject = nodeMapRef.current.get(annotation.nodeKey);
+      
+      if (!targetObject && annotation.targetKey) {
+        targetObject = nodeMapRef.current.get(annotation.targetKey);
+      }
+      
+      if (!targetObject) {
+        // 尝试通过名称查找
+        const matchingKeys = Array.from(nodeMapRef.current.keys()).filter(key => 
+          key.includes(annotation.nodeKey) || annotation.nodeKey.includes(key)
+        );
+        if (matchingKeys.length > 0) {
+          targetObject = nodeMapRef.current.get(matchingKeys[0]);
+          console.log('通过模糊匹配找到对象:', matchingKeys[0]);
+        }
+      }
+      
       if (targetObject) {
+        console.log('为对象创建标注:', targetObject.name || targetObject.uuid);
         const annotationMarker = createAnnotationMarker(annotation);
         if (annotationMarker) {
-          // 获取目标对象的世界位置
+          // 获取目标对象的边界框
           const box = new THREE.Box3().setFromObject(targetObject);
           const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          
+          // 将标注放在对象上方
           annotationMarker.position.copy(center);
+          annotationMarker.position.y += size.y * 0.6; // 稍微往上偏移
           
           sceneRef.current!.add(annotationMarker);
           annotationsRef.current.push(annotationMarker);
+          console.log('标注创建成功，位置:', annotationMarker.position);
         }
+      } else {
+        console.warn('未找到标注目标对象:', annotation.nodeKey);
+        console.log('可用nodeKey:', Array.from(nodeMapRef.current.keys()).slice(0, 10));
       }
     });
+    
+    console.log('标注创建完成，总计:', annotationsRef.current.length, '个');
   };
 
   const createAnnotationMarker = (annotation: any): THREE.Object3D | null => {
-    // 创建标注球体
-    const geometry = new THREE.SphereGeometry(0.1, 16, 16);
-    const material = new THREE.MeshLambertMaterial({ color: 0xff6b6b });
-    const sphere = new THREE.Mesh(geometry, material);
+    try {
+      // 创建标注球体
+      const geometry = new THREE.SphereGeometry(0.05, 12, 12);
+      const material = new THREE.MeshLambertMaterial({ 
+        color: 0xff4444,
+        emissive: 0x442222
+      });
+      const sphere = new THREE.Mesh(geometry, material);
+      
+      // 创建文字精灵
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d')!;
+      canvas.width = 512;
+      canvas.height = 128;
+      
+      // 清空画布
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // 绘制背景
+      context.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      context.roundRect(10, 20, canvas.width - 20, canvas.height - 40, 8);
+      context.fill();
+      
+      // 绘制文字
+      context.fillStyle = 'white';
+      context.font = 'bold 32px Arial, sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      
+      const text = annotation.title || annotation.name || 'Annotation';
+      
+      // 处理长文本（自动换行）
+      const maxWidth = canvas.width - 40;
+      const lines = wrapText(context, text, maxWidth);
+      const lineHeight = 36;
+      const totalHeight = lines.length * lineHeight;
+      const startY = (canvas.height - totalHeight) / 2 + lineHeight / 2;
+      
+      lines.forEach((line, index) => {
+        const y = startY + index * lineHeight;
+        context.fillText(line, canvas.width / 2, y);
+      });
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      
+      const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true,
+        alphaTest: 0.001
+      });
+      const sprite = new THREE.Sprite(spriteMaterial);
+      sprite.scale.set(1.5, 0.375, 1); // 根据画布比例调整
+      sprite.position.set(0, 0.3, 0);
+      
+      sphere.add(sprite);
+      
+      // 添加用户数据以便后续识别
+      sphere.userData = {
+        isAnnotation: true,
+        annotationData: annotation
+      };
+      
+      return sphere;
+    } catch (error) {
+      console.error('创建标注标记失败:', error);
+      return null;
+    }
+  };
+
+  // 文字换行辅助函数
+  const wrapText = (context: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
+    const words = text.split('');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const char of words) {
+      const testLine = currentLine + char;
+      const metrics = context.measureText(testLine);
+      
+      if (metrics.width > maxWidth && currentLine !== '') {
+        lines.push(currentLine);
+        currentLine = char;
+      } else {
+        currentLine = testLine;
+      }
+    }
     
-    // 创建文字精灵
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d')!;
-    canvas.width = 256;
-    canvas.height = 128;
+    if (currentLine) {
+      lines.push(currentLine);
+    }
     
-    context.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = 'white';
-    context.font = '24px Arial';
-    context.textAlign = 'center';
-    context.fillText(annotation.title || 'Annotation', canvas.width / 2, canvas.height / 2);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.scale.set(2, 1, 1);
-    sprite.position.set(0, 0.5, 0);
-    
-    sphere.add(sprite);
-    return sphere;
+    return lines.length > 0 ? lines : [text];
   };
 
   const animate = () => {
@@ -394,31 +578,58 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   // 公开的控制方法
   const focusOnNode = (nodeKey: string) => {
+    console.log('正在对焦节点:', nodeKey);
     const targetObject = nodeMapRef.current.get(nodeKey);
-    if (targetObject && cameraRef.current && controlsRef.current) {
+    
+    if (!targetObject) {
+      console.warn('未找到节点:', nodeKey);
+      console.log('可用节点:', Array.from(nodeMapRef.current.keys()));
+      return;
+    }
+
+    if (cameraRef.current && controlsRef.current) {
+      console.log('找到目标对象:', targetObject.name || targetObject.uuid);
+      
       const box = new THREE.Box3().setFromObject(targetObject);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3()).length();
       
-      // 平滑移动相机
-      const distance = size * 2;
-      const targetPos = center.clone().add(new THREE.Vector3(distance, distance * 0.5, distance));
+      // 确保有合理的距离
+      const distance = Math.max(size * 1.5, 2);
       
-      // 简单的相机动画（可以使用Tween.js改进）
-      const startPos = cameraRef.current.position.clone();
-      const steps = 60;
-      let currentStep = 0;
+      // 计算更好的相机位置（从当前位置移动到目标）
+      const currentPos = cameraRef.current.position.clone();
+      const direction = currentPos.clone().sub(center).normalize();
+      const targetPos = center.clone().add(direction.multiplyScalar(distance));
+      
+      console.log('相机移动: 从', currentPos, '到', targetPos);
+      console.log('对焦中心:', center);
+      
+      // 使用更平滑的动画
+      const startPos = currentPos.clone();
+      const startTarget = controlsRef.current.target.clone();
+      const duration = 1000; // 1秒动画
+      const startTime = Date.now();
       
       const animateCamera = () => {
-        if (currentStep < steps) {
-          const progress = currentStep / steps;
-          const newPos = startPos.clone().lerp(targetPos, progress);
-          cameraRef.current!.position.copy(newPos);
-          cameraRef.current!.lookAt(center);
-          controlsRef.current!.target.copy(center);
-          controlsRef.current!.update();
-          currentStep++;
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // 使用缓动函数
+        const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        
+        const newPos = startPos.clone().lerp(targetPos, eased);
+        const newTarget = startTarget.clone().lerp(center, eased);
+        
+        cameraRef.current!.position.copy(newPos);
+        controlsRef.current!.target.copy(newTarget);
+        cameraRef.current!.lookAt(newTarget);
+        controlsRef.current!.update();
+        
+        if (progress < 1) {
           requestAnimationFrame(animateCamera);
+        } else {
+          console.log('相机对焦完成');
         }
       };
       
@@ -427,45 +638,150 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   };
 
   const highlightNode = (nodeKey: string, highlight: boolean = true) => {
+    console.log('高亮节点:', nodeKey, highlight);
     const targetObject = nodeMapRef.current.get(nodeKey);
-    if (targetObject && outlineRef.current) {
+    
+    if (!targetObject) {
+      console.warn('未找到要高亮的节点:', nodeKey);
+      return;
+    }
+
+    if (outlineRef.current) {
+      console.log('找到目标对象进行高亮:', targetObject.name || targetObject.uuid);
+      
       if (highlight) {
-        outlineRef.current.selectedObjects = [targetObject];
+        // 收集所有Mesh对象进行高亮
+        const meshesToHighlight: THREE.Mesh[] = [];
+        targetObject.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            meshesToHighlight.push(child);
+          }
+        });
+        
+        console.log('高亮对象数量:', meshesToHighlight.length);
+        outlineRef.current.selectedObjects = meshesToHighlight;
+        
+        // 设置高亮颜色和强度
+        outlineRef.current.visibleEdgeColor.set('#ffff00'); // 黄色
+        outlineRef.current.hiddenEdgeColor.set('#ffff00');
+        outlineRef.current.edgeStrength = 5;
+        outlineRef.current.edgeGlow = 0.8;
+        outlineRef.current.edgeThickness = 2;
+        outlineRef.current.pulsePeriod = 1.5;
       } else {
         outlineRef.current.selectedObjects = [];
+        console.log('清除高亮');
       }
     }
   };
 
   const setNodeVisibility = (nodeKey: string, visible: boolean) => {
+    console.log('设置节点显隐:', nodeKey, visible);
     const targetObject = nodeMapRef.current.get(nodeKey);
-    if (targetObject) {
-      targetObject.visible = visible;
+    
+    if (!targetObject) {
+      console.warn('未找到要设置显隐的节点:', nodeKey);
+      return;
     }
+
+    console.log('设置对象显隐:', targetObject.name || targetObject.uuid, visible);
+    targetObject.visible = visible;
+    
+    // 递归设置子对象
+    targetObject.traverse((child) => {
+      child.visible = visible;
+    });
   };
 
   const playAnimation = (animationId: string, startTime?: number, endTime?: number) => {
-    if (!mixerRef.current || !animationsRef.current.length) return;
-
-    // 查找动画
-    const animation = animationsRef.current.find(anim => anim.name === animationId || anim.uuid === animationId);
-    if (animation) {
-      const action = mixerRef.current.clipAction(animation);
-      
-      if (startTime !== undefined && endTime !== undefined) {
-        action.setLoop(THREE.LoopOnce, 1);
-        action.time = startTime;
-        action.setEffectiveTimeScale(1);
-        action.play();
-        
-        // 在指定时间停止
-        setTimeout(() => {
-          action.stop();
-        }, (endTime - startTime) * 1000);
-      } else {
-        action.play();
-      }
+    console.log('播放动画:', animationId, '时间:', startTime, '-', endTime);
+    
+    if (!mixerRef.current || !animationsRef.current.length) {
+      console.warn('动画系统未初始化');
+      return;
     }
+
+    // 查找动画（支持多种匹配方式）
+    const animation = animationsRef.current.find(anim => 
+      anim.name === animationId || 
+      anim.uuid === animationId ||
+      anim.name?.includes(animationId)
+    );
+    
+    if (!animation) {
+      console.warn('未找到动画:', animationId);
+      console.log('可用动画:', animationsRef.current.map(anim => ({
+        name: anim.name,
+        uuid: anim.uuid,
+        duration: anim.duration
+      })));
+      return;
+    }
+
+    console.log('找到动画:', animation.name, '时长:', animation.duration);
+    
+    // 停止所有当前动画
+    mixerRef.current.stopAllAction();
+    
+    const action = mixerRef.current.clipAction(animation);
+    action.reset();
+    
+    if (startTime !== undefined && endTime !== undefined) {
+      // 播放指定时间段
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+      action.time = startTime;
+      action.play();
+      
+      // 在指定时间停止
+      const duration = endTime - startTime;
+      setTimeout(() => {
+        action.stop();
+        console.log('动画播放完成');
+      }, duration * 1000);
+    } else {
+      // 播放完整动画
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+      action.play();
+      
+      console.log('开始播放完整动画，时长:', animation.duration, '秒');
+    }
+  };
+
+  // 标注显示/隐藏控制
+  const showAnnotations = (annotationIds: string[]) => {
+    console.log('显示标注:', annotationIds);
+    annotationsRef.current.forEach(annotation => {
+      const data = annotation.userData?.annotationData;
+      if (data && annotationIds.includes(data.id)) {
+        annotation.visible = true;
+        console.log('显示标注:', data.title);
+      }
+    });
+  };
+
+  const hideAnnotations = (annotationIds: string[]) => {
+    console.log('隐藏标注:', annotationIds);
+    annotationsRef.current.forEach(annotation => {
+      const data = annotation.userData?.annotationData;
+      if (data && annotationIds.includes(data.id)) {
+        annotation.visible = false;
+        console.log('隐藏标注:', data.title);
+      }
+    });
+  };
+
+  const showAllAnnotations = () => {
+    annotationsRef.current.forEach(annotation => {
+      annotation.visible = true;
+    });
+  };
+
+  const hideAllAnnotations = () => {
+    annotationsRef.current.forEach(annotation => {
+      annotation.visible = false;
+    });
   };
 
   // 暴露控制方法给父组件
@@ -476,7 +792,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         highlightNode,
         setNodeVisibility,
         playAnimation,
-        getNodeMap: () => nodeMapRef.current
+        showAnnotations,
+        hideAnnotations,
+        showAllAnnotations,
+        hideAllAnnotations,
+        getNodeMap: () => nodeMapRef.current,
+        getAnnotations: () => annotationsRef.current
       };
     }
   }, []);
