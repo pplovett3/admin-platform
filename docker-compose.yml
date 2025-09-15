@@ -19,6 +19,7 @@ services:
       - PORT=4000
       - MONGODB_URI=mongodb://mongo:27017/admin_platform
       - JWT_SECRET=${JWT_SECRET:-change_me}
+      - STORAGE_ROOT=Y:\\metaclassroom
     depends_on:
       - mongo
     ports:
