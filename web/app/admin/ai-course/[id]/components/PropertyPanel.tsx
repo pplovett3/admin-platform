@@ -228,23 +228,46 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                 
                 {(action.type === 'camera.focus' || action.type === 'highlight.show') && (
                   <Form.Item label="目标节点" style={{ marginBottom: 8 }}>
-                    <Input
+                    <Select
                       value={action.target?.nodeKey || ''}
-                      onChange={(e) => updateAction(index, 'target.nodeKey', e.target.value)}
-                      placeholder="如：Root/Engine 或从三维视窗中选择"
+                      onChange={(value) => updateAction(index, 'target.nodeKey', value)}
+                      placeholder="选择目标节点"
                       size="small"
-                    />
+                      style={{ width: '100%' }}
+                      showSearch
+                      filterOption={(input, option) =>
+                        option?.children?.toString().toLowerCase().includes(input.toLowerCase()) || false
+                      }
+                    >
+                      {coursewareData?.nodeMap && Object.keys(coursewareData.nodeMap).map((nodeKey: string) => {
+                        const nodeName = coursewareData.nodeMap[nodeKey] || nodeKey;
+                        const displayName = nodeName.length > 30 ? `${nodeName.slice(0, 30)}...` : nodeName;
+                        return (
+                          <Select.Option key={nodeKey} value={nodeKey} title={nodeName}>
+                            {displayName}
+                          </Select.Option>
+                        );
+                      })}
+                    </Select>
                   </Form.Item>
                 )}
                 
                 {action.type === 'annotation.show' && (
-                  <Form.Item label="标注IDs" style={{ marginBottom: 8 }}>
-                    <Input
-                      value={action.ids?.join(', ') || ''}
-                      onChange={(e) => updateAction(index, 'ids', e.target.value.split(',').map(id => id.trim()).filter(Boolean))}
-                      placeholder="标注ID列表，用逗号分隔"
+                  <Form.Item label="显示标注" style={{ marginBottom: 8 }}>
+                    <Select
+                      mode="multiple"
+                      value={action.ids || []}
+                      onChange={(value) => updateAction(index, 'ids', value)}
+                      placeholder="选择要显示的标注"
                       size="small"
-                    />
+                      style={{ width: '100%' }}
+                    >
+                      {coursewareData?.annotations?.map((annotation: any) => (
+                        <Select.Option key={annotation.id} value={annotation.id}>
+                          {annotation.title || `标注${annotation.id.slice(-4)}`}
+                        </Select.Option>
+                      )) || []}
+                    </Select>
                   </Form.Item>
                 )}
                 

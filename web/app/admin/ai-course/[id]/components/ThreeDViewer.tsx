@@ -31,6 +31,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const animationsRef = useRef<THREE.AnimationClip[]>([]);
   const nodeMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const annotationsRef = useRef<THREE.Object3D[]>([]);
+  const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
+  const highlightedMatsRef = useRef<Set<any>>(new Set());
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -531,32 +533,52 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   };
 
   const findAnimationBySmartMatch = (animationId: string): THREE.AnimationClip | undefined => {
-    console.log('智能匹配动画:', animationId);
+    const animations = animationsRef.current;
+    console.log('查找动画:', animationId);
+    console.log('可用动画:', animations.map(a => ({ name: a.name, uuid: a.uuid, duration: a.duration })));
     
-    // 方案1: 按关键词匹配
-    for (const anim of animationsRef.current) {
-      if (anim.name) {
-        // 检查是否包含关键词
-        if (animationId.includes('拆装') && anim.name.includes('拆装')) {
-          console.log(`通过关键词匹配找到动画: ${anim.name}`);
-          return anim;
-        }
-        if (animationId.includes('旋转') && anim.name.includes('旋转')) {
-          console.log(`通过关键词匹配找到动画: ${anim.name}`);
-          return anim;
-        }
-        if (animationId.includes('轮胎') && anim.name.includes('轮胎')) {
-          console.log(`通过关键词匹配找到动画: ${anim.name}`);
-          return anim;
+    // 1. 精确匹配UUID（优先，因为AI生成的是UUID）
+    for (const animation of animations) {
+      if (animation.uuid === animationId) {
+        console.log('精确匹配动画UUID:', animation.uuid);
+        return animation;
+      }
+    }
+
+    // 2. 精确匹配名称
+    for (const animation of animations) {
+      if (animation.name === animationId) {
+        console.log('精确匹配动画名称:', animation.name);
+        return animation;
+      }
+    }
+
+    // 3. 部分匹配UUID（兼容部分UUID）
+    for (const animation of animations) {
+      if (animation.uuid && animation.uuid.includes(animationId)) {
+        console.log('部分匹配动画UUID:', animation.uuid);
+        return animation;
+      }
+    }
+
+    // 4. 关键词匹配（兼容中文名称）
+    const keywords = ['拆装', '旋转', '轮胎', '安装', '移动', '转动'];
+    for (const keyword of keywords) {
+      if (animationId.includes(keyword)) {
+        for (const animation of animations) {
+          if (animation.name && animation.name.includes(keyword)) {
+            console.log(`通过关键词"${keyword}"匹配找到动画:`, animation.name);
+            return animation;
+          }
         }
       }
     }
 
-    // 方案2: 模糊匹配
-    for (const anim of animationsRef.current) {
-      if (anim.name && (anim.name.includes(animationId) || animationId.includes(anim.name))) {
-        console.log(`通过模糊匹配找到动画: ${anim.name}`);
-        return anim;
+    // 5. 模糊匹配名称
+    for (const animation of animations) {
+      if (animation.name && (animation.name.includes(animationId) || animationId.includes(animation.name))) {
+        console.log('模糊匹配动画名称:', animation.name);
+        return animation;
       }
     }
 
@@ -596,9 +618,11 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         console.log('为对象创建标注:', targetObject.name || targetObject.uuid);
         const annotationGroup = createAnnotationWithOffset(annotation, targetObject);
         if (annotationGroup) {
+          annotationGroup.userData.annotationId = annotation.id;
+          annotationGroup.visible = false; // 默认隐藏，等待显示动作触发
           sceneRef.current!.add(annotationGroup);
           annotationsRef.current.push(annotationGroup);
-          console.log('标注创建成功');
+          console.log('标注创建成功（默认隐藏）:', annotation.title);
         }
       } else {
         console.warn('未找到标注目标对象:', annotation.nodeKey);
@@ -611,112 +635,119 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   const createAnnotationWithOffset = (annotation: any, targetObject: THREE.Object3D): THREE.Group | null => {
     try {
-      // 1. 获取目标对象的世界位置（锚点位置）
-      targetObject.updateMatrixWorld(true);
+      // 使用三维课件编辑器的完整算法
       
-      // 使用保存的position或计算中心点
+      // 1. 计算标注点的世界坐标（基于anchor.offset）
       let anchorWorld: THREE.Vector3;
-      if (annotation.position) {
-        // 标注保存的是世界坐标，直接使用
-        anchorWorld = new THREE.Vector3(
-          annotation.position.x, 
-          annotation.position.y, 
-          annotation.position.z
+      
+      if (annotation.anchor && annotation.anchor.offset) {
+        // 标准格式：使用anchor.offset（局部坐标）
+        const anchorLocal = new THREE.Vector3(
+          annotation.anchor.offset[0],
+          annotation.anchor.offset[1],
+          annotation.anchor.offset[2]
         );
-        console.log('使用保存的标注位置:', anchorWorld);
+        targetObject.updateWorldMatrix(true, true);
+        anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+      } else if (annotation.position) {
+        // 兼容格式：直接使用position
+        anchorWorld = new THREE.Vector3(
+          annotation.position.x || annotation.position[0], 
+          annotation.position.y || annotation.position[1], 
+          annotation.position.z || annotation.position[2]
+        );
       } else {
-        // 没有保存位置时，计算对象的世界中心点
+        // 默认：使用对象中心
         const box = new THREE.Box3().setFromObject(targetObject);
         anchorWorld = box.getCenter(new THREE.Vector3());
-        console.log('计算对象中心作为标注位置:', anchorWorld);
       }
 
-      // 2. 计算标签位置（使用保存的偏移量）
+      // 2. 计算标签位置（使用保存的固定偏移量）
       let labelWorld: THREE.Vector3;
       
-      // 优先使用新格式的偏移量
-      let offset = annotation.labelOffset;
-      let offsetSpace = annotation.labelOffsetSpace || 'local';
-      
-      // 兼容旧格式
-      if (!offset && annotation.label?.offset) {
-        offset = {
-          x: annotation.label.offset[0],
-          y: annotation.label.offset[1], 
-          z: annotation.label.offset[2]
-        };
-        offsetSpace = annotation.label.offsetSpace || 'local';
-      }
-      
-      if (offset) {
-        if (offsetSpace === 'local') {
-          // 局部坐标系偏移
-          const offsetLocal = new THREE.Vector3(offset.x, offset.y, offset.z);
-          
-          // 获取目标对象的世界变换
+      if (annotation.label && annotation.label.offset) {
+        // 根据偏移的坐标系生成世界位置
+        if (annotation.label.offsetSpace === 'local') {
+          const offsetLocal = new THREE.Vector3(
+            annotation.label.offset[0], 
+            annotation.label.offset[1], 
+            annotation.label.offset[2]
+          );
+          // 将局部向量变换到世界（考虑旋转与缩放）
           const pos = new THREE.Vector3();
           const quat = new THREE.Quaternion();
           const scl = new THREE.Vector3();
           targetObject.matrixWorld.decompose(pos, quat, scl);
-          
-          // 将局部偏移变换到世界坐标系
           const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
           labelWorld = anchorWorld.clone().add(offsetWorld);
         } else {
-          // 世界坐标系偏移
+          // 旧数据：世界偏移
           labelWorld = new THREE.Vector3(
-            anchorWorld.x + offset.x,
-            anchorWorld.y + offset.y,
-            anchorWorld.z + offset.z
+            anchorWorld.x + annotation.label.offset[0],
+            anchorWorld.y + annotation.label.offset[1], 
+            anchorWorld.z + annotation.label.offset[2]
           );
         }
+      } else if (annotation.labelOffset) {
+        // 兼容格式
+        labelWorld = anchorWorld.clone().add(new THREE.Vector3(
+          annotation.labelOffset.x || 0,
+          annotation.labelOffset.y || 0,
+          annotation.labelOffset.z || 0
+        ));
       } else {
-        // 没有偏移信息，使用默认偏移
+        // 默认偏移
         labelWorld = new THREE.Vector3(
           anchorWorld.x + 0.2,
-          anchorWorld.y + 0.3,
+          anchorWorld.y + 0.1,
           anchorWorld.z + 0.0
         );
-        console.warn('标注缺少偏移信息，使用默认偏移:', annotation.id || annotation.title);
+        console.warn('标注缺少偏移信息，使用默认固定偏移:', annotation.id);
       }
 
-      // 3. 创建标注组
+      // 创建标注组
       const annotationGroup = new THREE.Group();
+      annotationGroup.userData.annotationId = annotation.id;
+      annotationGroup.userData.targetKey = annotation.targetKey || annotation.nodeKey;
       
-      // 4. 创建锚点球体
-      const anchorGeometry = new THREE.SphereGeometry(0.02, 8, 8);
-      const anchorMaterial = new THREE.MeshLambertMaterial({ 
-        color: 0xff4444,
-        emissive: 0x221111
+      // 1. 创建标注点（蓝色圆点）
+      const pointGeom = new THREE.SphereGeometry(0.012, 16, 16);
+      const pointMat = new THREE.MeshBasicMaterial({ 
+        color: 0x1890ff,
+        depthTest: true,
+        transparent: true,
+        opacity: 1.0
       });
-      const anchorSphere = new THREE.Mesh(anchorGeometry, anchorMaterial);
-      anchorSphere.position.copy(anchorWorld);
-      annotationGroup.add(anchorSphere);
-
-      // 5. 创建连接线
-      const lineGeometry = new THREE.BufferGeometry().setFromPoints([anchorWorld, labelWorld]);
-      const lineMaterial = new THREE.LineBasicMaterial({ 
+      const pointMesh = new THREE.Mesh(pointGeom, pointMat);
+      pointMesh.position.copy(anchorWorld);
+      pointMesh.renderOrder = 0;
+      pointMesh.userData.annotationId = annotation.id;
+      annotationGroup.add(pointMesh);
+      
+      // 2. 创建连接线
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([anchorWorld, labelWorld]);
+      const lineMat = new THREE.LineBasicMaterial({ 
         color: 0x1890ff,
         transparent: true,
-        opacity: 0.7
+        opacity: 0.8,
+        depthTest: true
       });
-      const line = new THREE.Line(lineGeometry, lineMaterial);
+      const line = new THREE.Line(lineGeom, lineMat);
       annotationGroup.add(line);
 
-      // 6. 创建标签
+      // 3. 创建文字标签
       const labelSprite = createLabelSprite(annotation);
       if (labelSprite) {
         labelSprite.position.copy(labelWorld);
         annotationGroup.add(labelSprite);
       }
 
-      // 7. 添加用户数据
-      annotationGroup.userData = {
-        isAnnotation: true,
-        annotationData: annotation,
-        anchorPosition: anchorWorld.clone(),
-        labelPosition: labelWorld.clone()
-      };
+      console.log('标注创建成功:', {
+        id: annotation.id,
+        title: annotation.title,
+        anchorWorld: anchorWorld.toArray(),
+        labelWorld: labelWorld.toArray()
+      });
 
       return annotationGroup;
     } catch (error) {
@@ -825,6 +856,41 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     });
   };
 
+  // 清除自发光高亮
+  const clearEmissiveHighlight = () => {
+    for (const m of Array.from(highlightedMatsRef.current)) {
+      const backup = materialBackupRef.current.get(m);
+      if (backup) {
+        if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
+        if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
+      }
+    }
+    highlightedMatsRef.current.clear();
+  };
+
+  // 应用自发光高亮
+  const applyEmissiveHighlight = (obj: THREE.Object3D) => {
+    clearEmissiveHighlight();
+    obj.traverse(o => {
+      if ((o as any).material) {
+        const mats = Array.isArray((o as any).material) ? (o as any).material : [(o as any).material];
+        mats.forEach((mat: any) => {
+          try {
+            if (!materialBackupRef.current.has(mat)) {
+              materialBackupRef.current.set(mat, { 
+                emissive: mat.emissive ? mat.emissive.clone() : undefined, 
+                emissiveIntensity: mat.emissiveIntensity 
+              });
+            }
+            if (mat.emissive) mat.emissive.set(0x22d3ee); // 青色高亮
+            if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+            highlightedMatsRef.current.add(mat);
+          } catch {}
+        });
+      }
+    });
+  };
+
   // 公开的控制方法
   const focusOnNode = (nodeKey: string) => {
     console.log('正在对焦节点:', nodeKey);
@@ -844,50 +910,37 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     if (cameraRef.current && controlsRef.current) {
       console.log('找到目标对象:', targetObject.name || targetObject.uuid);
       
+      // 使用三维课件编辑器的focusObject算法
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
       const box = new THREE.Box3().setFromObject(targetObject);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3()).length();
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
       
-      // 确保有合理的距离
-      const distance = Math.max(size * 1.5, 2);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = camera.fov * (Math.PI / 180);
+      let dist = Math.abs(maxDim / Math.tan(fov / 2));
+      dist = dist * 1.5; // 1.5倍距离确保对象完全可见
       
-      // 计算更好的相机位置（从当前位置移动到目标）
-      const currentPos = cameraRef.current.position.clone();
-      const direction = currentPos.clone().sub(center).normalize();
-      const targetPos = center.clone().add(direction.multiplyScalar(distance));
+      // 设置观察方向（右上前方）
+      const dir = new THREE.Vector3(1, 0.8, 1).normalize();
+      const targetPos = center.clone().add(dir.multiplyScalar(dist));
       
-      console.log('相机移动: 从', currentPos, '到', targetPos);
-      console.log('对焦中心:', center);
+      console.log('对焦中心:', center, '距离:', dist);
       
-      // 使用更平滑的动画
-      const startPos = currentPos.clone();
-      const startTarget = controlsRef.current.target.clone();
-      const duration = 1000; // 1秒动画
-      const startTime = Date.now();
+      // 调整近远平面
+      camera.near = Math.max(0.01, dist / 1000);
+      camera.far = dist * 100;
+      camera.updateProjectionMatrix();
       
-      const animateCamera = () => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        
-        // 使用缓动函数
-        const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
-        
-        const newPos = startPos.clone().lerp(targetPos, eased);
-        const newTarget = startTarget.clone().lerp(center, eased);
-        
-        cameraRef.current!.position.copy(newPos);
-        controlsRef.current!.target.copy(newTarget);
-        cameraRef.current!.lookAt(newTarget);
-        controlsRef.current!.update();
-        
-        if (progress < 1) {
-          requestAnimationFrame(animateCamera);
-        } else {
-          console.log('相机对焦完成');
-        }
-      };
+      // 直接设置位置（三维课件编辑器的方式）
+      camera.position.copy(targetPos);
+      controls.target.copy(center);
+      controls.update();
       
-      animateCamera();
+      console.log('相机聚焦完成 - 中心:', center, '距离:', dist);
     }
   };
 
@@ -909,27 +962,21 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       console.log('找到目标对象进行高亮:', targetObject.name || targetObject.uuid);
       
       if (highlight) {
-        // 收集所有Mesh对象进行高亮
-        const meshesToHighlight: THREE.Mesh[] = [];
-        targetObject.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            meshesToHighlight.push(child);
-          }
-        });
+        // 清除之前的高亮
+        clearEmissiveHighlight();
         
-        console.log('高亮对象数量:', meshesToHighlight.length);
-        outlineRef.current.selectedObjects = meshesToHighlight;
+        // 应用自发光高亮（使用三维课件编辑器的算法）
+        applyEmissiveHighlight(targetObject);
         
-        // 设置高亮颜色和强度
-        outlineRef.current.visibleEdgeColor.set('#ffff00'); // 黄色
-        outlineRef.current.hiddenEdgeColor.set('#ffff00');
-        outlineRef.current.edgeStrength = 5;
-        outlineRef.current.edgeGlow = 0.8;
-        outlineRef.current.edgeThickness = 2;
-        outlineRef.current.pulsePeriod = 1.5;
+        // 同时使用轮廓高亮
+        outlineRef.current.selectedObjects = [targetObject];
+        
+        console.log('已高亮节点:', targetObject.name || targetObject.uuid);
       } else {
+        // 清除高亮
+        clearEmissiveHighlight();
         outlineRef.current.selectedObjects = [];
-        console.log('清除高亮');
+        console.log('已取消高亮');
       }
     }
   };
@@ -1022,10 +1069,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const showAnnotations = (annotationIds: string[]) => {
     console.log('显示标注:', annotationIds);
     annotationsRef.current.forEach(annotation => {
-      const data = annotation.userData?.annotationData;
-      if (data && annotationIds.includes(data.id)) {
+      const annotationId = annotation.userData.annotationId;
+      if (annotationId && annotationIds.includes(annotationId)) {
         annotation.visible = true;
-        console.log('显示标注:', data.title);
+        console.log('显示标注:', annotationId);
       }
     });
   };
@@ -1033,10 +1080,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const hideAnnotations = (annotationIds: string[]) => {
     console.log('隐藏标注:', annotationIds);
     annotationsRef.current.forEach(annotation => {
-      const data = annotation.userData?.annotationData;
-      if (data && annotationIds.includes(data.id)) {
+      const annotationId = annotation.userData.annotationId;
+      if (annotationId && annotationIds.includes(annotationId)) {
         annotation.visible = false;
-        console.log('隐藏标注:', data.title);
+        console.log('隐藏标注:', annotationId);
       }
     });
   };
