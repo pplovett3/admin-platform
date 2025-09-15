@@ -36,7 +36,7 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
   async function loadCoursewareData() {
     if (!coursewareId) return;
     try {
-      const data = await authFetch<any>(`/api/courseware/${coursewareId}`);
+      const data = await authFetch<any>(`/api/coursewares/${coursewareId}`);
       setCoursewareData(data);
     } catch (error) {
       console.error('加载课件数据失败:', error);
