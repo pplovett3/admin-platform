@@ -34,13 +34,62 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [webglSupported, setWebglSupported] = useState<boolean | null>(null);
+
+  // WebGL支持检测
+  const checkWebGLSupport = (): boolean => {
+    try {
+      // 创建一个临时canvas来测试WebGL
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      
+      if (!gl) {
+        console.warn('WebGL不被支持');
+        return false;
+      }
+
+      // 类型断言为WebGL上下文
+      const webglContext = gl as WebGLRenderingContext;
+
+      // 检查WebGL扩展
+      const renderer = webglContext.getParameter(webglContext.RENDERER);
+      const vendor = webglContext.getParameter(webglContext.VENDOR);
+      
+      console.log('WebGL信息:', { renderer, vendor });
+      
+      // 检查是否被软件渲染阻止
+      if (renderer && renderer.toLowerCase().includes('software')) {
+        console.warn('WebGL使用软件渲染，性能可能较差');
+      }
+
+      return true;
+    } catch (error) {
+      console.error('WebGL检测失败:', error);
+      return false;
+    }
+  };
 
   // 初始化Three.js场景
   useEffect(() => {
     if (!containerRef.current) return;
 
-    initThreeJS();
-    animate();
+    // 先检查WebGL支持
+    const supported = checkWebGLSupport();
+    setWebglSupported(supported);
+    
+    if (!supported) {
+      setLoadError('您的浏览器不支持WebGL，无法显示3D内容。请尝试：\n1. 更新浏览器到最新版本\n2. 启用硬件加速\n3. 使用Chrome、Firefox、Edge等现代浏览器');
+      return;
+    }
+
+    try {
+      initThreeJS();
+      animate();
+    } catch (error) {
+      console.error('Three.js初始化失败:', error);
+      setWebglSupported(false);
+      setLoadError('3D渲染器初始化失败，请刷新页面重试');
+    }
 
     return () => {
       cleanup();
@@ -91,44 +140,69 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     camera.position.set(5, 5, 5);
     cameraRef.current = camera;
 
-    // 创建渲染器
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1;
-    rendererRef.current = renderer;
+    // 创建渲染器，添加错误处理
+    try {
+      const renderer = new THREE.WebGLRenderer({ 
+        antialias: true,
+        preserveDrawingBuffer: true,
+        powerPreference: "high-performance",
+        failIfMajorPerformanceCaveat: false
+      });
+      
+      renderer.setSize(width, height);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1;
+      
+      // 监听WebGL上下文丢失事件
+      renderer.domElement.addEventListener('webglcontextlost', (event) => {
+        event.preventDefault();
+        console.warn('WebGL上下文丢失');
+        setLoadError('3D渲染上下文丢失，请刷新页面重试');
+      });
 
-    // 创建控制器
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controlsRef.current = controls;
+      renderer.domElement.addEventListener('webglcontextrestored', () => {
+        console.log('WebGL上下文已恢复');
+        setLoadError(null);
+      });
+      
+      rendererRef.current = renderer;
+      
+      // 创建控制器
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controlsRef.current = controls;
 
-    // 创建后处理
-    const composer = new EffectComposer(renderer);
-    const renderPass = new RenderPass(scene, camera);
-    composer.addPass(renderPass);
-    
-    const outlinePass = new OutlinePass(new THREE.Vector2(width, height), scene, camera);
-    outlinePass.edgeStrength = 3;
-    outlinePass.edgeGlow = 0.5;
-    outlinePass.edgeThickness = 1;
-    outlinePass.pulsePeriod = 2;
-    outlinePass.visibleEdgeColor.set('#ffff00');
-    outlinePass.hiddenEdgeColor.set('#ffff00');
-    composer.addPass(outlinePass);
-    
-    composerRef.current = composer;
-    outlineRef.current = outlinePass;
+      // 将渲染器添加到DOM
+      containerRef.current.appendChild(renderer.domElement);
+
+      // 创建后处理
+      const composer = new EffectComposer(renderer);
+      const renderPass = new RenderPass(scene, camera);
+      composer.addPass(renderPass);
+      
+      const outlinePass = new OutlinePass(new THREE.Vector2(width, height), scene, camera);
+      outlinePass.edgeStrength = 3;
+      outlinePass.edgeGlow = 0.5;
+      outlinePass.edgeThickness = 1;
+      outlinePass.pulsePeriod = 2;
+      outlinePass.visibleEdgeColor.set('#ffff00');
+      outlinePass.hiddenEdgeColor.set('#ffff00');
+      composer.addPass(outlinePass);
+      
+      composerRef.current = composer;
+      outlineRef.current = outlinePass;
+
+    } catch (error) {
+      console.error('WebGL渲染器创建失败:', error);
+      throw new Error('WebGL渲染器创建失败');
+    }
 
     // 添加光照
     setupLights(scene);
-
-    // 添加到容器
-    containerRef.current.appendChild(renderer.domElement);
   };
 
   const setupLights = (scene: THREE.Scene) => {
@@ -1054,7 +1128,49 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         overflow: 'hidden'
       }}
     >
-      {loading && (
+      {webglSupported === false && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(255,255,255,0.95)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{ textAlign: 'center', padding: '20px', maxWidth: '80%' }}>
+            <div style={{ fontSize: 20, marginBottom: 16, color: '#ff4d4f' }}>
+              ⚠️ WebGL不支持
+            </div>
+            <div style={{ fontSize: 14, lineHeight: 1.6, color: '#666', whiteSpace: 'pre-line', marginBottom: 16 }}>
+              {loadError}
+            </div>
+            <div style={{ fontSize: 12, color: '#999' }}>
+              技术提示：您的浏览器或显卡可能不支持硬件加速
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              style={{
+                marginTop: 16,
+                background: '#1890ff',
+                color: 'white',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: 14
+              }}
+            >
+              刷新页面重试
+            </button>
+          </div>
+        </div>
+      )}
+
+      {webglSupported !== false && loading && (
         <div style={{
           position: 'absolute',
           top: 0,
@@ -1074,7 +1190,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         </div>
       )}
       
-      {loadError && (
+      {webglSupported !== false && loadError && !loading && (
         <div style={{
           position: 'absolute',
           top: 0,
@@ -1089,7 +1205,21 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         }}>
           <div style={{ textAlign: 'center', color: '#ff4d4f' }}>
             <div style={{ fontSize: 16, marginBottom: 8 }}>模型加载失败</div>
-            <div style={{ fontSize: 12 }}>{loadError}</div>
+            <div style={{ fontSize: 12, marginBottom: 16 }}>{loadError}</div>
+            <button 
+              onClick={() => window.location.reload()}
+              style={{
+                background: '#ff4d4f',
+                color: 'white',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: 12
+              }}
+            >
+              刷新页面重试
+            </button>
           </div>
         </div>
       )}
