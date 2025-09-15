@@ -328,20 +328,32 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     const map = new Map<string, THREE.Object3D>();
     
     model.traverse((child) => {
+      // 添加name映射
       if (child.name) {
         map.set(child.name, child);
       }
+      
+      // 添加UUID映射
       if (child.uuid) {
         map.set(child.uuid, child);
       }
-      // 生成nodeKey（路径）
-      const path = getObjectPath(child);
-      if (path) {
-        map.set(path, child);
+      
+      // 生成完整路径（包括UUID前缀）
+      const fullPath = getFullObjectPath(child);
+      if (fullPath) {
+        map.set(fullPath, child);
+      }
+      
+      // 生成名称路径
+      const namePath = getObjectPath(child);
+      if (namePath) {
+        map.set(namePath, child);
       }
     });
     
     nodeMapRef.current = map;
+    console.log('节点映射构建完成，总数:', map.size);
+    console.log('样例节点键:', Array.from(map.keys()).slice(0, 10));
   };
 
   const getObjectPath = (object: THREE.Object3D): string => {
@@ -351,6 +363,25 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     while (current && current !== modelRootRef.current) {
       if (current.name) {
         path.unshift(current.name);
+      }
+      current = current.parent!;
+    }
+    
+    return path.join('/');
+  };
+
+  const getFullObjectPath = (object: THREE.Object3D): string => {
+    const path = [];
+    let current = object;
+    
+    while (current && current !== modelRootRef.current) {
+      // 使用UUID/name组合格式
+      if (current.uuid && current.name) {
+        path.unshift(`${current.uuid}/${current.name}`);
+      } else if (current.name) {
+        path.unshift(current.name);
+      } else if (current.uuid) {
+        path.unshift(current.uuid);
       }
       current = current.parent!;
     }
@@ -378,6 +409,85 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     controlsRef.current.maxDistance = distance * 3;
     controlsRef.current.minDistance = distance * 0.1;
     controlsRef.current.update();
+  };
+
+  const findNodeBySmartMatch = (nodeKey: string): THREE.Object3D | null => {
+    console.log('智能匹配节点:', nodeKey);
+    
+    // 方案1: 尝试按路径拆分匹配
+    if (nodeKey.includes('/')) {
+      // 提取最后一部分作为目标名称
+      const targetName = nodeKey.split('/').pop();
+      if (targetName) {
+        // 寻找包含目标名称的路径
+        for (const [key, obj] of nodeMapRef.current) {
+          if (key.includes(targetName) && key.includes('/')) {
+            console.log(`通过路径匹配找到: ${key} -> ${targetName}`);
+            return obj;
+          }
+        }
+        
+        // 直接匹配名称
+        const directMatch = nodeMapRef.current.get(targetName);
+        if (directMatch) {
+          console.log(`通过名称直接匹配找到: ${targetName}`);
+          return directMatch;
+        }
+      }
+    }
+
+    // 方案2: 模糊匹配（部分包含）
+    for (const [key, obj] of nodeMapRef.current) {
+      if (key.includes(nodeKey) || nodeKey.includes(key)) {
+        console.log(`通过模糊匹配找到: ${key} 匹配 ${nodeKey}`);
+        return obj;
+      }
+    }
+
+    // 方案3: 按节点名称搜索
+    for (const [key, obj] of nodeMapRef.current) {
+      if (obj.name && (obj.name === nodeKey || nodeKey.includes(obj.name))) {
+        console.log(`通过对象名称匹配找到: ${obj.name}`);
+        return obj;
+      }
+    }
+
+    console.log('智能匹配失败');
+    return null;
+  };
+
+  const findAnimationBySmartMatch = (animationId: string): THREE.AnimationClip | null => {
+    console.log('智能匹配动画:', animationId);
+    
+    // 方案1: 按关键词匹配
+    for (const anim of animationsRef.current) {
+      if (anim.name) {
+        // 检查是否包含关键词
+        if (animationId.includes('拆装') && anim.name.includes('拆装')) {
+          console.log(`通过关键词匹配找到动画: ${anim.name}`);
+          return anim;
+        }
+        if (animationId.includes('旋转') && anim.name.includes('旋转')) {
+          console.log(`通过关键词匹配找到动画: ${anim.name}`);
+          return anim;
+        }
+        if (animationId.includes('轮胎') && anim.name.includes('轮胎')) {
+          console.log(`通过关键词匹配找到动画: ${anim.name}`);
+          return anim;
+        }
+      }
+    }
+
+    // 方案2: 模糊匹配
+    for (const anim of animationsRef.current) {
+      if (anim.name && (anim.name.includes(animationId) || animationId.includes(anim.name))) {
+        console.log(`通过模糊匹配找到动画: ${anim.name}`);
+        return anim;
+      }
+    }
+
+    console.log('动画智能匹配失败');
+    return null;
   };
 
   const createAnnotations = (annotations: any[]) => {
@@ -439,14 +549,18 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       // 使用保存的position或计算中心点
       let anchorWorld: THREE.Vector3;
       if (annotation.position) {
+        // 标注保存的是世界坐标，直接使用
         anchorWorld = new THREE.Vector3(
           annotation.position.x, 
           annotation.position.y, 
           annotation.position.z
         );
+        console.log('使用保存的标注位置:', anchorWorld);
       } else {
+        // 没有保存位置时，计算对象的世界中心点
         const box = new THREE.Box3().setFromObject(targetObject);
         anchorWorld = box.getCenter(new THREE.Vector3());
+        console.log('计算对象中心作为标注位置:', anchorWorld);
       }
 
       // 2. 计算标签位置（使用保存的偏移量）
@@ -646,7 +760,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   // 公开的控制方法
   const focusOnNode = (nodeKey: string) => {
     console.log('正在对焦节点:', nodeKey);
-    const targetObject = nodeMapRef.current.get(nodeKey);
+    let targetObject = nodeMapRef.current.get(nodeKey);
+    
+    // 如果直接找不到，尝试智能匹配
+    if (!targetObject) {
+      targetObject = findNodeBySmartMatch(nodeKey);
+    }
     
     if (!targetObject) {
       console.warn('未找到节点:', nodeKey);
@@ -769,11 +888,16 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
 
     // 查找动画（支持多种匹配方式）
-    const animation = animationsRef.current.find(anim => 
+    let animation = animationsRef.current.find(anim => 
       anim.name === animationId || 
       anim.uuid === animationId ||
       anim.name?.includes(animationId)
     );
+
+    // 如果找不到，尝试智能匹配
+    if (!animation) {
+      animation = findAnimationBySmartMatch(animationId);
+    }
     
     if (!animation) {
       console.warn('未找到动画:', animationId);
@@ -851,6 +975,40 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     });
   };
 
+  // 调试模型位置和标注
+  const debugModelPosition = () => {
+    if (!modelRootRef.current) {
+      console.log('模型未加载');
+      return;
+    }
+
+    const model = modelRootRef.current;
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+
+    console.log('模型调试信息:');
+    console.log('模型位置:', model.position);
+    console.log('模型旋转:', model.rotation);
+    console.log('模型缩放:', model.scale);
+    console.log('包围盒中心:', center);
+    console.log('包围盒大小:', size);
+    console.log('模型矩阵:', model.matrix);
+
+    // 检查标注位置
+    if (coursewareData?.annotations) {
+      console.log('标注数据:');
+      coursewareData.annotations.forEach((annotation: any, index: number) => {
+        console.log(`标注 ${index + 1}:`, {
+          title: annotation.title,
+          nodeKey: annotation.nodeKey,
+          position: annotation.position,
+          labelOffset: annotation.labelOffset
+        });
+      });
+    }
+  };
+
   // 暴露控制方法给父组件
   useEffect(() => {
     const controls = {
@@ -863,7 +1021,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       showAllAnnotations,
       hideAllAnnotations,
       getNodeMap: () => nodeMapRef.current,
-      getAnnotations: () => annotationsRef.current
+      getAnnotations: () => annotationsRef.current,
+      debugModelPosition  // 添加调试功能
     };
 
     if (containerRef.current) {

@@ -393,6 +393,18 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     }
   };
 
+  // 调试模型位置
+  const debugModel = () => {
+    const viewerControls = viewerControlsRef.current || (threeDViewerRef.current as any)?._viewerControls;
+    
+    if (!viewerControls || !viewerControls.debugModelPosition) {
+      console.error('无法获取调试功能');
+      return;
+    }
+
+    viewerControls.debugModelPosition();
+  };
+
   const currentItem = getCurrentItem();
   const currentPosition = getCurrentPosition();
   const totalItems = getTotalItems();
@@ -576,6 +588,10 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
 
             <Button onClick={testCameraFocus} type="dashed">
               测试对焦
+            </Button>
+
+            <Button onClick={debugModel} type="dashed">
+              调试模型
             </Button>
           </div>
 
