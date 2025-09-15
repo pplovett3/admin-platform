@@ -411,7 +411,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     controlsRef.current.update();
   };
 
-  const findNodeBySmartMatch = (nodeKey: string): THREE.Object3D | null => {
+  const findNodeBySmartMatch = (nodeKey: string): THREE.Object3D | undefined => {
     console.log('智能匹配节点:', nodeKey);
     
     // 方案1: 尝试按路径拆分匹配
@@ -453,10 +453,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
 
     console.log('智能匹配失败');
-    return null;
+    return undefined;
   };
 
-  const findAnimationBySmartMatch = (animationId: string): THREE.AnimationClip | null => {
+  const findAnimationBySmartMatch = (animationId: string): THREE.AnimationClip | undefined => {
     console.log('智能匹配动画:', animationId);
     
     // 方案1: 按关键词匹配
@@ -487,7 +487,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
 
     console.log('动画智能匹配失败');
-    return null;
+    return undefined;
   };
 
   const createAnnotations = (annotations: any[]) => {
@@ -513,15 +513,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         targetObject = nodeMapRef.current.get(annotation.targetKey);
       }
       
+      // 如果还是没找到，使用智能匹配
       if (!targetObject) {
-        // 尝试通过名称查找
-        const matchingKeys = Array.from(nodeMapRef.current.keys()).filter(key => 
-          key.includes(annotation.nodeKey) || annotation.nodeKey.includes(key)
-        );
-        if (matchingKeys.length > 0) {
-          targetObject = nodeMapRef.current.get(matchingKeys[0]);
-          console.log('通过模糊匹配找到对象:', matchingKeys[0]);
-        }
+        targetObject = findNodeBySmartMatch(annotation.nodeKey);
       }
       
       if (targetObject) {
@@ -825,7 +819,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   const highlightNode = (nodeKey: string, highlight: boolean = true) => {
     console.log('高亮节点:', nodeKey, highlight);
-    const targetObject = nodeMapRef.current.get(nodeKey);
+    let targetObject = nodeMapRef.current.get(nodeKey);
+    
+    // 如果直接找不到，尝试智能匹配
+    if (!targetObject) {
+      targetObject = findNodeBySmartMatch(nodeKey);
+    }
     
     if (!targetObject) {
       console.warn('未找到要高亮的节点:', nodeKey);
@@ -863,7 +862,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   const setNodeVisibility = (nodeKey: string, visible: boolean) => {
     console.log('设置节点显隐:', nodeKey, visible);
-    const targetObject = nodeMapRef.current.get(nodeKey);
+    let targetObject = nodeMapRef.current.get(nodeKey);
+    
+    // 如果直接找不到，尝试智能匹配
+    if (!targetObject) {
+      targetObject = findNodeBySmartMatch(nodeKey);
+    }
     
     if (!targetObject) {
       console.warn('未找到要设置显隐的节点:', nodeKey);
