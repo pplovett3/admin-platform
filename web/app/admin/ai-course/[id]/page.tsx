@@ -6,6 +6,7 @@ import { authFetch } from '@/app/_lib/api';
 import OutlineEditor from './components/OutlineEditor';
 import PropertyPanel from './components/PropertyPanel';
 import CoursewareViewer from './components/CoursewareViewer';
+import CoursePreviewPlayer from './components/CoursePreviewPlayer';
 
 const { Sider, Content } = Layout;
 
@@ -18,6 +19,7 @@ export default function EditAICoursePage() {
   const [form] = Form.useForm();
   const [courseData, setCourseData] = useState<any>(null);
   const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [previewVisible, setPreviewVisible] = useState(false);
 
   async function load() {
     if (!id) return;
@@ -157,6 +159,14 @@ export default function EditAICoursePage() {
           <Button onClick={onGenerateAI} loading={generating} style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: 'white' }}>
             AI生成初稿
           </Button>
+          <Button 
+            type="primary" 
+            onClick={() => setPreviewVisible(true)}
+            disabled={!courseData?.outline || courseData.outline.length === 0}
+            style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }}
+          >
+            预览播放
+          </Button>
         </Space>
       </div>
 
@@ -222,6 +232,13 @@ export default function EditAICoursePage() {
           </div>
         </Sider>
       </Layout>
+
+      {/* 预览播放器 */}
+      <CoursePreviewPlayer
+        courseData={courseData}
+        visible={previewVisible}
+        onClose={() => setPreviewVisible(false)}
+      />
     </div>
   );
 }
