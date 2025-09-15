@@ -52,22 +52,28 @@
 
 ### 阶段三：AI课程系统（Web + Server）
 #### 3.1 后端（Server）
-- [ ] Server: DeepSeek/通义等大模型接入与抽象层
-- [ ] Server: `/api/ai/generate-course` 初稿生成（大纲+讲稿+图片候选+三维动作建议）
-- [ ] Server: `/api/ai/search-images` 图片检索与版权信息回填
-- [ ] Server: `/api/ai/tts` 实时合成（预览用，临时URL，不写清单）
+- [x] Server: DeepSeek/通义等大模型接入与抽象层
+- [x] Server: `/api/ai/generate-course` 初稿生成（大纲+讲稿+图片候选+三维动作建议）
+- [x] Server: `/api/ai/search-images` 图片检索与版权信息回填（Metaso集成）
+- [x] Server: `/api/ai/tts` 多供应商TTS实时合成（Minimax异步 + Azure同步）
+- [x] Server: `/api/ai/tts/providers` TTS供应商和音色列表
+- [x] Server: `/api/ai/tts/status` TTS任务状态查询（Minimax）
+- [x] Server: `/api/ai-courses` CRUD（创建、读取、更新、删除、列表）
 - [ ] Server: `/api/ai/tts/batch` 批量增量合成（发布用，写回清单与 `assets.audio`）
-- [ ] Server: `/api/ai-courses` CRUD，`/api/ai-courses/:id/publish` 发布流程（含合成队列）
+- [ ] Server: `/api/ai-courses/:id/publish` 发布流程（含合成队列）
 
 #### 3.2 前端（Web）
-- [ ] Web: 导航与路由新增“AI课程编辑” → `/admin/ai-course`
-- [ ] Web: 列表页（搜索/创建/删除/发布状态）
-- [ ] Web: 新建页（基础信息+选择 `coursewareId`）
-- [ ] Web: 编辑页骨架（段落树 | 3D视窗/媒体预览 | 属性面板）
-- [ ] Web: AI生成初稿（触发接口、结果合并与版本管理）
-- [ ] Web: 段落编辑（`talk`/`image.explain`/`scene.action`）、并行/顺序切换
-- [ ] Web: 三维动作向导（拾取 `nodeKey`/`annotationId`/`animationId` 与时间片段）
-- [ ] Web: 预览（TTS实时试听、图片叠加、相机/显隐/高亮/标注/动画片段）
+- [x] Web: 导航与路由新增"AI课程编辑" → `/admin/ai-course`
+- [x] Web: 列表页（搜索/创建/删除/发布状态）
+- [x] Web: 新建页（基础信息+选择 `coursewareId`）
+- [x] Web: 编辑页骨架（段落树 | 3D视窗/媒体预览 | 属性面板）
+- [x] Web: AI生成初稿（触发接口、结果合并与版本管理）
+- [x] Web: 段落编辑（`talk`/`image.explain`/`scene.action`）、并行/顺序切换
+- [x] Web: 三维动作向导（拾取 `nodeKey`/`annotationId`/`animationId` 与时间片段）
+- [x] Web: 图片搜索与选择（Metaso API集成，弹窗选择）
+- [x] Web: TTS多供应商试听（Azure快速、Minimax高质量，动态配置界面）
+- [x] Web: 暗色模式适配与UI优化（布局、按钮、卡片样式）
+- [ ] Web: 预览功能完善（图片叠加、相机/显隐/高亮/标注/动画片段）
 - [ ] Web: 发布流程（触发批量TTS、写回清单、CDN状态显示）
 
 #### 3.3 播放（Web 可选）

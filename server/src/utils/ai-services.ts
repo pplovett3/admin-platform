@@ -603,13 +603,13 @@ export async function generateTTSWithAzure(params: AzureTTSParams): Promise<Azur
     
     // 构建SSML
     const ssml = `
-    <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${params.language || 'zh-CN'}'>
+    <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='${params.language || 'zh-CN'}'>
       <voice name='${params.voiceName}'>
-        ${params.style ? `<mstts:express-as style='${params.style}'>` : ''}
+        ${params.style && params.style !== 'general' ? `<mstts:express-as style='${params.style}'>` : ''}
         <prosody rate='${params.rate || '+0%'}' pitch='${params.pitch || '+0Hz'}'>
           ${params.text}
         </prosody>
-        ${params.style ? '</mstts:express-as>' : ''}
+        ${params.style && params.style !== 'general' ? '</mstts:express-as>' : ''}
       </voice>
     </speak>
     `.trim();

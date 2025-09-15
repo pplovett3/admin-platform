@@ -85,6 +85,34 @@ export default function EditAICoursePage() {
 
   useEffect(() => { load(); }, [id]);
 
+  // 添加全局样式以禁用文字选择，但保留输入框等交互元素的选择功能
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .ai-course-editor-page * {
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+      }
+      .ai-course-editor-page input,
+      .ai-course-editor-page textarea,
+      .ai-course-editor-page [contenteditable="true"],
+      .ai-course-editor-page .ant-input,
+      .ai-course-editor-page .ant-input-number-input {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
   const onOutlineChange = (newOutline: any[]) => {
     setCourseData({ ...courseData, outline: newOutline });
   };
@@ -115,7 +143,12 @@ export default function EditAICoursePage() {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--color-bg-container)' }}>
+    <div className="ai-course-editor-page" style={{ 
+      height: '100vh', 
+      display: 'flex', 
+      flexDirection: 'column', 
+      background: 'var(--color-bg-container)'
+    }}>
       {/* 顶部工具栏 */}
       <div style={{ padding: '12px 24px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-container)' }}>
         <Space>
