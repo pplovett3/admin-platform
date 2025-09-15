@@ -223,40 +223,61 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
 
   const executeSceneActions = (actions: any[]) => {
     console.log('执行三维动作:', actions);
-    
+
     // 获取三维查看器的控制方法
     const viewerControls = (threeDViewerRef.current as any)?._viewerControls;
+    
+    if (!viewerControls) {
+      console.error('无法获取三维查看器控制接口，可能模型未加载完成');
+      // 延迟重试
+      setTimeout(() => {
+        const retryControls = (threeDViewerRef.current as any)?._viewerControls;
+        if (retryControls) {
+          console.log('重试成功，执行三维动作');
+          executeActionsWithControls(actions, retryControls);
+        } else {
+          console.error('重试失败，无法执行三维动作');
+        }
+      }, 1000);
+      return;
+    }
+    
+    console.log('获得三维查看器控制接口:', Object.keys(viewerControls));
+    executeActionsWithControls(actions, viewerControls);
+  };
+
+  const executeActionsWithControls = (actions: any[], viewerControls: any) => {
     
     actions.forEach((action, index) => {
       setTimeout(() => {
         switch (action.type) {
           case 'camera.focus':
             console.log(`[${index + 1}] 镜头对焦到:`, action.target?.nodeKey);
-            if (viewerControls && action.target?.nodeKey) {
+            if (action.target?.nodeKey) {
               viewerControls.focusOnNode(action.target.nodeKey);
             }
             break;
           case 'annotation.show':
             console.log(`[${index + 1}] 显示标注:`, action.ids);
-            if (viewerControls && action.ids) {
+            if (action.ids) {
               viewerControls.showAnnotations(action.ids);
             }
             break;
           case 'annotation.hide':
             console.log(`[${index + 1}] 隐藏标注:`, action.ids);
-            if (viewerControls && action.ids) {
+            if (action.ids) {
               viewerControls.hideAnnotations(action.ids);
             }
             break;
           case 'animation.play':
             console.log(`[${index + 1}] 播放动画:`, action.animationId);
-            if (viewerControls && action.animationId) {
+            if (action.animationId) {
               viewerControls.playAnimation(action.animationId, action.startTime, action.endTime);
             }
             break;
           case 'visibility.set':
             console.log(`[${index + 1}] 设置显隐:`, action.items);
-            if (viewerControls && action.items) {
+            if (action.items) {
               action.items.forEach((item: any) => {
                 viewerControls.setNodeVisibility(item.nodeKey, item.visible);
               });
@@ -264,13 +285,13 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
             break;
           case 'highlight.show':
             console.log(`[${index + 1}] 显示高亮:`, action.target?.nodeKey);
-            if (viewerControls && action.target?.nodeKey) {
+            if (action.target?.nodeKey) {
               viewerControls.highlightNode(action.target.nodeKey, true);
             }
             break;
           case 'highlight.hide':
             console.log(`[${index + 1}] 隐藏高亮:`, action.target?.nodeKey);
-            if (viewerControls && action.target?.nodeKey) {
+            if (action.target?.nodeKey) {
               viewerControls.highlightNode(action.target.nodeKey, false);
             }
             break;
@@ -471,9 +492,9 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
         <div style={{ 
           marginTop: 16, 
           padding: 16, 
-          background: '#fafafa', 
+          background: 'var(--color-bg-container)', 
           borderRadius: 6,
-          borderTop: '1px solid #d9d9d9'
+          borderTop: '1px solid var(--color-border)'
         }}>
           {/* 进度条 */}
           <div style={{ marginBottom: 12 }}>

@@ -389,6 +389,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       // 尝试多种nodeKey匹配方式
       let targetObject = nodeMapRef.current.get(annotation.nodeKey);
       
+      // 如果没找到，尝试用targetKey（UUID格式）
       if (!targetObject && annotation.targetKey) {
         targetObject = nodeMapRef.current.get(annotation.targetKey);
       }
@@ -406,20 +407,11 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       
       if (targetObject) {
         console.log('为对象创建标注:', targetObject.name || targetObject.uuid);
-        const annotationMarker = createAnnotationMarker(annotation);
-        if (annotationMarker) {
-          // 获取目标对象的边界框
-          const box = new THREE.Box3().setFromObject(targetObject);
-          const center = box.getCenter(new THREE.Vector3());
-          const size = box.getSize(new THREE.Vector3());
-          
-          // 将标注放在对象上方
-          annotationMarker.position.copy(center);
-          annotationMarker.position.y += size.y * 0.6; // 稍微往上偏移
-          
-          sceneRef.current!.add(annotationMarker);
-          annotationsRef.current.push(annotationMarker);
-          console.log('标注创建成功，位置:', annotationMarker.position);
+        const annotationGroup = createAnnotationWithOffset(annotation, targetObject);
+        if (annotationGroup) {
+          sceneRef.current!.add(annotationGroup);
+          annotationsRef.current.push(annotationGroup);
+          console.log('标注创建成功');
         }
       } else {
         console.warn('未找到标注目标对象:', annotation.nodeKey);
@@ -430,102 +422,168 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     console.log('标注创建完成，总计:', annotationsRef.current.length, '个');
   };
 
-  const createAnnotationMarker = (annotation: any): THREE.Object3D | null => {
+  const createAnnotationWithOffset = (annotation: any, targetObject: THREE.Object3D): THREE.Group | null => {
     try {
-      // 创建标注球体
-      const geometry = new THREE.SphereGeometry(0.05, 12, 12);
-      const material = new THREE.MeshLambertMaterial({ 
-        color: 0xff4444,
-        emissive: 0x442222
-      });
-      const sphere = new THREE.Mesh(geometry, material);
+      // 1. 获取目标对象的世界位置（锚点位置）
+      targetObject.updateMatrixWorld(true);
       
-      // 创建文字精灵
+      // 使用保存的position或计算中心点
+      let anchorWorld: THREE.Vector3;
+      if (annotation.position) {
+        anchorWorld = new THREE.Vector3(
+          annotation.position.x, 
+          annotation.position.y, 
+          annotation.position.z
+        );
+      } else {
+        const box = new THREE.Box3().setFromObject(targetObject);
+        anchorWorld = box.getCenter(new THREE.Vector3());
+      }
+
+      // 2. 计算标签位置（使用保存的偏移量）
+      let labelWorld: THREE.Vector3;
+      
+      // 优先使用新格式的偏移量
+      let offset = annotation.labelOffset;
+      let offsetSpace = annotation.labelOffsetSpace || 'local';
+      
+      // 兼容旧格式
+      if (!offset && annotation.label?.offset) {
+        offset = {
+          x: annotation.label.offset[0],
+          y: annotation.label.offset[1], 
+          z: annotation.label.offset[2]
+        };
+        offsetSpace = annotation.label.offsetSpace || 'local';
+      }
+      
+      if (offset) {
+        if (offsetSpace === 'local') {
+          // 局部坐标系偏移
+          const offsetLocal = new THREE.Vector3(offset.x, offset.y, offset.z);
+          
+          // 获取目标对象的世界变换
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scl = new THREE.Vector3();
+          targetObject.matrixWorld.decompose(pos, quat, scl);
+          
+          // 将局部偏移变换到世界坐标系
+          const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
+          labelWorld = anchorWorld.clone().add(offsetWorld);
+        } else {
+          // 世界坐标系偏移
+          labelWorld = new THREE.Vector3(
+            anchorWorld.x + offset.x,
+            anchorWorld.y + offset.y,
+            anchorWorld.z + offset.z
+          );
+        }
+      } else {
+        // 没有偏移信息，使用默认偏移
+        labelWorld = new THREE.Vector3(
+          anchorWorld.x + 0.2,
+          anchorWorld.y + 0.3,
+          anchorWorld.z + 0.0
+        );
+        console.warn('标注缺少偏移信息，使用默认偏移:', annotation.id || annotation.title);
+      }
+
+      // 3. 创建标注组
+      const annotationGroup = new THREE.Group();
+      
+      // 4. 创建锚点球体
+      const anchorGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+      const anchorMaterial = new THREE.MeshLambertMaterial({ 
+        color: 0xff4444,
+        emissive: 0x221111
+      });
+      const anchorSphere = new THREE.Mesh(anchorGeometry, anchorMaterial);
+      anchorSphere.position.copy(anchorWorld);
+      annotationGroup.add(anchorSphere);
+
+      // 5. 创建连接线
+      const lineGeometry = new THREE.BufferGeometry().setFromPoints([anchorWorld, labelWorld]);
+      const lineMaterial = new THREE.LineBasicMaterial({ 
+        color: 0x1890ff,
+        transparent: true,
+        opacity: 0.7
+      });
+      const line = new THREE.Line(lineGeometry, lineMaterial);
+      annotationGroup.add(line);
+
+      // 6. 创建标签
+      const labelSprite = createLabelSprite(annotation);
+      if (labelSprite) {
+        labelSprite.position.copy(labelWorld);
+        annotationGroup.add(labelSprite);
+      }
+
+      // 7. 添加用户数据
+      annotationGroup.userData = {
+        isAnnotation: true,
+        annotationData: annotation,
+        anchorPosition: anchorWorld.clone(),
+        labelPosition: labelWorld.clone()
+      };
+
+      return annotationGroup;
+    } catch (error) {
+      console.error('创建标注失败:', error);
+      return null;
+    }
+  };
+
+  const createLabelSprite = (annotation: any): THREE.Sprite | null => {
+    try {
+      // 创建画布
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d')!;
       canvas.width = 512;
       canvas.height = 128;
-      
+
       // 清空画布
       context.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       // 绘制背景
-      context.fillStyle = 'rgba(0, 0, 0, 0.8)';
-      context.roundRect(10, 20, canvas.width - 20, canvas.height - 40, 8);
-      context.fill();
-      
+      context.fillStyle = 'rgba(30, 50, 80, 0.9)';
+      context.fillRect(8, 8, canvas.width - 16, canvas.height - 16);
+
+      // 绘制边框
+      context.strokeStyle = '#1890ff';
+      context.lineWidth = 2;
+      context.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+
       // 绘制文字
       context.fillStyle = 'white';
-      context.font = 'bold 32px Arial, sans-serif';
+      context.font = 'bold 28px Arial, sans-serif';
       context.textAlign = 'center';
       context.textBaseline = 'middle';
-      
-      const text = annotation.title || annotation.name || 'Annotation';
-      
-      // 处理长文本（自动换行）
-      const maxWidth = canvas.width - 40;
-      const lines = wrapText(context, text, maxWidth);
-      const lineHeight = 36;
-      const totalHeight = lines.length * lineHeight;
-      const startY = (canvas.height - totalHeight) / 2 + lineHeight / 2;
-      
-      lines.forEach((line, index) => {
-        const y = startY + index * lineHeight;
-        context.fillText(line, canvas.width / 2, y);
-      });
-      
+
+      const title = annotation.title || annotation.label?.title || 'Annotation';
+      context.fillText(title, canvas.width / 2, canvas.height / 2);
+
+      // 创建纹理和精灵
       const texture = new THREE.CanvasTexture(canvas);
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
-      
+
       const spriteMaterial = new THREE.SpriteMaterial({ 
         map: texture,
         transparent: true,
         alphaTest: 0.001
       });
+
       const sprite = new THREE.Sprite(spriteMaterial);
-      sprite.scale.set(1.5, 0.375, 1); // 根据画布比例调整
-      sprite.position.set(0, 0.3, 0);
-      
-      sphere.add(sprite);
-      
-      // 添加用户数据以便后续识别
-      sphere.userData = {
-        isAnnotation: true,
-        annotationData: annotation
-      };
-      
-      return sphere;
+      sprite.scale.set(1.0, 0.25, 1); // 调整标签大小
+
+      return sprite;
     } catch (error) {
-      console.error('创建标注标记失败:', error);
+      console.error('创建标签精灵失败:', error);
       return null;
     }
   };
 
-  // 文字换行辅助函数
-  const wrapText = (context: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
-    const words = text.split('');
-    const lines: string[] = [];
-    let currentLine = '';
-
-    for (const char of words) {
-      const testLine = currentLine + char;
-      const metrics = context.measureText(testLine);
-      
-      if (metrics.width > maxWidth && currentLine !== '') {
-        lines.push(currentLine);
-        currentLine = char;
-      } else {
-        currentLine = testLine;
-      }
-    }
-    
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-    
-    return lines.length > 0 ? lines : [text];
-  };
 
   const animate = () => {
     if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
@@ -799,8 +857,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         getNodeMap: () => nodeMapRef.current,
         getAnnotations: () => annotationsRef.current
       };
+      
+      console.log('三维查看器控制接口已暴露:', Object.keys((containerRef.current as any)._viewerControls));
     }
-  }, []);
+  }, [coursewareData]); // 依赖于coursewareData，确保模型加载后重新暴露接口
 
   return (
     <div 
