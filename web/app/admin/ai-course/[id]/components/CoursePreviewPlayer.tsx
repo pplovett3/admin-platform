@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Progress, Space, message, Modal, Card } from 'antd';
 import { PlayCircleOutlined, PauseCircleOutlined, StepBackwardOutlined, StepForwardOutlined, SoundOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
+import ThreeDViewer from './ThreeDViewer';
 
 interface CoursePreviewPlayerProps {
   courseData: any;
@@ -19,7 +20,7 @@ interface PlaybackState {
 }
 
 export default function CoursePreviewPlayer({ courseData, visible, onClose }: CoursePreviewPlayerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const threeDViewerRef = useRef<HTMLDivElement>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     isPlaying: false,
     currentSegmentIndex: 0,
@@ -223,29 +224,51 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   const executeSceneActions = (actions: any[]) => {
     console.log('执行三维动作:', actions);
     
+    // 获取三维查看器的控制方法
+    const viewerControls = (threeDViewerRef.current as any)?._viewerControls;
+    
     actions.forEach((action, index) => {
       setTimeout(() => {
         switch (action.type) {
           case 'camera.focus':
             console.log(`[${index + 1}] 镜头对焦到:`, action.target?.nodeKey);
+            if (viewerControls && action.target?.nodeKey) {
+              viewerControls.focusOnNode(action.target.nodeKey);
+            }
             break;
           case 'annotation.show':
             console.log(`[${index + 1}] 显示标注:`, action.ids);
+            // TODO: 实现标注显示
             break;
           case 'annotation.hide':
             console.log(`[${index + 1}] 隐藏标注:`, action.ids);
+            // TODO: 实现标注隐藏
             break;
           case 'animation.play':
             console.log(`[${index + 1}] 播放动画:`, action.animationId);
+            if (viewerControls && action.animationId) {
+              viewerControls.playAnimation(action.animationId, action.startTime, action.endTime);
+            }
             break;
           case 'visibility.set':
             console.log(`[${index + 1}] 设置显隐:`, action.items);
+            if (viewerControls && action.items) {
+              action.items.forEach((item: any) => {
+                viewerControls.setNodeVisibility(item.nodeKey, item.visible);
+              });
+            }
             break;
           case 'highlight.show':
             console.log(`[${index + 1}] 显示高亮:`, action.target?.nodeKey);
+            if (viewerControls && action.target?.nodeKey) {
+              viewerControls.highlightNode(action.target.nodeKey, true);
+            }
             break;
           case 'highlight.hide':
             console.log(`[${index + 1}] 隐藏高亮:`, action.target?.nodeKey);
+            if (viewerControls && action.target?.nodeKey) {
+              viewerControls.highlightNode(action.target.nodeKey, false);
+            }
             break;
           default:
             console.log(`[${index + 1}] 未知动作:`, action.type);
@@ -334,61 +357,56 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
         {/* 播放器主体 */}
         <div style={{ flex: 1, display: 'flex', gap: 16 }}>
           {/* 左侧：三维视窗 */}
-          <div style={{ flex: 2, background: '#f5f5f5', borderRadius: 6, position: 'relative' }}>
-            <div 
-              ref={containerRef}
-              style={{ 
-                width: '100%', 
-                height: '100%',
-                background: 'linear-gradient(45deg, #f0f0f0 25%, transparent 25%), linear-gradient(-45deg, #f0f0f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #f0f0f0 75%), linear-gradient(-45deg, transparent 75%, #f0f0f0 75%)',
-                backgroundSize: '20px 20px',
-                backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
-                borderRadius: 6,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              {/* 三维内容占位 */}
-              <div style={{ textAlign: 'center', color: '#666' }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>🚗</div>
-                <div style={{ fontSize: 16, marginBottom: 8 }}>三维课件播放器</div>
-                <div style={{ fontSize: 12, color: '#999' }}>
-                  {coursewareData ? '课件已加载' : '等待课件加载...'}
-                </div>
-                {currentItem && (
-                  <div style={{ marginTop: 16, padding: 12, background: 'rgba(255,255,255,0.9)', borderRadius: 6 }}>
-                    <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 4 }}>
-                      当前项目: {currentItem.type}
-                    </div>
-                    <div style={{ fontSize: 12, color: '#666' }}>
-                      段落 {playbackState.currentSegmentIndex + 1} / 项目 {playbackState.currentItemIndex + 1}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 字幕叠加 */}
-              {currentSubtitle && (
-                <div style={{
-                  position: 'absolute',
-                  bottom: 20,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  background: 'rgba(0,0,0,0.8)',
-                  color: 'white',
-                  padding: '12px 24px',
-                  borderRadius: 6,
-                  maxWidth: '80%',
-                  textAlign: 'center',
-                  fontSize: 14,
-                  lineHeight: 1.5
-                }}>
-                  <SoundOutlined style={{ marginRight: 8 }} />
-                  {currentSubtitle}
-                </div>
-              )}
+          <div style={{ flex: 2, position: 'relative' }}>
+            <div ref={threeDViewerRef}>
+              <ThreeDViewer 
+                coursewareData={coursewareData}
+                width={800}
+                height={500}
+                onModelLoaded={(model) => {
+                  console.log('三维模型加载完成:', model);
+                }}
+              />
             </div>
+
+            {/* 状态叠加 */}
+            {currentItem && (
+              <div style={{
+                position: 'absolute',
+                top: 16,
+                left: 16,
+                background: 'rgba(0,0,0,0.7)',
+                color: 'white',
+                padding: '8px 16px',
+                borderRadius: 6,
+                fontSize: 12
+              }}>
+                <div style={{ fontWeight: 'bold' }}>
+                  {currentItem.type} - 段落 {playbackState.currentSegmentIndex + 1} / 项目 {playbackState.currentItemIndex + 1}
+                </div>
+              </div>
+            )}
+
+            {/* 字幕叠加 */}
+            {currentSubtitle && (
+              <div style={{
+                position: 'absolute',
+                bottom: 20,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'rgba(0,0,0,0.8)',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: 6,
+                maxWidth: '80%',
+                textAlign: 'center',
+                fontSize: 14,
+                lineHeight: 1.5
+              }}>
+                <SoundOutlined style={{ marginRight: 8 }} />
+                {currentSubtitle}
+              </div>
+            )}
           </div>
 
           {/* 右侧：图片和信息 */}

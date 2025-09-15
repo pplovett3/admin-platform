@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from 'react';
 import { Button, Space, message } from 'antd';
+import { authFetch } from '@/app/_lib/api';
+import ThreeDViewer from './ThreeDViewer';
 
 interface CoursewareViewerProps {
   coursewareId: string;
@@ -27,11 +29,11 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
   const loadCourseware = async () => {
     setLoading(true);
     try {
-      // 这里应该加载课件数据和初始化三维查看器
-      // 暂时显示占位内容
-      setCoursewareData({ id: coursewareId, loaded: true });
+      const data = await authFetch<any>(`/api/coursewares/${coursewareId}`);
+      setCoursewareData(data);
       message.success('课件加载成功');
     } catch (error) {
+      console.error('加载课件失败:', error);
       message.error('课件加载失败');
     } finally {
       setLoading(false);
@@ -94,39 +96,39 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
         ref={containerRef}
         style={{ 
           flex: 1, 
-          position: 'relative',
-          background: 'linear-gradient(45deg, #f0f0f0 25%, transparent 25%), linear-gradient(-45deg, #f0f0f0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #f0f0f0 75%), linear-gradient(-45deg, transparent 75%, #f0f0f0 75%)',
-          backgroundSize: '20px 20px',
-          backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+          position: 'relative'
         }}
       >
-        {/* 占位内容 */}
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          textAlign: 'center',
-          color: '#666'
-        }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🚗</div>
-          <div style={{ fontSize: 16, marginBottom: 8 }}>三维课件查看器</div>
-          <div style={{ fontSize: 12, color: '#999' }}>
-            {coursewareData ? '课件已加载，集成开发中...' : '等待课件加载...'}
-          </div>
-          {selectedItem && (
-            <div style={{ marginTop: 16, padding: 12, background: 'rgba(255,255,255,0.9)', borderRadius: 6 }}>
-              <div style={{ fontSize: 14, fontWeight: 'bold', marginBottom: 4 }}>
-                当前选中: {selectedItem.type}
-              </div>
-              <div style={{ fontSize: 12, color: '#666' }}>
-                {selectedItem.say?.slice(0, 50)}...
-              </div>
-            </div>
-          )}
-        </div>
+        <ThreeDViewer 
+          coursewareData={coursewareData}
+          width={containerRef.current?.clientWidth || 800}
+          height={containerRef.current?.clientHeight || 600}
+          onModelLoaded={(model) => {
+            console.log('编辑器中的三维模型加载完成:', model);
+          }}
+        />
 
         {/* 信息叠加层 */}
+        {selectedItem && (
+          <div style={{
+            position: 'absolute',
+            top: 16,
+            left: 16,
+            background: 'rgba(0,0,0,0.7)',
+            color: 'white',
+            padding: '8px 16px',
+            borderRadius: 6,
+            fontSize: 12
+          }}>
+            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+              当前选中: {selectedItem.type}
+            </div>
+            <div style={{ fontSize: 11 }}>
+              {selectedItem.say?.slice(0, 50)}...
+            </div>
+          </div>
+        )}
+
         {selectedItem?.type === 'image.explain' && selectedItem.image?.src && (
           <div style={{
             position: 'absolute',
