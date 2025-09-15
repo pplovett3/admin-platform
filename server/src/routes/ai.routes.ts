@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requireRole } from '../middlewares/auth';
-import { generateCourse, searchImages, ttsPreview, queryTTS } from '../controllers/ai.controller';
+import { generateCourse, searchImages, ttsPreview, queryTTS, getTTSProviders } from '../controllers/ai.controller';
 
 const router = Router();
 
@@ -17,5 +17,8 @@ router.post('/tts', requireRole(['superadmin', 'schoolAdmin', 'teacher']), ttsPr
 
 // 查询TTS任务状态
 router.get('/tts/status', requireRole(['superadmin', 'schoolAdmin', 'teacher']), queryTTS);
+
+// 获取TTS供应商和音色列表
+router.get('/tts/providers', requireRole(['superadmin', 'schoolAdmin', 'teacher']), getTTSProviders);
 
 export default router;

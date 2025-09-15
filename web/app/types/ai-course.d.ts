@@ -1,8 +1,17 @@
 export interface VoiceConfig {
-  provider?: string;
+  provider?: 'minimax' | 'azure';
   voice?: string;
   rate?: number;
   style?: string;
+  // Minimax 特有参数
+  gender?: 'male' | 'female';
+  voice_id?: string;
+  speed?: number;
+  vol?: number;
+  pitch?: number;
+  // Azure 特有参数
+  language?: string;
+  voiceName?: string;
 }
 
 export interface SceneAction {

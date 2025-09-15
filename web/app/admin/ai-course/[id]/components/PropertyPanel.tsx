@@ -328,68 +328,124 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
           </Card>
         )}
 
-        <Card title="TTS配置 (Minimax)" size="small">
-          <Form.Item label="性别" name={['tts', 'gender']}>
-            <Select placeholder="选择性别" onChange={(value) => {
-              // 性别改变时重置音色
-              form.setFieldValue(['tts', 'voice_id'], undefined);
+        <Card title="TTS配置" size="small">
+          <Form.Item label="TTS供应商" name={['tts', 'provider']}>
+            <Select placeholder="选择TTS供应商" onChange={(value) => {
+              // 供应商改变时重置相关配置
+              form.setFieldsValue({
+                tts: {
+                  provider: value,
+                  voice_id: undefined,
+                  voiceName: undefined,
+                  gender: undefined,
+                  rate: value === 'azure' ? '+0%' : 1.0,
+                  speed: value === 'minimax' ? 1.0 : undefined,
+                  vol: value === 'minimax' ? 1.0 : undefined,
+                  pitch: value === 'azure' ? '+0Hz' : 0,
+                  style: value === 'azure' ? 'general' : undefined
+                }
+              });
             }}>
-              <Select.Option value="female">女声</Select.Option>
-              <Select.Option value="male">男声</Select.Option>
+              <Select.Option value="azure">Azure TTS (快速)</Select.Option>
+              <Select.Option value="minimax">Minimax TTS (高质量)</Select.Option>
             </Select>
           </Form.Item>
-          
-          <Form.Item label="音色" name={['tts', 'voice_id']}>
-            <Select placeholder="选择音色" disabled={!form.getFieldValue(['tts', 'gender'])}>
-              {form.getFieldValue(['tts', 'gender']) === 'female' && (
-                <>
-                  <Select.Option value="female-shaonv">少女音色</Select.Option>
-                  <Select.Option value="female-yujie">御姐音色</Select.Option>
-                  <Select.Option value="female-chengshu">成熟女性音色</Select.Option>
-                  <Select.Option value="female-tianmei">甜美女性音色</Select.Option>
-                  <Select.Option value="presenter_female">女性主持人</Select.Option>
-                  <Select.Option value="audiobook_female_1">女性有声书1</Select.Option>
-                  <Select.Option value="audiobook_female_2">女性有声书2</Select.Option>
-                  <Select.Option value="lovely_girl">萌萌女童</Select.Option>
-                  <Select.Option value="tianxin_xiaoling">甜心小玲</Select.Option>
-                  <Select.Option value="qiaopi_mengmei">俏皮萌妹</Select.Option>
-                  <Select.Option value="wumei_yujie">妩媚御姐</Select.Option>
-                  <Select.Option value="diadia_xuemei">嗲嗲学妹</Select.Option>
-                  <Select.Option value="danya_xuejie">淡雅学姐</Select.Option>
-                </>
-              )}
-              {form.getFieldValue(['tts', 'gender']) === 'male' && (
-                <>
-                  <Select.Option value="male-qn-qingse">青涩青年音色</Select.Option>
-                  <Select.Option value="male-qn-jingying">精英青年音色</Select.Option>
-                  <Select.Option value="male-qn-badao">霸道青年音色</Select.Option>
-                  <Select.Option value="male-qn-daxuesheng">青年大学生音色</Select.Option>
-                  <Select.Option value="presenter_male">男性主持人</Select.Option>
-                  <Select.Option value="audiobook_male_1">男性有声书1</Select.Option>
-                  <Select.Option value="audiobook_male_2">男性有声书2</Select.Option>
-                  <Select.Option value="clever_boy">聪明男童</Select.Option>
-                  <Select.Option value="cute_boy">可爱男童</Select.Option>
-                  <Select.Option value="bingjiao_didi">病娇弟弟</Select.Option>
-                  <Select.Option value="junlang_nanyou">俊朗男友</Select.Option>
-                  <Select.Option value="chunzhen_xuedi">纯真学弟</Select.Option>
-                  <Select.Option value="lengdan_xiongzhang">冷淡学长</Select.Option>
-                  <Select.Option value="badao_shaoye">霸道少爷</Select.Option>
-                </>
-              )}
-            </Select>
-          </Form.Item>
-          
-          <Form.Item label="语速" name={['tts', 'speed']}>
-            <Input type="number" step="0.1" placeholder="1.0" min="0.5" max="2.0" />
-          </Form.Item>
 
-          <Form.Item label="音量" name={['tts', 'vol']}>
-            <Input type="number" step="0.1" placeholder="1.0" min="0.1" max="2.0" />
-          </Form.Item>
+          {form.getFieldValue(['tts', 'provider']) === 'minimax' && (
+            <>
+              <Form.Item label="性别" name={['tts', 'gender']}>
+                <Select placeholder="选择性别" onChange={(value) => {
+                  // 性别改变时重置音色
+                  form.setFieldValue(['tts', 'voice_id'], undefined);
+                }}>
+                  <Select.Option value="female">女声</Select.Option>
+                  <Select.Option value="male">男声</Select.Option>
+                </Select>
+              </Form.Item>
+              
+              <Form.Item label="音色" name={['tts', 'voice_id']}>
+                <Select placeholder="选择音色" disabled={!form.getFieldValue(['tts', 'gender'])}>
+                  {form.getFieldValue(['tts', 'gender']) === 'female' && (
+                    <>
+                      <Select.Option value="presenter_female">女播音员</Select.Option>
+                      <Select.Option value="audiobook_female_1">女有声书1</Select.Option>
+                      <Select.Option value="audiobook_female_2">女有声书2</Select.Option>
+                      <Select.Option value="female-shaonv">少女音</Select.Option>
+                      <Select.Option value="female-yujie">御姐音</Select.Option>
+                      <Select.Option value="female-qn-daxuesheng">大学生女声</Select.Option>
+                    </>
+                  )}
+                  {form.getFieldValue(['tts', 'gender']) === 'male' && (
+                    <>
+                      <Select.Option value="presenter_male">男播音员</Select.Option>
+                      <Select.Option value="audiobook_male_1">男有声书1</Select.Option>
+                      <Select.Option value="audiobook_male_2">男有声书2</Select.Option>
+                      <Select.Option value="male-qn-jingying">精英男声</Select.Option>
+                      <Select.Option value="male-qn-qingse">青涩男声</Select.Option>
+                      <Select.Option value="male-qn-badao">霸道男声</Select.Option>
+                    </>
+                  )}
+                </Select>
+              </Form.Item>
+              
+              <Form.Item label="语速" name={['tts', 'speed']}>
+                <Input type="number" step="0.1" placeholder="1.0" min="0.5" max="2.0" />
+              </Form.Item>
 
-          <Form.Item label="音调" name={['tts', 'pitch']}>
-            <Input type="number" step="1" placeholder="0" min="-12" max="12" />
-          </Form.Item>
+              <Form.Item label="音量" name={['tts', 'vol']}>
+                <Input type="number" step="0.1" placeholder="1.0" min="0.1" max="2.0" />
+              </Form.Item>
+
+              <Form.Item label="音调" name={['tts', 'pitch']}>
+                <Input type="number" step="1" placeholder="0" min="-12" max="12" />
+              </Form.Item>
+            </>
+          )}
+
+          {form.getFieldValue(['tts', 'provider']) === 'azure' && (
+            <>
+              <Form.Item label="音色" name={['tts', 'voiceName']}>
+                <Select placeholder="选择音色">
+                  <Select.Option value="zh-CN-XiaoxiaoNeural">晓晓 (女声)</Select.Option>
+                  <Select.Option value="zh-CN-YunxiNeural">云希 (男声)</Select.Option>
+                  <Select.Option value="zh-CN-YunyangNeural">云扬 (男声)</Select.Option>
+                  <Select.Option value="zh-CN-XiaoyiNeural">晓伊 (女声)</Select.Option>
+                  <Select.Option value="zh-CN-YunjianNeural">云健 (男声)</Select.Option>
+                  <Select.Option value="zh-CN-XiaomengNeural">晓梦 (女声)</Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item label="语速" name={['tts', 'rate']}>
+                <Select placeholder="+0%">
+                  <Select.Option value="-50%">慢速 (-50%)</Select.Option>
+                  <Select.Option value="-25%">较慢 (-25%)</Select.Option>
+                  <Select.Option value="+0%">正常 (+0%)</Select.Option>
+                  <Select.Option value="+25%">较快 (+25%)</Select.Option>
+                  <Select.Option value="+50%">快速 (+50%)</Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item label="音调" name={['tts', 'pitch']}>
+                <Select placeholder="+0Hz">
+                  <Select.Option value="-50Hz">低音调 (-50Hz)</Select.Option>
+                  <Select.Option value="-25Hz">稍低 (-25Hz)</Select.Option>
+                  <Select.Option value="+0Hz">正常 (+0Hz)</Select.Option>
+                  <Select.Option value="+25Hz">稍高 (+25Hz)</Select.Option>
+                  <Select.Option value="+50Hz">高音调 (+50Hz)</Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item label="风格" name={['tts', 'style']}>
+                <Select placeholder="general">
+                  <Select.Option value="general">通用</Select.Option>
+                  <Select.Option value="assistant">助手</Select.Option>
+                  <Select.Option value="chat">聊天</Select.Option>
+                  <Select.Option value="cheerful">愉悦</Select.Option>
+                  <Select.Option value="gentle">温柔</Select.Option>
+                </Select>
+              </Form.Item>
+            </>
+          )}
           
           <Button 
             loading={false}
@@ -399,109 +455,161 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                 message.warning('请先输入要试听的文本');
                 return;
               }
-              if (!ttsConfig?.voice_id) {
-                message.warning('请先选择音色');
+              
+              if (!ttsConfig?.provider) {
+                message.warning('请先选择TTS供应商');
                 return;
               }
               
-              let hide = message.loading('正在创建TTS任务...', 0);
+              // 验证必要参数
+              if (ttsConfig.provider === 'minimax' && !ttsConfig.voice_id) {
+                message.warning('请先选择Minimax音色');
+                return;
+              }
               
-              try {
-                // 1. 创建TTS任务
-                const createResponse = await authFetch<any>('/api/ai/tts', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    text: selectedItem.say.slice(0, 100), // 限制试听文本长度
-                    voice_id: ttsConfig.voice_id,
-                    speed: ttsConfig.speed || 1.0,
-                    vol: ttsConfig.vol || 1.0,
-                    pitch: ttsConfig.pitch || 0,
-                    model: 'speech-01-turbo'
-                  })
-                });
+              if (ttsConfig.provider === 'azure' && !ttsConfig.voiceName) {
+                message.warning('请先选择Azure音色');
+                return;
+              }
+              
+              const text = selectedItem.say.slice(0, 100); // 限制试听文本长度
+              
+              if (ttsConfig.provider === 'azure') {
+                // Azure TTS - 同步处理
+                let hide = message.loading('正在生成语音...', 0);
                 
-                if (!createResponse.taskId) {
-                  throw new Error('任务创建失败');
-                }
-
-                // 更新loading状态
-                hide();
-                hide = message.loading(`正在生成语音 (预计1-2分钟)...`, 0);
-
-                // 2. 轮询任务状态
-                let attempts = 0;
-                const maxAttempts = 120; // 最多等待2分钟
-                let pollInterval = 1000; // 初始轮询间隔1秒
-                
-                const pollStatus = async (): Promise<void> => {
-                  if (attempts >= maxAttempts) {
-                    throw new Error('语音生成超时，请检查网络或稍后重试');
-                  }
-                  
-                  attempts++;
-                  
-                  try {
-                    const statusResponse = await authFetch<any>(`/api/ai/tts/status?task_id=${createResponse.taskId}`);
-                    
-                    if (statusResponse.status === 'Success' && statusResponse.downloadUrl) {
-                      hide();
-                      // 播放音频
-                      const audio = new Audio(statusResponse.downloadUrl);
-                      audio.play();
-                      message.success('开始播放试听音频');
-                    } else if (statusResponse.status === 'Failed') {
-                      throw new Error('语音生成失败，请重试');
-                    } else if (statusResponse.status === 'Processing') {
-                      // 动态调整轮询间隔，避免频繁请求
-                      if (attempts > 10) pollInterval = 2000; // 10秒后改为2秒间隔
-                      if (attempts > 30) pollInterval = 3000; // 30秒后改为3秒间隔
-                      
-                      // 更新progress信息
-                      if (attempts % 10 === 0) {
-                        hide();
-                        const elapsed = Math.floor(attempts * pollInterval / 1000);
-                        hide = message.loading(`正在生成语音 (已等待${elapsed}秒)...`, 0);
-                      }
-                      
-                      // 继续等待
-                      setTimeout(pollStatus, pollInterval);
-                    } else if (statusResponse.status === 'Expired') {
-                      throw new Error('任务已过期，请重新生成');
-                    } else {
-                      throw new Error(`未知状态: ${statusResponse.status}`);
-                    }
-                  } catch (error: any) {
-                    // 网络错误或API错误，等待后重试
-                    if (attempts < maxAttempts && error?.message?.includes('fetch')) {
-                      console.warn(`轮询失败，第${attempts}次重试:`, error);
-                      setTimeout(pollStatus, pollInterval);
-                    } else {
-                      throw error;
-                    }
-                  }
-                };
-                
-                // 开始轮询，延迟2秒开始（给服务器处理时间）
-                setTimeout(pollStatus, 2000);
-                
-              } catch (error: any) {
-                hide();
-                const errorMsg = error?.message || 'TTS试听失败';
-                
-                // 特殊处理余额不足错误
-                if (errorMsg.includes('余额不足') || errorMsg.includes('insufficient balance')) {
-                  Modal.error({
-                    title: 'Minimax账户余额不足',
-                    content: (
-                      <div>
-                        <p>您的Minimax账户余额不足，无法生成TTS音频。</p>
-                        <p>请登录 <a href="https://platform.minimaxi.com/" target="_blank" rel="noopener noreferrer">Minimax控制台</a> 充值后重试。</p>
-                      </div>
-                    ),
+                try {
+                  const response = await authFetch<any>('/api/ai/tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      provider: 'azure',
+                      text,
+                      voiceName: ttsConfig.voiceName,
+                      language: 'zh-CN',
+                      rate: ttsConfig.rate || '+0%',
+                      pitch: ttsConfig.pitch || '+0Hz',
+                      style: ttsConfig.style || 'general'
+                    })
                   });
-                } else {
+                  
+                  hide();
+                  
+                  if (response.audioUrl) {
+                    // 播放音频
+                    const audio = new Audio(response.audioUrl);
+                    audio.play();
+                    message.success('开始播放试听音频');
+                  } else {
+                    throw new Error('未获取到音频URL');
+                  }
+                } catch (error: any) {
+                  hide();
+                  const errorMsg = error?.message || 'Azure TTS试听失败';
                   message.error(errorMsg);
+                }
+              } else if (ttsConfig.provider === 'minimax') {
+                // Minimax TTS - 异步处理
+                let hide = message.loading('正在创建TTS任务...', 0);
+                
+                try {
+                  // 1. 创建TTS任务
+                  const createResponse = await authFetch<any>('/api/ai/tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      provider: 'minimax',
+                      text,
+                      voice_id: ttsConfig.voice_id,
+                      speed: ttsConfig.speed || 1.0,
+                      vol: ttsConfig.vol || 1.0,
+                      pitch: ttsConfig.pitch || 0,
+                      model: 'speech-01-turbo'
+                    })
+                  });
+                  
+                  if (!createResponse.taskId) {
+                    throw new Error('任务创建失败');
+                  }
+
+                  // 更新loading状态
+                  hide();
+                  hide = message.loading(`正在生成语音 (预计1-2分钟)...`, 0);
+
+                  // 2. 轮询任务状态
+                  let attempts = 0;
+                  const maxAttempts = 120; // 最多等待2分钟
+                  let pollInterval = 1000; // 初始轮询间隔1秒
+                  
+                  const pollStatus = async (): Promise<void> => {
+                    if (attempts >= maxAttempts) {
+                      throw new Error('语音生成超时，请检查网络或稍后重试');
+                    }
+                    
+                    attempts++;
+                    
+                    try {
+                      const statusResponse = await authFetch<any>(`/api/ai/tts/status?task_id=${createResponse.taskId}`);
+                      
+                      if (statusResponse.status === 'Success' && statusResponse.downloadUrl) {
+                        hide();
+                        // 播放音频
+                        const audio = new Audio(statusResponse.downloadUrl);
+                        audio.play();
+                        message.success('开始播放试听音频');
+                      } else if (statusResponse.status === 'Failed') {
+                        throw new Error('语音生成失败，请重试');
+                      } else if (statusResponse.status === 'Processing') {
+                        // 动态调整轮询间隔，避免频繁请求
+                        if (attempts > 10) pollInterval = 2000; // 10秒后改为2秒间隔
+                        if (attempts > 30) pollInterval = 3000; // 30秒后改为3秒间隔
+                        
+                        // 更新progress信息
+                        if (attempts % 10 === 0) {
+                          hide();
+                          const elapsed = Math.floor(attempts * pollInterval / 1000);
+                          hide = message.loading(`正在生成语音 (已等待${elapsed}秒)...`, 0);
+                        }
+                        
+                        // 继续等待
+                        setTimeout(pollStatus, pollInterval);
+                      } else if (statusResponse.status === 'Expired') {
+                        throw new Error('任务已过期，请重新生成');
+                      } else {
+                        throw new Error(`未知状态: ${statusResponse.status}`);
+                      }
+                    } catch (error: any) {
+                      // 网络错误或API错误，等待后重试
+                      if (attempts < maxAttempts && error?.message?.includes('fetch')) {
+                        console.warn(`轮询失败，第${attempts}次重试:`, error);
+                        setTimeout(pollStatus, pollInterval);
+                      } else {
+                        throw error;
+                      }
+                    }
+                  };
+                  
+                  // 开始轮询，延迟2秒开始（给服务器处理时间）
+                  setTimeout(pollStatus, 2000);
+                  
+                } catch (error: any) {
+                  hide();
+                  const errorMsg = error?.message || 'Minimax TTS试听失败';
+                  
+                  // 特殊处理余额不足错误
+                  if (errorMsg.includes('余额不足') || errorMsg.includes('insufficient balance')) {
+                    Modal.error({
+                      title: 'Minimax账户余额不足',
+                      content: (
+                        <div>
+                          <p>您的Minimax账户余额不足，无法生成TTS音频。</p>
+                          <p>请登录 <a href="https://platform.minimaxi.com/" target="_blank" rel="noopener noreferrer">Minimax控制台</a> 充值后重试。</p>
+                        </div>
+                      ),
+                    });
+                  } else {
+                    message.error(errorMsg);
+                  }
                 }
               }
             }}

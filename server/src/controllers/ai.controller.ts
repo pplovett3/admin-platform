@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { CoursewareModel } from '../models/Courseware';
-import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl } from '../utils/ai-services';
+import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, getAzureVoices } from '../utils/ai-services';
 
 // 生成AI课程
 export async function generateCourse(req: Request, res: Response) {
@@ -115,59 +115,98 @@ export async function searchImages(req: Request, res: Response) {
   }
 }
 
-// TTS 预览合成 - 使用Minimax异步API
+// TTS 预览合成 - 支持多供应商
 export async function ttsPreview(req: Request, res: Response) {
   try {
-    const { text, voice_id, speed, vol, pitch, model } = req.body || {};
+    const { text, provider, ...providerParams } = req.body || {};
     
     if (!text?.trim()) {
       return res.status(400).json({ message: 'Text is required' });
     }
 
-    if (!voice_id) {
-      return res.status(400).json({ message: 'voice_id is required' });
+    if (!provider || !['minimax', 'azure'].includes(provider)) {
+      return res.status(400).json({ message: 'Valid provider (minimax/azure) is required' });
     }
 
-    // 调用Minimax TTS异步API
-    const result = await generateTTSWithMinimax({
-      text: text.trim(),
-      model: model || 'speech-01-turbo',
-      voice_setting: {
+    if (provider === 'minimax') {
+      const { voice_id, speed, vol, pitch, model } = providerParams;
+      
+      if (!voice_id) {
+        return res.status(400).json({ message: 'voice_id is required for Minimax' });
+      }
+
+      // 调用Minimax TTS异步API
+      const result = await generateTTSWithMinimax({
+        text: text.trim(),
+        model: model || 'speech-01-turbo',
+        voice_setting: {
+          voice_id,
+          speed: speed || 1.0,
+          vol: vol || 1.0,
+          pitch: pitch || 0
+        },
+        audio_setting: {
+          sample_rate: 32000,
+          bitrate: 128000,
+          format: 'mp3',
+          channel: 2
+        }
+      });
+
+      if (result.base_resp?.status_code !== 0) {
+        const errorMsg = result.base_resp?.status_msg || 'TTS generation failed';
+        // 处理常见错误信息
+        if (errorMsg.includes('insufficient balance')) {
+          throw new Error('Minimax账户余额不足，请充值后重试');
+        } else if (errorMsg.includes('rate limit')) {
+          throw new Error('请求频率过高，请稍后重试');
+        } else if (errorMsg.includes('authentication')) {
+          throw new Error('API密钥验证失败，请检查配置');
+        }
+        throw new Error(`TTS生成失败: ${errorMsg}`);
+      }
+      
+      res.json({
+        provider: 'minimax',
+        text: text.trim(),
         voice_id,
-        speed: speed || 1.0,
-        vol: vol || 1.0,
-        pitch: pitch || 0
-      },
-      audio_setting: {
-        sample_rate: 32000,
-        bitrate: 128000,
-        format: 'mp3',
-        channel: 2
+        taskId: result.task_id,
+        fileId: result.file_id,
+        usageCharacters: result.usage_characters,
+        isAsync: true,
+        message: 'TTS任务已创建，请使用taskId查询生成状态'
+      });
+    } else if (provider === 'azure') {
+      const { voiceName, language, rate, pitch, style } = providerParams;
+      
+      if (!voiceName) {
+        return res.status(400).json({ message: 'voiceName is required for Azure' });
       }
-    });
 
-    if (result.base_resp?.status_code !== 0) {
-      const errorMsg = result.base_resp?.status_msg || 'TTS generation failed';
-      // 处理常见错误信息
-      if (errorMsg.includes('insufficient balance')) {
-        throw new Error('Minimax账户余额不足，请充值后重试');
-      } else if (errorMsg.includes('rate limit')) {
-        throw new Error('请求频率过高，请稍后重试');
-      } else if (errorMsg.includes('authentication')) {
-        throw new Error('API密钥验证失败，请检查配置');
+      // 调用Azure TTS同步API
+      const result = await generateTTSWithAzure({
+        text: text.trim(),
+        voiceName,
+        language: language || 'zh-CN',
+        rate: rate || '+0%',
+        pitch: pitch || '+0Hz',
+        style: style || 'general'
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || 'Azure TTS生成失败');
       }
-      throw new Error(`TTS生成失败: ${errorMsg}`);
+      
+      res.json({
+        provider: 'azure',
+        text: text.trim(),
+        voiceName,
+        audioUrl: result.audioUrl,
+        duration: result.duration,
+        isAsync: false,
+        message: 'TTS生成成功，可直接播放'
+      });
     }
-    
-    res.json({
-      text: text.trim(),
-      voice_id,
-      taskId: result.task_id,
-      fileId: result.file_id,
-      usageCharacters: result.usage_characters,
-      isPreview: true,
-      message: 'TTS任务已创建，请使用taskId查询生成状态'
-    });
   } catch (error) {
     console.error('TTS preview error:', error);
     const message = (error as any)?.message || 'Internal server error';
@@ -175,7 +214,7 @@ export async function ttsPreview(req: Request, res: Response) {
   }
 }
 
-// 查询TTS任务状态
+// 查询TTS任务状态（仅用于Minimax）
 export async function queryTTS(req: Request, res: Response) {
   try {
     const { task_id } = req.query;
@@ -210,6 +249,84 @@ export async function queryTTS(req: Request, res: Response) {
     });
   } catch (error) {
     console.error('Query TTS error:', error);
+    const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}
+
+// 获取TTS供应商和音色列表
+export async function getTTSProviders(req: Request, res: Response) {
+  try {
+    const providers = [];
+
+    // Minimax 音色列表（基于之前提供的音色列表）
+    const minimaxVoices = [
+      { id: 'presenter_female', name: '女播音员', gender: 'female', locale: 'zh-CN' },
+      { id: 'presenter_male', name: '男播音员', gender: 'male', locale: 'zh-CN' },
+      { id: 'audiobook_male_1', name: '男有声书1', gender: 'male', locale: 'zh-CN' },
+      { id: 'audiobook_male_2', name: '男有声书2', gender: 'male', locale: 'zh-CN' },
+      { id: 'audiobook_female_1', name: '女有声书1', gender: 'female', locale: 'zh-CN' },
+      { id: 'audiobook_female_2', name: '女有声书2', gender: 'female', locale: 'zh-CN' },
+      { id: 'male-qn-jingying', name: '精英男声', gender: 'male', locale: 'zh-CN' },
+      { id: 'female-shaonv', name: '少女音', gender: 'female', locale: 'zh-CN' },
+      { id: 'female-yujie', name: '御姐音', gender: 'female', locale: 'zh-CN' },
+      { id: 'male-qn-qingse', name: '青涩男声', gender: 'male', locale: 'zh-CN' },
+      { id: 'male-qn-badao', name: '霸道男声', gender: 'male', locale: 'zh-CN' },
+      { id: 'female-qn-daxuesheng', name: '大学生女声', gender: 'female', locale: 'zh-CN' }
+    ];
+
+    providers.push({
+      id: 'minimax',
+      name: 'Minimax TTS',
+      description: '海螺AI语音合成服务',
+      isAsync: true,
+      voices: minimaxVoices,
+      supportedFeatures: ['speed', 'volume', 'pitch'],
+      responseTime: '1-2分钟'
+    });
+
+    // Azure 音色列表
+    try {
+      const azureVoices = await getAzureVoices();
+      providers.push({
+        id: 'azure',
+        name: 'Azure TTS',
+        description: '微软Azure语音合成服务',
+        isAsync: false,
+        voices: azureVoices.map(voice => ({
+          id: voice.Name,
+          name: voice.LocalName || voice.DisplayName,
+          gender: voice.Gender,
+          locale: voice.Locale,
+          styles: voice.StyleList || []
+        })),
+        supportedFeatures: ['rate', 'pitch', 'style'],
+        responseTime: '3-5秒'
+      });
+    } catch (error) {
+      console.warn('Failed to get Azure voices, adding minimal provider info:', error);
+      providers.push({
+        id: 'azure',
+        name: 'Azure TTS',
+        description: '微软Azure语音合成服务（配置不完整）',
+        isAsync: false,
+        voices: [],
+        supportedFeatures: ['rate', 'pitch', 'style'],
+        responseTime: '3-5秒',
+        error: 'API配置不完整'
+      });
+    }
+
+    res.json({
+      providers,
+      recommendation: {
+        fastResponse: 'azure',
+        highQuality: 'minimax',
+        default: 'azure'
+      }
+    });
+  } catch (error) {
+    console.error('Get TTS providers error:', error);
     const message = (error as any)?.message || 'Internal server error';
     res.status(500).json({ message });
   }

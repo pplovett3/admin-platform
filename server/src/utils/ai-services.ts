@@ -463,3 +463,214 @@ export async function getFileDownloadUrl(fileId: number): Promise<string | null>
     return null;
   }
 }
+
+// Azure TTS 接口
+export interface AzureTTSParams {
+  text: string;
+  voiceName: string; // 如 'zh-CN-XiaoxiaoNeural'
+  language?: string; // 如 'zh-CN'
+  rate?: string; // 如 '+0%', '-20%', '+50%'
+  pitch?: string; // 如 '+0Hz', '-50Hz', '+200Hz'
+  style?: string; // 如 'gentle', 'cheerful'
+  outputFormat?: string; // 如 'riff-16khz-16bit-mono-pcm'
+}
+
+export interface AzureTTSResult {
+  success: boolean;
+  audioData?: Buffer;
+  audioUrl?: string;
+  duration?: number;
+  error?: string;
+}
+
+export interface AzureVoice {
+  Name: string;
+  DisplayName: string;
+  LocalName: string;
+  ShortName: string;
+  Gender: string;
+  Locale: string;
+  StyleList?: string[];
+}
+
+// Azure TTS 访问令牌缓存
+let azureTokenCache: { token: string; expiry: number } | null = null;
+
+// 获取Azure TTS访问令牌
+async function getAzureAccessToken(): Promise<string> {
+  // 检查缓存的令牌是否还有效（提前1分钟刷新）
+  if (azureTokenCache && azureTokenCache.expiry > Date.now() + 60000) {
+    return azureTokenCache.token;
+  }
+
+  if (!config.azureSpeechKey || !config.azureSpeechRegion) {
+    throw new Error('Azure Speech Key and Region are required');
+  }
+
+  try {
+    const response = await fetch(
+      `https://${config.azureSpeechRegion}.api.cognitive.microsoft.com/sts/v1.0/issueToken`,
+      {
+        method: 'POST',
+        headers: {
+          'Ocp-Apim-Subscription-Key': config.azureSpeechKey,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get Azure access token: ${response.status} ${response.statusText}`);
+    }
+
+    const token = await response.text();
+    
+    // 缓存令牌（有效期10分钟）
+    azureTokenCache = {
+      token,
+      expiry: Date.now() + (10 * 60 * 1000) // 10分钟
+    };
+
+    return token;
+  } catch (error) {
+    console.error('Azure access token error:', error);
+    throw error;
+  }
+}
+
+// 获取Azure TTS可用音色列表
+export async function getAzureVoices(): Promise<AzureVoice[]> {
+  try {
+    if (!config.azureSpeechKey || !config.azureSpeechRegion) {
+      console.warn('Azure Speech Key/Region not configured, returning mock voices');
+      return [
+        {
+          Name: 'zh-CN-XiaoxiaoNeural',
+          DisplayName: 'Xiaoxiao',
+          LocalName: '晓晓',
+          ShortName: 'zh-CN-XiaoxiaoNeural',
+          Gender: 'Female',
+          Locale: 'zh-CN',
+          StyleList: ['general', 'assistant', 'chat', 'cheerful', 'gentle']
+        },
+        {
+          Name: 'zh-CN-YunxiNeural',
+          DisplayName: 'Yunxi',
+          LocalName: '云希',
+          ShortName: 'zh-CN-YunxiNeural',
+          Gender: 'Male',
+          Locale: 'zh-CN',
+          StyleList: ['general', 'assistant', 'chat', 'cheerful']
+        }
+      ];
+    }
+
+    const response = await fetch(
+      `https://${config.azureSpeechRegion}.tts.speech.microsoft.com/cognitiveservices/voices/list`,
+      {
+        headers: {
+          'Ocp-Apim-Subscription-Key': config.azureSpeechKey
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get Azure voices: ${response.status} ${response.statusText}`);
+    }
+
+    const voices: AzureVoice[] = await response.json();
+    // 只返回中文音色
+    return voices.filter(voice => voice.Locale.startsWith('zh-'));
+  } catch (error) {
+    console.error('Azure voices error:', error);
+    throw error;
+  }
+}
+
+// Azure TTS 文本转语音（同步API）
+export async function generateTTSWithAzure(params: AzureTTSParams): Promise<AzureTTSResult> {
+  try {
+    if (!config.azureSpeechKey || !config.azureSpeechRegion) {
+      console.warn('Azure Speech Key/Region not configured, returning mock result');
+      return {
+        success: true,
+        audioUrl: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav',
+        duration: 5000
+      };
+    }
+
+    const token = await getAzureAccessToken();
+    
+    // 构建SSML
+    const ssml = `
+    <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${params.language || 'zh-CN'}'>
+      <voice name='${params.voiceName}'>
+        ${params.style ? `<mstts:express-as style='${params.style}'>` : ''}
+        <prosody rate='${params.rate || '+0%'}' pitch='${params.pitch || '+0Hz'}'>
+          ${params.text}
+        </prosody>
+        ${params.style ? '</mstts:express-as>' : ''}
+      </voice>
+    </speak>
+    `.trim();
+
+    const response = await fetch(
+      `https://${config.azureSpeechRegion}.tts.speech.microsoft.com/cognitiveservices/v1`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': params.outputFormat || 'audio-16khz-32kbitrate-mono-mp3',
+          'User-Agent': 'CoursewareEditor'
+        },
+        body: ssml
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMsg = `Azure TTS API error: ${response.status} ${response.statusText}`;
+      
+      try {
+        const errorData = JSON.parse(errorText);
+        if (errorData.message) {
+          errorMsg = errorData.message;
+        }
+      } catch (e) {
+        // 如果不是JSON格式，使用原始错误信息
+      }
+      
+      throw new Error(errorMsg);
+    }
+
+    const audioData = Buffer.from(await response.arrayBuffer());
+    
+    // 这里可以选择直接返回音频数据，或者保存到临时文件并返回URL
+    // 为了简化，我们返回base64编码的data URL
+    const base64Audio = audioData.toString('base64');
+    const mimeType = params.outputFormat?.includes('mp3') ? 'audio/mpeg' : 'audio/wav';
+    const audioUrl = `data:${mimeType};base64,${base64Audio}`;
+
+    return {
+      success: true,
+      audioData,
+      audioUrl,
+      duration: estimateAudioDuration(params.text) // 简单估算时长
+    };
+  } catch (error) {
+    console.error('Azure TTS error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+// 简单估算音频时长（基于文字长度，中文平均每分钟300字）
+function estimateAudioDuration(text: string): number {
+  const charactersPerMinute = 300;
+  const characters = text.length;
+  const minutes = characters / charactersPerMinute;
+  return Math.ceil(minutes * 60 * 1000); // 返回毫秒
+}
