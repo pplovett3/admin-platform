@@ -537,6 +537,15 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     console.log('查找动画:', animationId);
     console.log('可用动画:', animations.map(a => ({ name: a.name, uuid: a.uuid, duration: a.duration })));
     
+    // 0. 如果传入的是课件动画的 id，尝试用课件数据里的名称进行转换
+    if (coursewareData?.animations && !animations.find(a => a.uuid === animationId || a.name === animationId)) {
+      const metaAnim = (coursewareData.animations as any[]).find(a => a.id === animationId);
+      if (metaAnim?.name) {
+        console.log('把课件动画ID映射为名称:', animationId, '->', metaAnim.name);
+        animationId = metaAnim.name;
+      }
+    }
+
     // 1. 精确匹配UUID（优先，因为AI生成的是UUID）
     for (const animation of animations) {
       if (animation.uuid === animationId) {
@@ -641,14 +650,24 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       let anchorWorld: THREE.Vector3;
       
       if (annotation.anchor && annotation.anchor.offset) {
-        // 标准格式：使用anchor.offset（局部坐标）
-        const anchorLocal = new THREE.Vector3(
-          annotation.anchor.offset[0],
-          annotation.anchor.offset[1],
-          annotation.anchor.offset[2]
-        );
-        targetObject.updateWorldMatrix(true, true);
-        anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+        const space = annotation.anchor.offsetSpace || 'local';
+        if (space === 'world') {
+          // 直接按世界坐标使用
+          anchorWorld = new THREE.Vector3(
+            annotation.anchor.offset[0],
+            annotation.anchor.offset[1],
+            annotation.anchor.offset[2]
+          );
+        } else {
+          // 标准格式：使用anchor.offset（局部坐标）
+          const anchorLocal = new THREE.Vector3(
+            annotation.anchor.offset[0],
+            annotation.anchor.offset[1],
+            annotation.anchor.offset[2]
+          );
+          targetObject.updateWorldMatrix(true, true);
+          anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+        }
       } else if (annotation.position) {
         // 兼容格式：直接使用position
         anchorWorld = new THREE.Vector3(
@@ -1147,7 +1166,33 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       hideAllAnnotations,
       getNodeMap: () => nodeMapRef.current,
       getAnnotations: () => annotationsRef.current,
-      debugModelPosition  // 添加调试功能
+      debugModelPosition,  // 添加调试功能
+      resetView: () => {
+        if (modelRootRef.current) fitCameraToModel(modelRootRef.current);
+      },
+      // 一次性拾取节点，返回可用于 nodeMap 的 key（优先 name 路径，其次 uuid）
+      pickNodeKeyOnce: () => new Promise<string | null>((resolve) => {
+        if (!rendererRef.current || !cameraRef.current || !sceneRef.current) return resolve(null);
+        const dom = rendererRef.current.domElement;
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const onClick = (event: MouseEvent) => {
+          const rect = dom.getBoundingClientRect();
+          mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+          mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+          raycaster.setFromCamera(mouse, cameraRef.current!);
+          const intersects = raycaster.intersectObject(sceneRef.current!, true);
+          dom.removeEventListener('click', onClick, true);
+          if (intersects.length === 0) return resolve(null);
+          const obj = intersects[0].object;
+          // 生成与 nodeMap 对齐的 key：优先完整路径，其次名称，最后 uuid
+          const fullPath = getFullObjectPath(obj);
+          if (fullPath && nodeMapRef.current.has(fullPath)) return resolve(fullPath);
+          if (obj.name && nodeMapRef.current.has(obj.name)) return resolve(obj.name);
+          return resolve(obj.uuid || null);
+        };
+        dom.addEventListener('click', onClick, true);
+      })
     };
 
     if (containerRef.current) {
@@ -1160,6 +1205,11 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       onControlsReady(controls);
       console.log('三维查看器控制接口已通过回调暴露:', Object.keys(controls));
     }
+
+    // 同时挂到全局，便于其它面板调用（编辑器模式）
+    try {
+      (window as any).__threeViewerControls = controls;
+    } catch {}
   }, [coursewareData, onControlsReady]); // 依赖于coursewareData，确保模型加载后重新暴露接口
 
   return (

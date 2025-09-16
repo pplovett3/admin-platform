@@ -18,6 +18,7 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchKeywords, setSearchKeywords] = useState('');
   const [coursewareData, setCoursewareData] = useState<any>(null);
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     if (selectedItem) {
@@ -249,6 +250,29 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                         );
                       })}
                     </Select>
+                    <div style={{ marginTop: 6 }}>
+                      <Button size="small" onClick={async () => {
+                        try {
+                          setPicking(true);
+                          const controls = (window as any).__threeViewerControls;
+                          if (!controls?.pickNodeKeyOnce) {
+                            message.warning('请先在中间三维视窗加载模型');
+                            return;
+                          }
+                          const picked = await controls.pickNodeKeyOnce();
+                          if (picked) {
+                            updateAction(index, 'target.nodeKey', picked);
+                            message.success(`已选取节点: ${picked}`);
+                          } else {
+                            message.info('未选中任何对象');
+                          }
+                        } finally {
+                          setPicking(false);
+                        }
+                      }} loading={picking}>
+                        从场景选取
+                      </Button>
+                    </div>
                   </Form.Item>
                 )}
                 
