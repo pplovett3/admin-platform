@@ -34,6 +34,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMatsRef = useRef<Set<any>>(new Set());
   const groundPlaneRef = useRef<THREE.Mesh | null>(null);
+  const gradientOverlayRef = useRef<THREE.Mesh | null>(null);
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -134,8 +135,14 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const GROUND_COLOR = '#808080';  // 地面颜色
   const GROUND_COLOR_HEX = 0x808080;  // 地面颜色十六进制
 
-  // 【新增】创建渐变背景纹理
-  const createGradientTexture = (): THREE.Texture => {
+  // 【修改】创建纯色背景纹理
+  const createBackgroundTexture = (): THREE.Color => {
+    // 使用纯深色背景，不再使用渐变
+    return new THREE.Color('#0f0f0f');
+  };
+
+  // 【新增】创建垂直渐变遮罩纹理
+  const createVerticalGradientTexture = (): THREE.Texture => {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;
@@ -143,12 +150,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     const context = canvas.getContext('2d');
     if (!context) throw new Error('无法创建Canvas上下文');
     
-    // 创建垂直渐变 - 顶部深色到底部与地面一致的颜色
+    // 创建垂直渐变 - 从顶部深色到底部透明
     const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, '#0f0f0f');    // 顶部更深的黑色
-    gradient.addColorStop(0.3, '#1a1a1a');  // 上三分之一位置较深
-    gradient.addColorStop(0.7, '#404040');  // 中下部分
-    gradient.addColorStop(1, GROUND_COLOR); // 底部与地面颜色完全一致
+    gradient.addColorStop(0, 'rgba(15, 15, 15, 1)');      // 顶部深色，完全不透明
+    gradient.addColorStop(0.3, 'rgba(26, 26, 26, 0.8)');  // 上三分之一，较不透明
+    gradient.addColorStop(0.7, 'rgba(64, 64, 64, 0.4)');  // 中下部分，半透明
+    gradient.addColorStop(1, 'rgba(128, 128, 128, 0)');   // 底部，完全透明
     
     context.fillStyle = gradient;
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -160,15 +167,39 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     return texture;
   };
 
+  // 【新增】创建渐变遮罩层 - 只遮挡地面区域
+  const createGradientOverlay = (scene: THREE.Scene): THREE.Mesh => {
+    // 创建一个大的垂直平面作为遮罩
+    const overlayGeometry = new THREE.PlaneGeometry(200, 100);
+    const gradientTexture = createVerticalGradientTexture();
+    
+    const overlayMaterial = new THREE.MeshBasicMaterial({
+      map: gradientTexture,
+      transparent: true,
+      alphaMap: gradientTexture,
+      depthWrite: false,  // 不写入深度缓冲，避免遮挡其他对象
+      side: THREE.DoubleSide
+    });
+    
+    const overlay = new THREE.Mesh(overlayGeometry, overlayMaterial);
+    
+    // 定位到场景后方，作为背景遮罩
+    overlay.position.set(0, 25, -50);  // 位于地面上方，远景位置
+    overlay.name = 'GradientOverlay';
+    
+    scene.add(overlay);
+    return overlay;
+  };
+
   // 【新增】创建地面平面
   const createGroundPlane = (scene: THREE.Scene): THREE.Mesh => {
     // 创建地面几何体 - 足够大的平面，分段以获得更好的阴影
     const groundGeometry = new THREE.PlaneGeometry(100, 100, 32, 32);
     
-    // 创建地面材质 - 颜色与渐变底部完全一致，移除透明度避免分割线
+    // 创建地面材质 - 简单的不透明材质
     const groundMaterial = new THREE.MeshLambertMaterial({
-      color: GROUND_COLOR_HEX,  // 与渐变底部颜色完全一致
-      transparent: false, // 不透明，确保与背景无缝融合
+      color: GROUND_COLOR_HEX,  // 基础地面颜色
+      transparent: false        // 不透明
     });
     
     const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -204,9 +235,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 创建场景
     const scene = new THREE.Scene();
     
-    // 【新增】创建渐变背景 - 顶部黑色到底部灰色
-    const gradientTexture = createGradientTexture();
-    scene.background = gradientTexture;
+    // 【修改】创建纯色背景 - 不影响三维对象
+    const backgroundColor = createBackgroundTexture();
+    scene.background = backgroundColor;
     
     sceneRef.current = scene;
 
@@ -282,6 +313,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 【新增】创建地面
     const groundPlane = createGroundPlane(scene);
     groundPlaneRef.current = groundPlane;
+    
+    // 【新增】创建渐变遮罩层
+    const gradientOverlay = createGradientOverlay(scene);
+    gradientOverlayRef.current = gradientOverlay;
   };
 
   const setupLights = (scene: THREE.Scene) => {
