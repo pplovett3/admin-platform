@@ -33,6 +33,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const annotationsRef = useRef<THREE.Object3D[]>([]);
   const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMatsRef = useRef<Set<any>>(new Set());
+  const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -155,6 +156,43 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     return texture;
   };
 
+  // 【新增】创建透明阴影接收平面 - 只显示阴影，不显示地面
+  const createInvisibleShadowPlane = (scene: THREE.Scene): THREE.Mesh => {
+    // 创建阴影接收平面几何体
+    const shadowGeometry = new THREE.PlaneGeometry(100, 100);
+    
+    // 创建阴影材质 - 使用 ShadowMaterial 只显示阴影
+    const shadowMaterial = new THREE.ShadowMaterial({
+      opacity: 0.3,  // 阴影透明度
+      color: 0x000000  // 阴影颜色（黑色）
+    });
+    
+    const shadowPlane = new THREE.Mesh(shadowGeometry, shadowMaterial);
+    
+    // 旋转平面使其水平
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.receiveShadow = true;  // 接收阴影
+    shadowPlane.name = 'InvisibleShadowPlane';
+    
+    // 添加到场景
+    scene.add(shadowPlane);
+    
+    return shadowPlane;
+  };
+
+  // 【新增】基于模型包围盒调整阴影平面位置
+  const adjustShadowPlanePosition = (model: THREE.Object3D, shadowPlane: THREE.Mesh) => {
+    const box = new THREE.Box3().setFromObject(model);
+    
+    // 将阴影平面放置在模型底部稍下方
+    const shadowY = box.min.y - 0.05;
+    shadowPlane.position.y = shadowY;
+    
+    console.log('阴影平面位置调整:', {
+      modelBounds: { min: box.min, max: box.max },
+      shadowY: shadowY
+    });
+  };
 
   const initThreeJS = () => {
     if (!containerRef.current) return;
@@ -183,7 +221,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       });
       
       renderer.setSize(width, height);
-      renderer.shadowMap.enabled = false;  // 关闭阴影系统
+      renderer.shadowMap.enabled = true;   // 重新启用阴影系统
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // 软阴影
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1;
@@ -235,25 +274,42 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
     // 添加光照
     setupLights(scene);
+    
+    // 【新增】创建透明阴影接收平面
+    const shadowPlane = createInvisibleShadowPlane(scene);
+    shadowPlaneRef.current = shadowPlane;
   };
 
   const setupLights = (scene: THREE.Scene) => {
     // 环境光 - 调整以配合渐变背景
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
     scene.add(ambientLight);
 
-    // 主光源 - 简化配置，无阴影
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    directionalLight.position.set(10, 10, 5);
+    // 主光源 - 启用阴影投射
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    directionalLight.position.set(15, 20, 10);
+    directionalLight.castShadow = true;
+    
+    // 阴影设置
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.near = 0.5;
+    directionalLight.shadow.camera.far = 50;
+    directionalLight.shadow.camera.left = -20;
+    directionalLight.shadow.camera.right = 20;
+    directionalLight.shadow.camera.top = 20;
+    directionalLight.shadow.camera.bottom = -20;
+    directionalLight.shadow.bias = -0.0001;
+    
     scene.add(directionalLight);
 
-    // 补光源 - 增强细节可见性
+    // 补光源 - 无阴影，增强细节可见性
     const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
     fillLight.position.set(-5, 5, -5);
     scene.add(fillLight);
 
     // 半球光 - 配合渐变背景
-    const hemisphereLight = new THREE.HemisphereLight(0x555555, 0x333333, 0.5);
+    const hemisphereLight = new THREE.HemisphereLight(0x555555, 0x333333, 0.4);
     scene.add(hemisphereLight);
   };
 
@@ -393,6 +449,13 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       modelRootRef.current = model;
       sceneRef.current.add(model);
 
+      // 设置模型阴影投射
+      model.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;  // 投射阴影
+        }
+      });
+
       // 构建节点映射
       buildNodeMap(model);
 
@@ -405,6 +468,11 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
       // 自动调整相机视角
       fitCameraToModel(model);
+
+      // 【新增】调整阴影平面位置
+      if (shadowPlaneRef.current) {
+        adjustShadowPlanePosition(model, shadowPlaneRef.current);
+      }
 
       // 处理标注
       if (coursewareData?.annotations) {
