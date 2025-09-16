@@ -242,7 +242,9 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                     >
                       {coursewareData?.nodeMap && Object.keys(coursewareData.nodeMap).map((nodeKey: string) => {
                         const nodeName = coursewareData.nodeMap[nodeKey] || nodeKey;
-                        const displayName = nodeName.length > 30 ? `${nodeName.slice(0, 30)}...` : nodeName;
+                        // 只显示最后一个层级的名称
+                        const lastSegment = nodeName.split('/').pop() || nodeName;
+                        const displayName = lastSegment.length > 30 ? `${lastSegment.slice(0, 30)}...` : lastSegment;
                         return (
                           <Select.Option key={nodeKey} value={nodeKey} title={nodeName}>
                             {displayName}
@@ -769,8 +771,40 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
         body: JSON.stringify({ keywords: keywords.trim() })
       });
       
-      setSearchResults(response.images || []);
-      if (response.images?.length === 0) {
+      if (response.images && response.images.length > 0) {
+        console.log(`搜索到 ${response.images.length} 张图片，正在验证可用性...`);
+        
+        // 【修复】验证图片可用性，确保显示10张可用图片
+        const validImages: any[] = [];
+        const maxCheck = Math.min(response.images.length, 20); // 最多检查20张
+        const targetCount = 10; // 目标获取10张可用图片
+        
+        // 批量检查图片可用性（并发检查提高速度）
+        const checkPromises = response.images.slice(0, maxCheck).map(async (image: any, index: number) => {
+          const isValid = await checkImageLoadable(image.url);
+          return { image, isValid, index };
+        });
+        
+        const checkResults = await Promise.all(checkPromises);
+        
+        // 收集可用的图片
+        for (const result of checkResults) {
+          if (result.isValid && validImages.length < targetCount) {
+            validImages.push(result.image);
+            console.log(`收集可用图片 ${validImages.length}/${targetCount}:`, result.image.title);
+          }
+        }
+        
+        console.log(`最终获得 ${validImages.length} 张可用图片`);
+        setSearchResults(validImages);
+        
+        if (validImages.length === 0) {
+          message.warning('未找到可加载的图片，请尝试其他关键词');
+        } else if (validImages.length < targetCount) {
+          message.info(`找到 ${validImages.length} 张可用图片`);
+        }
+      } else {
+        setSearchResults([]);
         message.info('未找到相关图片');
       }
     } catch (error: any) {
@@ -780,6 +814,18 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
       setSearchLoading(false);
     }
   }
+
+  // 【新增】检查图片是否可以加载
+  const checkImageLoadable = (url: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const img = document.createElement('img');
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+      // 设置超时，避免永久等待
+      setTimeout(() => resolve(false), 3000);
+    });
+  };
 
   // 选择图片函数
   function selectImage(img: any) {

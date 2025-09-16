@@ -33,6 +33,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const annotationsRef = useRef<THREE.Object3D[]>([]);
   const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMatsRef = useRef<Set<any>>(new Set());
+  const groundPlaneRef = useRef<THREE.Mesh | null>(null);
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -129,12 +130,81 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
   }, [width, height]);
 
+  // 【新增】创建渐变背景纹理
+  const createGradientTexture = (): THREE.Texture => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('无法创建Canvas上下文');
+    
+    // 创建垂直渐变 - 顶部深色到底部浅色，参考专业编辑器风格
+    const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, '#0f0f0f');    // 顶部更深的黑色
+    gradient.addColorStop(0.3, '#1a1a1a');  // 上三分之一位置较深
+    gradient.addColorStop(0.7, '#404040');  // 中下部分
+    gradient.addColorStop(1, '#606060');    // 底部中灰色
+    
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    
+    return texture;
+  };
+
+  // 【新增】创建地面平面
+  const createGroundPlane = (scene: THREE.Scene): THREE.Mesh => {
+    // 创建地面几何体 - 足够大的平面，分段以获得更好的阴影
+    const groundGeometry = new THREE.PlaneGeometry(100, 100, 32, 32);
+    
+    // 创建地面材质 - 更专业的外观
+    const groundMaterial = new THREE.MeshLambertMaterial({
+      color: 0x808080,
+      transparent: true,
+      opacity: 0.6,
+    });
+    
+    const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
+    
+    // 旋转地面使其水平
+    groundPlane.rotation.x = -Math.PI / 2;
+    groundPlane.receiveShadow = true; // 接收阴影
+    groundPlane.name = 'GroundPlane';
+    
+    // 将地面添加到场景
+    scene.add(groundPlane);
+    
+    return groundPlane;
+  };
+
+  // 【新增】基于模型包围盒调整地面位置
+  const adjustGroundPosition = (model: THREE.Object3D, groundPlane: THREE.Mesh) => {
+    const box = new THREE.Box3().setFromObject(model);
+    
+    // 将地面放置在模型底部稍下方
+    const groundY = box.min.y - 0.1;
+    groundPlane.position.y = groundY;
+    
+    console.log('地面位置调整:', {
+      modelBounds: { min: box.min, max: box.max },
+      groundY: groundY
+    });
+  };
+
   const initThreeJS = () => {
     if (!containerRef.current) return;
 
     // 创建场景
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf0f0f0);
+    
+    // 【新增】创建渐变背景 - 顶部黑色到底部灰色
+    const gradientTexture = createGradientTexture();
+    scene.background = gradientTexture;
+    
     sceneRef.current = scene;
 
     // 创建相机
@@ -205,35 +275,52 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
     // 添加光照
     setupLights(scene);
+    
+    // 【新增】创建地面
+    const groundPlane = createGroundPlane(scene);
+    groundPlaneRef.current = groundPlane;
   };
 
   const setupLights = (scene: THREE.Scene) => {
-    // 环境光
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+    // 【修改】调整环境光强度以配合新背景
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
     scene.add(ambientLight);
 
-    // 主光源
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-    directionalLight.position.set(10, 10, 5);
+    // 【增强】主光源 - 优化阴影质量
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    directionalLight.position.set(15, 20, 10);
     directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
-    directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far = 50;
+    
+    // 提高阴影质量
+    directionalLight.shadow.mapSize.width = 4096;
+    directionalLight.shadow.mapSize.height = 4096;
+    directionalLight.shadow.camera.near = 0.1;
+    directionalLight.shadow.camera.far = 100;
+    directionalLight.shadow.camera.left = -50;
+    directionalLight.shadow.camera.right = 50;
+    directionalLight.shadow.camera.top = 50;
+    directionalLight.shadow.camera.bottom = -50;
+    directionalLight.shadow.bias = -0.0001;
+    
     scene.add(directionalLight);
 
-    // 补光
-    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.3);
+    // 【新增】额外的补光源 - 增强细节可见性
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+    fillLight.position.set(-5, 5, -5);
+    scene.add(fillLight);
+
+    // 【修改】半球光 - 调整颜色以配合新背景
+    const hemisphereLight = new THREE.HemisphereLight(0x606060, 0x303030, 0.4);
     scene.add(hemisphereLight);
   };
 
   const applySettings = (settings: any) => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
 
-    // 应用背景色
-    if (settings.background) {
-      sceneRef.current.background = new THREE.Color(settings.background);
-    }
+    // 【注释】跳过背景色设置，使用渐变背景
+    // if (settings.background) {
+    //   sceneRef.current.background = new THREE.Color(settings.background);
+    // }
 
     // 应用相机位置
     if (settings.cameraPosition) {
@@ -383,6 +470,11 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
       // 自动调整相机视角
       fitCameraToModel(model);
+
+      // 【新增】调整地面位置
+      if (groundPlaneRef.current) {
+        adjustGroundPosition(model, groundPlaneRef.current);
+      }
 
       // 处理标注
       if (coursewareData?.annotations) {
@@ -1196,6 +1288,27 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   // 【别名】重置所有标注为隐藏状态（步骤切换时调用）
   const resetAnnotationVisibility = hideAllAnnotations;
 
+  // 【新增】重置所有状态（步骤切换时调用）
+  const resetAllStates = () => {
+    console.log('重置所有状态：清除高亮、隐藏标注、停止动画');
+    
+    // 1. 清除高亮状态
+    clearEmissiveHighlight();
+    if (outlineRef.current) {
+      outlineRef.current.selectedObjects = [];
+    }
+    
+    // 2. 隐藏所有标注
+    hideAllAnnotations();
+    
+    // 3. 停止所有动画
+    if (mixerRef.current) {
+      mixerRef.current.stopAllAction();
+    }
+    
+    console.log('所有状态已重置');
+  };
+
   // 调试模型位置和标注
   const debugModelPosition = () => {
     if (!modelRootRef.current) {
@@ -1242,6 +1355,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       showAllAnnotations,
       hideAllAnnotations,
       resetAnnotationVisibility,
+      resetAllStates,  // 【新增】重置所有状态
       getNodeMap: () => nodeMapRef.current,
       getAnnotations: () => annotationsRef.current,
       debugModelPosition,  // 添加调试功能

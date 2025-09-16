@@ -50,6 +50,11 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
       return;
     }
 
+    // 【新增】重置所有状态（高亮、标注、动画）
+    if (viewerControls.resetAllStates) {
+      viewerControls.resetAllStates();
+    }
+
     actions.forEach((action, index) => {
       setTimeout(() => {
         switch (action.type) {

@@ -22,6 +22,37 @@ interface PlaybackState {
 export default function CoursePreviewPlayer({ courseData, visible, onClose }: CoursePreviewPlayerProps) {
   const threeDViewerRef = useRef<HTMLDivElement>(null);
   const viewerControlsRef = useRef<any>(null);
+
+  // 【新增】添加CSS动画样式
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes slideInFromRight {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      @keyframes slideOutToRight {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     isPlaying: false,
     currentSegmentIndex: 0,
@@ -56,6 +87,28 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     return () => stopPlayback();
   }, [playbackState.isPlaying]);
 
+  // 【新增】监听步骤改变，在播放状态下自动播放新步骤
+  useEffect(() => {
+    if (playbackState.isPlaying && courseData?.outline) {
+      const currentItem = getCurrentItem();
+      if (currentItem) {
+        console.log('步骤改变，自动播放新内容:', currentItem);
+        executeCurrentItem(currentItem).then(duration => {
+          // 自动模式：基于实际播放时长自动切换；手动模式：不计时
+          if (autoPlay && playbackState.isPlaying) {
+            const actualDuration = Math.max(duration * 1000, 1000); // 至少1秒
+            console.log('设置自动切换定时器，时长:', actualDuration, 'ms');
+            playbackTimerRef.current = setTimeout(() => {
+              nextItem();
+            }, actualDuration);
+          }
+        }).catch(error => {
+          console.error('执行步骤失败:', error);
+        });
+      }
+    }
+  }, [playbackState.currentSegmentIndex, playbackState.currentItemIndex]);
+
   const loadCourseware = async () => {
     try {
       const data = await authFetch<any>(`/api/coursewares/${courseData.coursewareId}`);
@@ -88,7 +141,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   };
 
   const startPlayback = async () => {
-    // 【新增】先检查是否需要预加载TTS
+    // 【修复】只负责预加载，具体播放由useEffect处理
     if (preloadedAudios.size === 0) {
       message.info('正在准备预览，请稍候...');
       await preloadAllTTS();
@@ -96,24 +149,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
         message.warning('无法预加载语音，将实时生成');
       }
     }
-
-    const currentItem = getCurrentItem();
-    if (!currentItem) return;
-
-    console.log('播放项目:', currentItem);
-    setCurrentSubtitle(currentItem.say || '');
-
-    // 执行当前项目并获取实际播放时长
-    const actualDuration = await executeCurrentItem(currentItem);
-
-    // 自动模式：基于实际播放时长自动切换；手动模式：不计时
-    if (autoPlay && playbackState.isPlaying) {
-      const duration = Math.max(actualDuration * 1000, 1000); // 至少1秒
-      console.log('设置自动切换定时器，时长:', duration, 'ms');
-      playbackTimerRef.current = setTimeout(() => {
-        nextItem();
-      }, duration);
-    }
+    console.log('播放准备完成，等待步骤变化触发播放');
   };
 
   const stopPlayback = () => {
@@ -202,6 +238,18 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     return 3; // 默认时长
   };
 
+  // 【新增】检查图片是否可以加载
+  const checkImageLoadable = (url: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const img = document.createElement('img');
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+      // 设置超时，避免永久等待
+      setTimeout(() => resolve(false), 5000);
+    });
+  };
+
   const searchAndShowImage = async (keywords: string) => {
     try {
       const response = await authFetch<any>('/api/ai/search-images', {
@@ -211,13 +259,36 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       });
       
       if (response.images && response.images.length > 0) {
-        // 显示第一张图片
-        const firstImage = response.images[0];
-        setCurrentImage({
-          src: firstImage.url,
-          title: firstImage.title || keywords,
-          keywords
-        });
+        console.log(`搜索到 ${response.images.length} 张图片，正在验证可用性...`);
+        
+        // 【修复】验证图片是否可以加载，确保找到可用的图片
+        let validImage = null;
+        let checkedCount = 0;
+        const maxCheck = Math.min(response.images.length, 15); // 最多检查15张
+        
+        for (let i = 0; i < maxCheck; i++) {
+          const image = response.images[i];
+          checkedCount++;
+          
+          if (await checkImageLoadable(image.url)) {
+            validImage = image;
+            console.log(`找到可用图片 ${checkedCount}/${maxCheck}:`, image.title);
+            break;
+          } else {
+            console.log(`图片 ${checkedCount} 加载失败，继续查找...`);
+          }
+        }
+        
+        if (validImage) {
+          setCurrentImage({
+            src: validImage.url,
+            title: validImage.title || keywords,
+            keywords
+          });
+        } else {
+          console.warn(`在 ${checkedCount} 张图片中未找到可用图片`);
+          setCurrentImage(null);
+        }
       }
     } catch (error) {
       console.error('搜索图片失败:', error);
@@ -588,10 +659,10 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     
     if (!currentSegment) return;
     
-    // 【修复】步骤切换前重置标注显示状态
+    // 【修复】步骤切换前重置所有状态（高亮、标注、动画）
     const viewerControls = viewerControlsRef.current;
-    if (viewerControls && viewerControls.resetAnnotationVisibility) {
-      viewerControls.resetAnnotationVisibility();
+    if (viewerControls && viewerControls.resetAllStates) {
+      viewerControls.resetAllStates();
     }
     
     if (playbackState.currentItemIndex < (currentSegment.items?.length || 0) - 1) {
@@ -600,13 +671,20 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
         ...prev,
         currentItemIndex: prev.currentItemIndex + 1
       }));
+      
+      // 【修复】步骤改变将由useEffect处理播放
+      
     } else if (playbackState.currentSegmentIndex < segments.length - 1) {
       // 下一个段落
+      const nextSegment = segments[playbackState.currentSegmentIndex + 1];
       setPlaybackState(prev => ({
         ...prev,
         currentSegmentIndex: prev.currentSegmentIndex + 1,
         currentItemIndex: 0
       }));
+      
+      // 【修复】步骤改变将由useEffect处理播放
+      
     } else {
       // 播放结束
       setPlaybackState(prev => ({ ...prev, isPlaying: autoPlay ? prev.isPlaying : false }));
@@ -615,28 +693,38 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   };
 
   const prevItem = () => {
-    // 【修复】步骤切换前重置标注显示状态
+    // 【修复】步骤切换前重置所有状态（高亮、标注、动画）
     const viewerControls = viewerControlsRef.current;
-    if (viewerControls && viewerControls.resetAnnotationVisibility) {
-      viewerControls.resetAnnotationVisibility();
+    if (viewerControls && viewerControls.resetAllStates) {
+      viewerControls.resetAllStates();
     }
     
     if (playbackState.currentItemIndex > 0) {
       // 上一个项目
+      const segments = courseData?.outline || [];
+      const currentSegment = segments[playbackState.currentSegmentIndex];
+      
       setPlaybackState(prev => ({
         ...prev,
         currentItemIndex: prev.currentItemIndex - 1,
         isPlaying: false
       }));
+      
+      // 【修复】步骤改变将由useEffect处理播放
+      
     } else if (playbackState.currentSegmentIndex > 0) {
       // 上一个段落的最后一项
       const prevSegment = courseData?.outline?.[playbackState.currentSegmentIndex - 1];
+      const targetItemIndex = (prevSegment?.items?.length || 1) - 1;
+      
       setPlaybackState(prev => ({
         ...prev,
         currentSegmentIndex: prev.currentSegmentIndex - 1,
-        currentItemIndex: (prevSegment?.items?.length || 1) - 1,
+        currentItemIndex: targetItemIndex,
         isPlaying: false
       }));
+      
+      // 【修复】步骤改变将由useEffect处理播放
     }
   };
 
@@ -788,6 +876,83 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
               }}>
                 <SoundOutlined style={{ marginRight: 8 }} />
                 {currentSubtitle}
+              </div>
+            )}
+
+            {/* 【新增】配图叠加 - 展开缩回效果 */}
+            {currentImage && (
+              <div style={{
+                position: 'absolute',
+                top: 16,
+                right: 16,
+                width: '300px',
+                height: '200px',
+                background: 'rgba(0,0,0,0.9)',
+                borderRadius: 8,
+                overflow: 'hidden',
+                border: '2px solid #1890ff',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                animation: 'slideInFromRight 0.3s ease-out',
+                zIndex: 100
+              }}>
+                <div style={{
+                  position: 'relative',
+                  width: '100%',
+                  height: '100%'
+                }}>
+                  <img 
+                    src={currentImage.src}
+                    alt={currentImage.title}
+                    style={{
+                      width: '100%',
+                      height: '80%',
+                      objectFit: 'cover'
+                    }}
+                    onError={(e) => {
+                      console.error('图片加载失败:', currentImage.src);
+                      setCurrentImage(null);
+                    }}
+                  />
+                  <div style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    background: 'rgba(0,0,0,0.8)',
+                    color: 'white',
+                    padding: '4px 8px',
+                    fontSize: 12,
+                    height: '20%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {currentImage.title || '配图说明'}
+                  </div>
+                  <button 
+                    onClick={() => setCurrentImage(null)}
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      right: 4,
+                      background: 'rgba(0,0,0,0.6)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: 20,
+                      height: 20,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
             )}
           </div>
