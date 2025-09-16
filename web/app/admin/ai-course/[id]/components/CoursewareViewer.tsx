@@ -105,7 +105,7 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
       {/* 工具栏 */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #d9d9d9', background: '#fff' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid #2b2b2b', background: '#0f0f10' }}>
         <Space>
           <Button onClick={loadCourseware} loading={loading}>
             重新加载
@@ -198,10 +198,10 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
       {/* 状态栏 */}
       <div style={{ 
         padding: '8px 16px', 
-        borderTop: '1px solid #d9d9d9', 
-        background: '#fff',
+        borderTop: '1px solid #2b2b2b', 
+        background: '#0f0f10',
         fontSize: 12,
-        color: '#666'
+        color: '#9aa0a6'
       }}>
         课件ID: {coursewareId} | 
         状态: {coursewareData ? '已加载' : '未加载'} |

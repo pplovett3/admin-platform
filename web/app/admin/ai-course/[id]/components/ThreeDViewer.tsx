@@ -754,6 +754,17 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       const line = new THREE.Line(lineGeom, lineMat);
       annotationGroup.add(line);
 
+      // 2.5. 将锚点吸附到目标对象包围盒表面，避免偏离
+      try {
+        const box = new THREE.Box3().setFromObject(targetObject);
+        const dir = anchorWorld.clone().sub(labelWorld).normalize();
+        const ray = new THREE.Ray(labelWorld.clone(), dir);
+        const hitPoint = new THREE.Vector3();
+        if (box.intersectRay(ray, hitPoint)) {
+          anchorWorld.copy(hitPoint);
+        }
+      } catch {}
+
       // 3. 创建文字标签
       const labelSprite = createLabelSprite(annotation);
       if (labelSprite) {

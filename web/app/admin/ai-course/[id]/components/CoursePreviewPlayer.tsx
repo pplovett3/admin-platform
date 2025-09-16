@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from 'react';
-import { Button, Progress, Space, message, Modal, Card } from 'antd';
+import { Button, Progress, Space, message, Modal, Card, Switch, Radio } from 'antd';
 import { PlayCircleOutlined, PauseCircleOutlined, StepBackwardOutlined, StepForwardOutlined, SoundOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
 import ThreeDViewer from './ThreeDViewer';
@@ -32,6 +32,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   const [currentSubtitle, setCurrentSubtitle] = useState<string>('');
   const [currentImage, setCurrentImage] = useState<any>(null);
   const playbackTimerRef = useRef<NodeJS.Timeout>();
+  const [autoPlay, setAutoPlay] = useState<boolean>(true); // 自动/手动模式
 
   // 加载课件数据
   useEffect(() => {
@@ -91,11 +92,13 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     // 执行当前项目
     executeCurrentItem(currentItem);
 
-    // 设置播放定时器
-    const duration = (currentItem.estimatedDuration || 5) * 1000;
-    playbackTimerRef.current = setTimeout(() => {
-      nextItem();
-    }, duration);
+    // 自动模式：按时长自动切换；手动模式：不计时
+    if (autoPlay) {
+      const duration = (currentItem.estimatedDuration || 5) * 1000;
+      playbackTimerRef.current = setTimeout(() => {
+        nextItem();
+      }, duration);
+    }
   };
 
   const stopPlayback = () => {
@@ -328,7 +331,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       }));
     } else {
       // 播放结束
-      setPlaybackState(prev => ({ ...prev, isPlaying: false }));
+      setPlaybackState(prev => ({ ...prev, isPlaying: autoPlay ? prev.isPlaying : false }));
       message.success('课程播放完成');
     }
   };
@@ -538,9 +541,9 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
         <div style={{ 
           marginTop: 16, 
           padding: 16, 
-          background: 'var(--color-bg-container)', 
+          background: '#0f0f10', 
           borderRadius: 6,
-          borderTop: '1px solid var(--color-border)'
+          borderTop: '1px solid #2b2b2b'
         }}>
           {/* 进度条 */}
           <div style={{ marginBottom: 12 }}>
@@ -556,6 +559,16 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
 
           {/* 控制按钮 */}
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+            <Radio.Group
+              value={autoPlay ? 'auto' : 'manual'}
+              onChange={(e) => setAutoPlay(e.target.value === 'auto')}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="auto">自动播放</Radio.Button>
+              <Radio.Button value="manual">手动播放</Radio.Button>
+            </Radio.Group>
+
             <Button 
               icon={<StepBackwardOutlined />} 
               onClick={prevItem}
@@ -600,10 +613,10 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
             <div style={{ 
               marginTop: 12, 
               padding: 8, 
-              background: '#fff', 
+              background: '#1a1b1e', 
               borderRadius: 4,
               fontSize: 12,
-              color: '#666'
+              color: '#9aa0a6'
             }}>
               <strong>当前播放:</strong> {currentItem.type} - {currentItem.say?.slice(0, 100)}...
             </div>
