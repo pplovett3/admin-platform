@@ -130,6 +130,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
   }, [width, height]);
 
+  // 【新增】统一的颜色配置 - 确保地面和背景完全一致
+  const GROUND_COLOR = '#808080';  // 地面颜色
+  const GROUND_COLOR_HEX = 0x808080;  // 地面颜色十六进制
+
   // 【新增】创建渐变背景纹理
   const createGradientTexture = (): THREE.Texture => {
     const canvas = document.createElement('canvas');
@@ -139,12 +143,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     const context = canvas.getContext('2d');
     if (!context) throw new Error('无法创建Canvas上下文');
     
-    // 创建垂直渐变 - 顶部深色到底部浅色，参考专业编辑器风格
+    // 创建垂直渐变 - 顶部深色到底部与地面一致的颜色
     const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
     gradient.addColorStop(0, '#0f0f0f');    // 顶部更深的黑色
     gradient.addColorStop(0.3, '#1a1a1a');  // 上三分之一位置较深
     gradient.addColorStop(0.7, '#404040');  // 中下部分
-    gradient.addColorStop(1, '#606060');    // 底部中灰色
+    gradient.addColorStop(1, GROUND_COLOR); // 底部与地面颜色完全一致
     
     context.fillStyle = gradient;
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -161,11 +165,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 创建地面几何体 - 足够大的平面，分段以获得更好的阴影
     const groundGeometry = new THREE.PlaneGeometry(100, 100, 32, 32);
     
-    // 创建地面材质 - 更专业的外观
+    // 创建地面材质 - 颜色与渐变底部完全一致，移除透明度避免分割线
     const groundMaterial = new THREE.MeshLambertMaterial({
-      color: 0x808080,
-      transparent: true,
-      opacity: 0.6,
+      color: GROUND_COLOR_HEX,  // 与渐变底部颜色完全一致
+      transparent: false, // 不透明，确保与背景无缝融合
     });
     
     const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
