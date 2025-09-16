@@ -33,8 +33,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const annotationsRef = useRef<THREE.Object3D[]>([]);
   const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMatsRef = useRef<Set<any>>(new Set());
-  const groundPlaneRef = useRef<THREE.Mesh | null>(null);
-  const gradientOverlayRef = useRef<THREE.Mesh | null>(null);
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -131,18 +129,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
   }, [width, height]);
 
-  // 【新增】统一的颜色配置 - 确保地面和背景完全一致
-  const GROUND_COLOR = '#808080';  // 地面颜色
-  const GROUND_COLOR_HEX = 0x808080;  // 地面颜色十六进制
-
-  // 【修改】创建纯色背景纹理
-  const createBackgroundTexture = (): THREE.Color => {
-    // 使用纯深色背景，不再使用渐变
-    return new THREE.Color('#0f0f0f');
-  };
-
-  // 【新增】创建垂直渐变遮罩纹理
-  const createVerticalGradientTexture = (): THREE.Texture => {
+  // 【新增】创建渐变背景纹理 - 参考图片效果
+  const createGradientTexture = (): THREE.Texture => {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;
@@ -150,12 +138,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     const context = canvas.getContext('2d');
     if (!context) throw new Error('无法创建Canvas上下文');
     
-    // 创建垂直渐变 - 从顶部深色到底部透明
+    // 创建垂直渐变 - 参考图片中的渐变色调
     const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, 'rgba(15, 15, 15, 1)');      // 顶部深色，完全不透明
-    gradient.addColorStop(0.3, 'rgba(26, 26, 26, 0.8)');  // 上三分之一，较不透明
-    gradient.addColorStop(0.7, 'rgba(64, 64, 64, 0.4)');  // 中下部分，半透明
-    gradient.addColorStop(1, 'rgba(128, 128, 128, 0)');   // 底部，完全透明
+    gradient.addColorStop(0, '#2a2a2a');    // 顶部深灰
+    gradient.addColorStop(0.4, '#3a3a3a');  // 上中部分
+    gradient.addColorStop(0.7, '#4a4a4a');  // 下中部分  
+    gradient.addColorStop(1, '#5a5a5a');    // 底部较亮的灰色
     
     context.fillStyle = gradient;
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -167,67 +155,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     return texture;
   };
 
-  // 【新增】创建渐变遮罩层 - 只遮挡地面区域
-  const createGradientOverlay = (scene: THREE.Scene): THREE.Mesh => {
-    // 创建一个大的垂直平面作为遮罩
-    const overlayGeometry = new THREE.PlaneGeometry(200, 100);
-    const gradientTexture = createVerticalGradientTexture();
-    
-    const overlayMaterial = new THREE.MeshBasicMaterial({
-      map: gradientTexture,
-      transparent: true,
-      alphaMap: gradientTexture,
-      depthWrite: false,  // 不写入深度缓冲，避免遮挡其他对象
-      side: THREE.DoubleSide
-    });
-    
-    const overlay = new THREE.Mesh(overlayGeometry, overlayMaterial);
-    
-    // 定位到场景后方，作为背景遮罩
-    overlay.position.set(0, 25, -50);  // 位于地面上方，远景位置
-    overlay.name = 'GradientOverlay';
-    
-    scene.add(overlay);
-    return overlay;
-  };
-
-  // 【新增】创建地面平面
-  const createGroundPlane = (scene: THREE.Scene): THREE.Mesh => {
-    // 创建地面几何体 - 足够大的平面，分段以获得更好的阴影
-    const groundGeometry = new THREE.PlaneGeometry(100, 100, 32, 32);
-    
-    // 创建地面材质 - 简单的不透明材质
-    const groundMaterial = new THREE.MeshLambertMaterial({
-      color: GROUND_COLOR_HEX,  // 基础地面颜色
-      transparent: false        // 不透明
-    });
-    
-    const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
-    
-    // 旋转地面使其水平
-    groundPlane.rotation.x = -Math.PI / 2;
-    groundPlane.receiveShadow = true; // 接收阴影
-    groundPlane.name = 'GroundPlane';
-    
-    // 将地面添加到场景
-    scene.add(groundPlane);
-    
-    return groundPlane;
-  };
-
-  // 【新增】基于模型包围盒调整地面位置
-  const adjustGroundPosition = (model: THREE.Object3D, groundPlane: THREE.Mesh) => {
-    const box = new THREE.Box3().setFromObject(model);
-    
-    // 将地面放置在模型底部稍下方
-    const groundY = box.min.y - 0.1;
-    groundPlane.position.y = groundY;
-    
-    console.log('地面位置调整:', {
-      modelBounds: { min: box.min, max: box.max },
-      groundY: groundY
-    });
-  };
 
   const initThreeJS = () => {
     if (!containerRef.current) return;
@@ -235,9 +162,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 创建场景
     const scene = new THREE.Scene();
     
-    // 【修改】创建纯色背景 - 不影响三维对象
-    const backgroundColor = createBackgroundTexture();
-    scene.background = backgroundColor;
+    // 【新增】创建渐变背景纹理 - 参考图片效果
+    const gradientTexture = createGradientTexture();
+    scene.background = gradientTexture;
     
     sceneRef.current = scene;
 
@@ -256,8 +183,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       });
       
       renderer.setSize(width, height);
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.enabled = false;  // 关闭阴影系统
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1;
@@ -309,46 +235,25 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
     // 添加光照
     setupLights(scene);
-    
-    // 【新增】创建地面
-    const groundPlane = createGroundPlane(scene);
-    groundPlaneRef.current = groundPlane;
-    
-    // 【新增】创建渐变遮罩层
-    const gradientOverlay = createGradientOverlay(scene);
-    gradientOverlayRef.current = gradientOverlay;
   };
 
   const setupLights = (scene: THREE.Scene) => {
-    // 【修改】调整环境光强度以配合新背景
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+    // 环境光 - 调整以配合渐变背景
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
     scene.add(ambientLight);
 
-    // 【增强】主光源 - 优化阴影质量
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    directionalLight.position.set(15, 20, 10);
-    directionalLight.castShadow = true;
-    
-    // 提高阴影质量
-    directionalLight.shadow.mapSize.width = 4096;
-    directionalLight.shadow.mapSize.height = 4096;
-    directionalLight.shadow.camera.near = 0.1;
-    directionalLight.shadow.camera.far = 100;
-    directionalLight.shadow.camera.left = -50;
-    directionalLight.shadow.camera.right = 50;
-    directionalLight.shadow.camera.top = 50;
-    directionalLight.shadow.camera.bottom = -50;
-    directionalLight.shadow.bias = -0.0001;
-    
+    // 主光源 - 简化配置，无阴影
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    directionalLight.position.set(10, 10, 5);
     scene.add(directionalLight);
 
-    // 【新增】额外的补光源 - 增强细节可见性
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+    // 补光源 - 增强细节可见性
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
     fillLight.position.set(-5, 5, -5);
     scene.add(fillLight);
 
-    // 【修改】半球光 - 调整颜色以配合新背景
-    const hemisphereLight = new THREE.HemisphereLight(0x606060, 0x303030, 0.4);
+    // 半球光 - 配合渐变背景
+    const hemisphereLight = new THREE.HemisphereLight(0x555555, 0x333333, 0.5);
     scene.add(hemisphereLight);
   };
 
@@ -488,14 +393,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       modelRootRef.current = model;
       sceneRef.current.add(model);
 
-      // 设置阴影
-      model.traverse((child: THREE.Object3D) => {
-        if (child instanceof THREE.Mesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-        }
-      });
-
       // 构建节点映射
       buildNodeMap(model);
 
@@ -508,11 +405,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
       // 自动调整相机视角
       fitCameraToModel(model);
-
-      // 【新增】调整地面位置
-      if (groundPlaneRef.current) {
-        adjustGroundPosition(model, groundPlaneRef.current);
-      }
 
       // 处理标注
       if (coursewareData?.annotations) {
