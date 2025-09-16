@@ -658,6 +658,18 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         );
         targetObject.updateWorldMatrix(true, true);
         anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+        
+        // 【修复】考虑模型根节点的坐标偏移
+        if (modelRootRef.current) {
+          modelRootRef.current.updateWorldMatrix(true, true);
+          const rootPosition = new THREE.Vector3();
+          modelRootRef.current.matrixWorld.decompose(rootPosition, new THREE.Quaternion(), new THREE.Vector3());
+          // 如果根节点不在原点，添加根节点的位置偏移
+          if (rootPosition.length() > 0.001) {
+            console.log('检测到模型根节点偏移:', rootPosition.toArray(), '为标注添加根节点偏移');
+            anchorWorld.add(rootPosition);
+          }
+        }
       } else if (annotation.position) {
         // 兼容格式：直接使用position
         anchorWorld = new THREE.Vector3(
@@ -665,6 +677,16 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
           annotation.position.y || annotation.position[1], 
           annotation.position.z || annotation.position[2]
         );
+        
+        // 【修复】为兼容格式也添加根节点偏移
+        if (modelRootRef.current) {
+          modelRootRef.current.updateWorldMatrix(true, true);
+          const rootPosition = new THREE.Vector3();
+          modelRootRef.current.matrixWorld.decompose(rootPosition, new THREE.Quaternion(), new THREE.Vector3());
+          if (rootPosition.length() > 0.001) {
+            anchorWorld.add(rootPosition);
+          }
+        }
       } else {
         // 默认：使用对象中心
         const box = new THREE.Box3().setFromObject(targetObject);
@@ -767,47 +789,79 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   const createLabelSprite = (annotation: any): THREE.Sprite | null => {
     try {
-      // 创建画布
+      const title = annotation.title || annotation.label?.title || 'Annotation';
+      
+      // 【自适应1】根据文字长度动态计算画布尺寸
+      const measureCanvas = document.createElement('canvas');
+      const measureContext = measureCanvas.getContext('2d')!;
+      measureContext.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
+      const textMetrics = measureContext.measureText(title);
+      
+      // 计算合适的画布尺寸
+      const padding = 24;
+      const minWidth = 120;
+      const textWidth = Math.max(textMetrics.width, minWidth);
+      const canvasWidth = Math.ceil(textWidth + padding * 2);
+      const canvasHeight = 64;
+      
+      // 创建实际画布
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d')!;
-      canvas.width = 512;
-      canvas.height = 128;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
 
       // 清空画布
       context.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 绘制背景
-      context.fillStyle = 'rgba(30, 50, 80, 0.9)';
-      context.fillRect(8, 8, canvas.width - 16, canvas.height - 16);
+      // 绘制背景（圆角矩形）
+      const cornerRadius = 8;
+      context.fillStyle = 'rgba(30, 50, 80, 0.95)';
+      context.beginPath();
+      context.roundRect(4, 4, canvas.width - 8, canvas.height - 8, cornerRadius);
+      context.fill();
 
       // 绘制边框
       context.strokeStyle = '#1890ff';
       context.lineWidth = 2;
-      context.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+      context.beginPath();
+      context.roundRect(4, 4, canvas.width - 8, canvas.height - 8, cornerRadius);
+      context.stroke();
 
       // 绘制文字
       context.fillStyle = 'white';
-      context.font = 'bold 28px Arial, sans-serif';
+      context.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
       context.textAlign = 'center';
       context.textBaseline = 'middle';
-
-      const title = annotation.title || annotation.label?.title || 'Annotation';
       context.fillText(title, canvas.width / 2, canvas.height / 2);
 
       // 创建纹理和精灵
       const texture = new THREE.CanvasTexture(canvas);
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
-
+      texture.needsUpdate = true;
+      
       const spriteMaterial = new THREE.SpriteMaterial({ 
         map: texture,
+        alphaTest: 0.1,
         transparent: true,
-        alphaTest: 0.001
+        depthTest: false, // 设为false确保标签在最前面
+        depthWrite: false
       });
-
+      
       const sprite = new THREE.Sprite(spriteMaterial);
-      sprite.scale.set(1.0, 0.25, 1); // 调整标签大小
-
+      
+      // 【自适应2】根据画布尺寸设置合适的世界尺寸（固定像素大小）
+      const baseScale = 0.002; // 基础缩放，控制像素到世界单位的转换
+      const scaledWidth = canvasWidth * baseScale;
+      const scaledHeight = canvasHeight * baseScale;
+      
+      sprite.scale.set(scaledWidth, scaledHeight, 1);
+      sprite.renderOrder = 10000; // 确保在最前面渲染
+      
+      // 【自适应3】添加距离自适应缩放功能
+      sprite.userData.originalScale = { x: scaledWidth, y: scaledHeight };
+      sprite.userData.isDistanceScaling = true;
+      
       return sprite;
     } catch (error) {
       console.error('创建标签精灵失败:', error);
@@ -815,6 +869,31 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
   };
 
+  // 【自适应缩放】更新标注距离自适应缩放
+  const updateAnnotationScaling = () => {
+    if (!cameraRef.current) return;
+    
+    annotationsRef.current.forEach(annotationGroup => {
+      annotationGroup.traverse((child) => {
+        if (child instanceof THREE.Sprite && child.userData.isDistanceScaling) {
+          // 计算到相机的距离
+          const distance = child.position.distanceTo(cameraRef.current!.position);
+          
+          // 基于距离调整缩放（保持固定像素大小）
+          const scaleFactor = Math.max(0.5, Math.min(3.0, distance / 10)); // 限制缩放范围
+          const originalScale = child.userData.originalScale;
+          
+          if (originalScale) {
+            child.scale.set(
+              originalScale.x * scaleFactor,
+              originalScale.y * scaleFactor,
+              1
+            );
+          }
+        }
+      });
+    });
+  };
 
   const animate = () => {
     if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
@@ -830,6 +909,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     if (mixerRef.current) {
       mixerRef.current.update(0.016); // 假设60fps
     }
+
+    // 【自适应缩放】更新标注距离自适应缩放
+    updateAnnotationScaling();
 
     // 渲染
     if (composerRef.current) {
@@ -1104,10 +1186,15 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   };
 
   const hideAllAnnotations = () => {
-    annotationsRef.current.forEach(annotation => {
+    console.log('隐藏所有标注，当前标注数量:', annotationsRef.current.length);
+    annotationsRef.current.forEach((annotation, index) => {
+      console.log(`隐藏标注 ${index}:`, annotation.userData.annotationId);
       annotation.visible = false;
     });
   };
+
+  // 【别名】重置所有标注为隐藏状态（步骤切换时调用）
+  const resetAnnotationVisibility = hideAllAnnotations;
 
   // 调试模型位置和标注
   const debugModelPosition = () => {
@@ -1154,6 +1241,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       hideAnnotations,
       showAllAnnotations,
       hideAllAnnotations,
+      resetAnnotationVisibility,
       getNodeMap: () => nodeMapRef.current,
       getAnnotations: () => annotationsRef.current,
       debugModelPosition,  // 添加调试功能

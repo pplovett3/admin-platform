@@ -31,6 +31,9 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   const [coursewareData, setCoursewareData] = useState<any>(null);
   const [currentSubtitle, setCurrentSubtitle] = useState<string>('');
   const [currentImage, setCurrentImage] = useState<any>(null);
+  const [isPreparingPreview, setIsPreparingPreview] = useState<boolean>(false);
+  const [preparationProgress, setPreparationProgress] = useState<string>('');
+  const [preloadedAudios, setPreloadedAudios] = useState<Map<string, { audio: HTMLAudioElement, duration: number }>>(new Map());
   const playbackTimerRef = useRef<NodeJS.Timeout>();
   const [autoPlay, setAutoPlay] = useState<boolean>(true); // 自动/手动模式
 
@@ -44,7 +47,9 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   // 播放状态变化处理
   useEffect(() => {
     if (playbackState.isPlaying) {
-      startPlayback();
+      startPlayback().catch(error => {
+        console.error('播放启动失败:', error);
+      });
     } else {
       stopPlayback();
     }
@@ -82,19 +87,29 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     return position + playbackState.currentItemIndex;
   };
 
-  const startPlayback = () => {
+  const startPlayback = async () => {
+    // 【新增】先检查是否需要预加载TTS
+    if (preloadedAudios.size === 0) {
+      message.info('正在准备预览，请稍候...');
+      await preloadAllTTS();
+      if (preloadedAudios.size === 0) {
+        message.warning('无法预加载语音，将实时生成');
+      }
+    }
+
     const currentItem = getCurrentItem();
     if (!currentItem) return;
 
     console.log('播放项目:', currentItem);
     setCurrentSubtitle(currentItem.say || '');
 
-    // 执行当前项目
-    executeCurrentItem(currentItem);
+    // 执行当前项目并获取实际播放时长
+    const actualDuration = await executeCurrentItem(currentItem);
 
-    // 自动模式：按时长自动切换；手动模式：不计时
-    if (autoPlay) {
-      const duration = (currentItem.estimatedDuration || 5) * 1000;
+    // 自动模式：基于实际播放时长自动切换；手动模式：不计时
+    if (autoPlay && playbackState.isPlaying) {
+      const duration = Math.max(actualDuration * 1000, 1000); // 至少1秒
+      console.log('设置自动切换定时器，时长:', duration, 'ms');
       playbackTimerRef.current = setTimeout(() => {
         nextItem();
       }, duration);
@@ -111,37 +126,44 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     }
   };
 
-  const executeCurrentItem = async (item: any) => {
+  const executeCurrentItem = async (item: any): Promise<number> => {
     try {
+      // 生成当前项目的key，用于查找预加载音频
+      const itemKey = `${playbackState.currentSegmentIndex}-${playbackState.currentItemIndex}`;
+      
       switch (item.type) {
         case 'talk':
-          await executeTalkItem(item);
-          break;
+          return await executeTalkItem(item, itemKey);
         case 'image.explain':
-          await executeImageExplainItem(item);
-          break;
+          return await executeImageExplainItem(item, itemKey);
         case 'scene.action':
-          await executeSceneActionItem(item);
-          break;
+          return await executeSceneActionItem(item, itemKey);
         default:
           console.warn('未知的项目类型:', item.type);
+          return 3; // 默认时长
       }
     } catch (error) {
       console.error('执行项目失败:', error);
+      return 3; // 出错时返回默认时长
     }
   };
 
-  const executeTalkItem = async (item: any) => {
+  const executeTalkItem = async (item: any, itemKey: string): Promise<number> => {
     console.log('执行 talk 项目:', item.say);
     setCurrentImage(null); // 清除图片
     
-    // 尝试播放TTS
+    // 尝试播放TTS并返回播放时长，使用预加载音频
     if (item.say && item.tts) {
-      await playTTS(item.say, item.tts);
+      return await playTTS(item.say, item.tts, itemKey);
+    } else if (item.say) {
+      // 没有TTS配置，使用全局配置
+      const ttsConfig = courseData?.ttsConfig || {};
+      return await playTTS(item.say, ttsConfig, itemKey);
     }
+    return 3; // 默认时长
   };
 
-  const executeImageExplainItem = async (item: any) => {
+  const executeImageExplainItem = async (item: any, itemKey: string): Promise<number> => {
     console.log('执行 image.explain 项目:', item.say);
     
     // 显示图片
@@ -149,13 +171,18 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       await searchAndShowImage(item.imageKeywords);
     }
     
-    // 播放语音
+    // 播放语音并返回播放时长，使用预加载音频
     if (item.say && item.tts) {
-      await playTTS(item.say, item.tts);
+      return await playTTS(item.say, item.tts, itemKey);
+    } else if (item.say) {
+      // 没有TTS配置，使用全局配置
+      const ttsConfig = courseData?.ttsConfig || {};
+      return await playTTS(item.say, ttsConfig, itemKey);
     }
+    return 3; // 默认时长
   };
 
-  const executeSceneActionItem = async (item: any) => {
+  const executeSceneActionItem = async (item: any, itemKey: string): Promise<number> => {
     console.log('执行 scene.action 项目:', item.actions);
     setCurrentImage(null); // 清除图片
     
@@ -164,10 +191,15 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       executeSceneActions(item.actions);
     }
     
-    // 播放语音
+    // 播放语音并返回播放时长，使用预加载音频
     if (item.say && item.tts) {
-      await playTTS(item.say, item.tts);
+      return await playTTS(item.say, item.tts, itemKey);
+    } else if (item.say) {
+      // 没有TTS配置，使用全局配置
+      const ttsConfig = courseData?.ttsConfig || {};
+      return await playTTS(item.say, ttsConfig, itemKey);
     }
+    return 3; // 默认时长
   };
 
   const searchAndShowImage = async (keywords: string) => {
@@ -192,37 +224,277 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     }
   };
 
-  const playTTS = async (text: string, ttsConfig: any) => {
-    try {
+  // 【新增】预加载所有TTS音频
+  const preloadAllTTS = async () => {
+    if (!courseData?.outline) return;
+    
+    setIsPreparingPreview(true);
+    setPreparationProgress('正在分析课程内容...');
+    
+    // 收集所有需要TTS的文本
+    const ttsItems: Array<{ key: string, text: string, ttsConfig: any }> = [];
+    const globalTtsConfig = courseData?.ttsConfig || {};
+    
+    courseData.outline.forEach((segment: any, segmentIndex: number) => {
+      segment.items?.forEach((item: any, itemIndex: number) => {
+        if (item.say) {
+          const key = `${segmentIndex}-${itemIndex}`;
+          const itemTtsConfig = item.tts || globalTtsConfig;
+          ttsItems.push({ key, text: item.say, ttsConfig: itemTtsConfig });
+        }
+      });
+    });
+    
+    console.log('需要预加载的TTS项目:', ttsItems.length, '个');
+    
+    if (ttsItems.length === 0) {
+      setIsPreparingPreview(false);
+      return;
+    }
+    
+    const newPreloadedAudios = new Map();
+    
+    // 并发预加载音频（限制并发数量避免过载）
+    const concurrencyLimit = 3;
+    for (let i = 0; i < ttsItems.length; i += concurrencyLimit) {
+      const batch = ttsItems.slice(i, i + concurrencyLimit);
+      setPreparationProgress(`正在生成语音 ${i + 1}-${Math.min(i + concurrencyLimit, ttsItems.length)} / ${ttsItems.length}...`);
+      
+      const promises = batch.map(async (item) => {
+        try {
+          const audioData = await preloadSingleTTS(item.text, item.ttsConfig);
+          if (audioData) {
+            newPreloadedAudios.set(item.key, audioData);
+            console.log(`TTS预加载完成: ${item.key}`);
+          }
+        } catch (error) {
+          console.error(`TTS预加载失败: ${item.key}`, error);
+        }
+      });
+      
+      await Promise.all(promises);
+    }
+    
+    setPreloadedAudios(newPreloadedAudios);
+    setPreparationProgress('语音生成完成，准备开始预览...');
+    
+    setTimeout(() => {
+      setIsPreparingPreview(false);
+      message.success(`已预加载 ${newPreloadedAudios.size} 个语音片段，开始预览！`);
+    }, 500);
+  };
+  
+  // 【新增】预加载单个TTS音频
+  const preloadSingleTTS = async (text: string, ttsConfig: any): Promise<{ audio: HTMLAudioElement, duration: number } | null> => {
+    if (!text) return null;
+    
+    return new Promise((resolve) => {
       const provider = ttsConfig?.provider || 'azure';
       
       if (provider === 'azure') {
-        // Azure TTS - 同步
-        const response = await authFetch<any>('/api/ai/tts', {
+        authFetch<any>('/api/ai/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             provider: 'azure',
-            text: text.slice(0, 200), // 限制长度
+            text: text.slice(0, 500),
             voiceName: ttsConfig.voiceName || 'zh-CN-XiaoxiaoNeural',
             rate: ttsConfig.rate || '+0%',
             pitch: ttsConfig.pitch || '+0Hz',
             style: ttsConfig.style || 'general'
           })
+        }).then(response => {
+          if (response.audioUrl) {
+            const audio = new Audio(response.audioUrl);
+            audio.addEventListener('loadedmetadata', () => {
+              resolve({ audio, duration: audio.duration || 3 });
+            });
+            audio.addEventListener('error', () => {
+              resolve(null);
+            });
+            // 预加载音频
+            audio.load();
+          } else {
+            resolve(null);
+          }
+        }).catch(() => {
+          resolve(null);
+        });
+      } else if (provider === 'minimax') {
+        authFetch<any>('/api/ai/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: 'minimax',
+            text: text,
+            voice_id: ttsConfig.voice_id || 'presenter_female',
+            speed: ttsConfig.speed || 1,
+            vol: ttsConfig.vol || 1,
+            pitch: ttsConfig.pitch || 0
+          })
+        }).then(response => {
+          if (response.audioUrl) {
+            const audio = new Audio(response.audioUrl);
+            audio.addEventListener('loadedmetadata', () => {
+              resolve({ audio, duration: audio.duration || 3 });
+            });
+            audio.addEventListener('error', () => {
+              resolve(null);
+            });
+            audio.load();
+          } else {
+            resolve(null);
+          }
+        }).catch(() => {
+          resolve(null);
+        });
+      } else {
+        resolve(null);
+      }
+    });
+  };
+
+  const playTTS = async (text: string, ttsConfig: any, itemKey?: string): Promise<number> => {
+    if (!text) return 0;
+
+    return new Promise((resolve) => {
+      setCurrentSubtitle(text);
+      
+      // 停止之前的音频
+      if (playbackState.currentAudio) {
+        playbackState.currentAudio.pause();
+        playbackState.currentAudio.currentTime = 0;
+      }
+
+      // 【优化】优先使用预加载的音频
+      if (itemKey && preloadedAudios.has(itemKey)) {
+        const preloadedAudio = preloadedAudios.get(itemKey)!;
+        const audio = preloadedAudio.audio.cloneNode() as HTMLAudioElement;
+        
+        setPlaybackState(prev => ({ ...prev, currentAudio: audio }));
+        
+        audio.addEventListener('ended', () => {
+          setCurrentSubtitle('');
+          resolve(preloadedAudio.duration);
         });
         
-        if (response.audioUrl) {
-          const audio = new Audio(response.audioUrl);
-          setPlaybackState(prev => ({ ...prev, currentAudio: audio }));
-          await audio.play();
-        }
-      } else {
-        // Minimax TTS - 异步（暂时跳过，避免等待时间过长）
-        console.log('Minimax TTS暂时跳过，避免播放中断');
+        audio.addEventListener('error', () => {
+          console.error('预加载音频播放错误');
+          setCurrentSubtitle('');
+          resolve(3);
+        });
+        
+        audio.play().catch(error => {
+          console.error('预加载音频播放失败:', error);
+          setCurrentSubtitle('');
+          resolve(3);
+        });
+        
+        return; // 使用预加载音频，直接返回
       }
-    } catch (error) {
-      console.error('TTS播放失败:', error);
-    }
+
+      const provider = ttsConfig?.provider || 'azure';
+
+      if (provider === 'azure') {
+        // Azure TTS - 同步
+        authFetch<any>('/api/ai/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: 'azure',
+            text: text.slice(0, 500), // 增加文本长度限制
+            voiceName: ttsConfig.voiceName || 'zh-CN-XiaoxiaoNeural',
+            rate: ttsConfig.rate || '+0%',
+            pitch: ttsConfig.pitch || '+0Hz',
+            style: ttsConfig.style || 'general'
+          })
+        }).then(response => {
+          if (response.audioUrl) {
+            const audio = new Audio(response.audioUrl);
+            setPlaybackState(prev => ({ ...prev, currentAudio: audio }));
+            
+            // 监听音频加载完成和播放结束
+            audio.addEventListener('loadedmetadata', () => {
+              console.log('音频时长:', audio.duration, '秒');
+            });
+            
+            audio.addEventListener('ended', () => {
+              setCurrentSubtitle('');
+              resolve(audio.duration || 3); // 返回实际播放时长
+            });
+            
+            audio.addEventListener('error', () => {
+              console.error('音频播放错误');
+              setCurrentSubtitle('');
+              resolve(3); // 出错时返回默认时长
+            });
+            
+            audio.play().catch(error => {
+              console.error('音频播放失败:', error);
+              setCurrentSubtitle('');
+              resolve(3);
+            });
+          } else {
+            setCurrentSubtitle('');
+            resolve(3);
+          }
+        }).catch(error => {
+          console.error('TTS API调用失败:', error);
+          setCurrentSubtitle('');
+          resolve(3);
+        });
+      } else if (provider === 'minimax') {
+        // Minimax TTS - 异步
+        authFetch<any>('/api/ai/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: 'minimax',
+            text: text,
+            voice_id: ttsConfig.voice_id || 'presenter_female',
+            speed: ttsConfig.speed || 1,
+            vol: ttsConfig.vol || 1,
+            pitch: ttsConfig.pitch || 0
+          })
+        }).then(response => {
+          if (response.audioUrl) {
+            const audio = new Audio(response.audioUrl);
+            setPlaybackState(prev => ({ ...prev, currentAudio: audio }));
+            
+            audio.addEventListener('ended', () => {
+              setCurrentSubtitle('');
+              resolve(audio.duration || 3);
+            });
+            
+            audio.addEventListener('error', () => {
+              console.error('音频播放错误');
+              setCurrentSubtitle('');
+              resolve(3);
+            });
+            
+            audio.play().catch(error => {
+              console.error('音频播放失败:', error);
+              setCurrentSubtitle('');
+              resolve(3);
+            });
+          } else {
+            setCurrentSubtitle('');
+            resolve(3);
+          }
+        }).catch(error => {
+          console.error('TTS API调用失败:', error);
+          setCurrentSubtitle('');
+          resolve(3);
+        });
+      } else {
+        // 默认：无音频，返回基于文字长度的估算时长
+        const estimatedDuration = Math.max(2, text.length * 0.1); // 每个字符0.1秒，最少2秒
+        setTimeout(() => {
+          setCurrentSubtitle('');
+          resolve(estimatedDuration);
+        }, estimatedDuration * 1000);
+      }
+    });
   };
 
   const executeSceneActions = (actions: any[]) => {
@@ -316,6 +588,12 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     
     if (!currentSegment) return;
     
+    // 【修复】步骤切换前重置标注显示状态
+    const viewerControls = viewerControlsRef.current;
+    if (viewerControls && viewerControls.resetAnnotationVisibility) {
+      viewerControls.resetAnnotationVisibility();
+    }
+    
     if (playbackState.currentItemIndex < (currentSegment.items?.length || 0) - 1) {
       // 下一个项目
       setPlaybackState(prev => ({
@@ -337,6 +615,12 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   };
 
   const prevItem = () => {
+    // 【修复】步骤切换前重置标注显示状态
+    const viewerControls = viewerControlsRef.current;
+    if (viewerControls && viewerControls.resetAnnotationVisibility) {
+      viewerControls.resetAnnotationVisibility();
+    }
+    
     if (playbackState.currentItemIndex > 0) {
       // 上一个项目
       setPlaybackState(prev => ({
@@ -423,7 +707,32 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       footer={null}
       destroyOnClose
     >
-      <div style={{ height: 700, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: 700, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {/* 准备状态显示 */}
+        {isPreparingPreview && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1000,
+            color: 'white',
+            borderRadius: 8
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, marginBottom: 16 }}>🎬 正在准备预览</div>
+              <div style={{ fontSize: 14, marginBottom: 20 }}>{preparationProgress}</div>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>正在生成所有语音片段，请耐心等待...</div>
+            </div>
+          </div>
+        )}
+        
         {/* 播放器主体 */}
         <div style={{ flex: 1, display: 'flex', gap: 16 }}>
           {/* 左侧：三维视窗 */}
