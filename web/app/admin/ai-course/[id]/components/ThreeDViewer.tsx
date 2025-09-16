@@ -141,9 +141,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     
     // 创建垂直渐变 - 参考图片中的渐变色调
     const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, '#2a2a2a');    // 顶部深灰
-    gradient.addColorStop(0.4, '#3a3a3a');  // 上中部分
-    gradient.addColorStop(0.7, '#4a4a4a');  // 下中部分  
+    gradient.addColorStop(0, '#1a1a1a');    // 顶部更深的灰色
+    gradient.addColorStop(0.3, '#2a2a2a');  // 上中部分
+    gradient.addColorStop(0.6, '#3a3a3a');  // 中部分
+    gradient.addColorStop(0.8, '#4a4a4a');  // 下中部分  
     gradient.addColorStop(1, '#5a5a5a');    // 底部较亮的灰色
     
     context.fillStyle = gradient;

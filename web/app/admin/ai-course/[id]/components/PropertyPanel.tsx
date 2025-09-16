@@ -756,6 +756,18 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
     </div>
   );
 
+  // 【新增】检查图片是否可以加载
+  const checkImageLoadable = (url: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const img = document.createElement('img');
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+      // 设置超时，避免永久等待
+      setTimeout(() => resolve(false), 3000);
+    });
+  };
+
   // 搜索图片函数
   async function searchImages(keywords: string) {
     if (!keywords?.trim()) {
@@ -814,18 +826,6 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
       setSearchLoading(false);
     }
   }
-
-  // 【新增】检查图片是否可以加载
-  const checkImageLoadable = (url: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const img = document.createElement('img');
-      img.onload = () => resolve(true);
-      img.onerror = () => resolve(false);
-      img.src = url;
-      // 设置超时，避免永久等待
-      setTimeout(() => resolve(false), 3000);
-    });
-  };
 
   // 选择图片函数
   function selectImage(img: any) {

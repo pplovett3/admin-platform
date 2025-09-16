@@ -87,27 +87,35 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     return () => stopPlayback();
   }, [playbackState.isPlaying]);
 
-  // 【新增】监听步骤改变，在播放状态下自动播放新步骤
+  // 【修复】监听播放状态和步骤改变，自动播放内容
   useEffect(() => {
     if (playbackState.isPlaying && courseData?.outline) {
       const currentItem = getCurrentItem();
       if (currentItem) {
-        console.log('步骤改变，自动播放新内容:', currentItem);
+        console.log('播放状态变化或步骤改变，执行内容:', currentItem);
+        
+        // 清除之前的定时器
+        if (playbackTimerRef.current) {
+          clearTimeout(playbackTimerRef.current);
+        }
+        
         executeCurrentItem(currentItem).then(duration => {
-          // 自动模式：基于实际播放时长自动切换；手动模式：不计时
+          // 自动模式：语音播放结束后立即切换
           if (autoPlay && playbackState.isPlaying) {
-            const actualDuration = Math.max(duration * 1000, 1000); // 至少1秒
-            console.log('设置自动切换定时器，时长:', actualDuration, 'ms');
+            console.log('语音播放完成，立即切换到下一步');
+            // 不再设置额外延迟，语音结束即切换
             playbackTimerRef.current = setTimeout(() => {
-              nextItem();
-            }, actualDuration);
+              if (playbackState.isPlaying) {
+                nextItem();
+              }
+            }, 100); // 只有很小的延迟确保状态更新
           }
         }).catch(error => {
           console.error('执行步骤失败:', error);
         });
       }
     }
-  }, [playbackState.currentSegmentIndex, playbackState.currentItemIndex]);
+  }, [playbackState.isPlaying, playbackState.currentSegmentIndex, playbackState.currentItemIndex]);
 
   const loadCourseware = async () => {
     try {
@@ -141,15 +149,17 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
   };
 
   const startPlayback = async () => {
-    // 【修复】只负责预加载，具体播放由useEffect处理
+    // 【优化】静默预加载，避免多次提示
     if (preloadedAudios.size === 0) {
-      message.info('正在准备预览，请稍候...');
+      console.log('开始预加载语音...');
       await preloadAllTTS();
-      if (preloadedAudios.size === 0) {
-        message.warning('无法预加载语音，将实时生成');
+      if (preloadedAudios.size > 0) {
+        console.log(`预加载完成：${preloadedAudios.size} 个语音片段`);
+      } else {
+        console.log('预加载失败，将使用实时语音生成');
       }
     }
-    console.log('播放准备完成，等待步骤变化触发播放');
+    console.log('播放准备完成，即将开始播放');
   };
 
   const stopPlayback = () => {
@@ -687,7 +697,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       
     } else {
       // 播放结束
-      setPlaybackState(prev => ({ ...prev, isPlaying: autoPlay ? prev.isPlaying : false }));
+      setPlaybackState(prev => ({ ...prev, isPlaying: false }));
       message.success('课程播放完成');
     }
   };
@@ -706,8 +716,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       
       setPlaybackState(prev => ({
         ...prev,
-        currentItemIndex: prev.currentItemIndex - 1,
-        isPlaying: false
+        currentItemIndex: prev.currentItemIndex - 1
       }));
       
       // 【修复】步骤改变将由useEffect处理播放
@@ -720,8 +729,7 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       setPlaybackState(prev => ({
         ...prev,
         currentSegmentIndex: prev.currentSegmentIndex - 1,
-        currentItemIndex: targetItemIndex,
-        isPlaying: false
+        currentItemIndex: targetItemIndex
       }));
       
       // 【修复】步骤改变将由useEffect处理播放
