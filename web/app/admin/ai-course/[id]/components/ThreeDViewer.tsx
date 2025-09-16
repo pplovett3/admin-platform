@@ -34,6 +34,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
   const highlightedMatsRef = useRef<Set<any>>(new Set());
   const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
+  const autoRotationRef = useRef<boolean>(false);
+  const rotationSpeedRef = useRef<number>(0.005);
+  const cameraAnimationRef = useRef<any>(null);
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -279,6 +282,35 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 【新增】创建透明阴影接收平面
     const shadowPlane = createInvisibleShadowPlane(scene);
     shadowPlaneRef.current = shadowPlane;
+    
+    // 启动渲染循环
+    startRenderLoop();
+  };
+
+  // 【新增】渲染循环
+  const startRenderLoop = () => {
+    const animate = () => {
+      // 模型自转
+      if (autoRotationRef.current && modelRootRef.current) {
+        modelRootRef.current.rotation.y += rotationSpeedRef.current;
+      }
+      
+      // 动画混合器更新
+      if (mixerRef.current) {
+        mixerRef.current.update(0.01);
+      }
+      
+      // 标注缩放更新
+      updateAnnotationScaling();
+      
+      // 渲染场景
+      if (rendererRef.current && sceneRef.current && cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+      }
+      
+      requestAnimationFrame(animate);
+    };
+    animate();
   };
 
   const setupLights = (scene: THREE.Scene) => {
@@ -1117,12 +1149,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       camera.far = dist * 100;
       camera.updateProjectionMatrix();
       
-      // 直接设置位置（三维课件编辑器的方式）
-      camera.position.copy(targetPos);
-      controls.target.copy(center);
-      controls.update();
-      
-      console.log('相机聚焦完成 - 中心:', center, '距离:', dist);
+      // 【修改】使用平滑动画过渡到目标位置
+      console.log('开始平滑相机动画 - 目标位置:', targetPos, '目标中心:', center);
+      animateCameraToPosition(targetPos, center, 1500); // 1.5秒动画
     }
   };
 
@@ -1305,7 +1334,75 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       mixerRef.current.stopAllAction();
     }
     
+    // 4. 停止自转
+    stopAutoRotation();
+    
     console.log('所有状态已重置');
+  };
+
+  // 【新增】开始自转
+  const startAutoRotation = (speed: number = 0.005) => {
+    autoRotationRef.current = true;
+    rotationSpeedRef.current = speed;
+    console.log('开始模型自转，速度:', speed);
+  };
+
+  // 【新增】停止自转
+  const stopAutoRotation = () => {
+    autoRotationRef.current = false;
+    console.log('停止模型自转');
+  };
+
+  // 【新增】平滑相机动画函数
+  const animateCameraToPosition = (targetPosition: THREE.Vector3, targetLookAt: THREE.Vector3, duration: number = 1000) => {
+    if (!cameraRef.current || !controlsRef.current) return;
+
+    // 停止之前的动画
+    if (cameraAnimationRef.current) {
+      cameraAnimationRef.current.stop();
+    }
+
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    
+    const startPosition = camera.position.clone();
+    const startTarget = controls.target.clone();
+    
+    const animationData = {
+      t: 0,
+      position: { x: startPosition.x, y: startPosition.y, z: startPosition.z },
+      target: { x: startTarget.x, y: startTarget.y, z: startTarget.z }
+    };
+
+    // 使用简单的补间动画
+    const startTime = Date.now();
+    
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // 使用缓动函数
+      const easeInOutCubic = (t: number) => {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      };
+      
+      const easedProgress = easeInOutCubic(progress);
+      
+      // 插值位置
+      camera.position.lerpVectors(startPosition, targetPosition, easedProgress);
+      controls.target.lerpVectors(startTarget, targetLookAt, easedProgress);
+      
+      controls.update();
+      
+      if (progress < 1) {
+        cameraAnimationRef.current = requestAnimationFrame(animate);
+      } else {
+        cameraAnimationRef.current = null;
+        console.log('相机动画完成');
+      }
+    };
+    
+    animate();
   };
 
   // 调试模型位置和标注
@@ -1355,6 +1452,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       hideAllAnnotations,
       resetAnnotationVisibility,
       resetAllStates,  // 【新增】重置所有状态
+      startAutoRotation,  // 【新增】开始自转
+      stopAutoRotation,   // 【新增】停止自转
       getNodeMap: () => nodeMapRef.current,
       getAnnotations: () => annotationsRef.current,
       debugModelPosition,  // 添加调试功能

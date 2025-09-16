@@ -198,6 +198,12 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     console.log('执行 talk 项目:', item.say);
     setCurrentImage(null); // 清除图片
     
+    // 【新增】纯讲解时启动模型自转
+    const viewerControls = viewerControlsRef.current;
+    if (viewerControls && viewerControls.startAutoRotation) {
+      viewerControls.startAutoRotation(0.003); // 较慢的自转速度
+    }
+    
     // 尝试播放TTS并返回播放时长，使用预加载音频
     if (item.say && item.tts) {
       return await playTTS(item.say, item.tts, itemKey);
@@ -211,6 +217,12 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
 
   const executeImageExplainItem = async (item: any, itemKey: string): Promise<number> => {
     console.log('执行 image.explain 项目:', item.say);
+    
+    // 【新增】图片讲解时启动模型自转
+    const viewerControls = viewerControlsRef.current;
+    if (viewerControls && viewerControls.startAutoRotation) {
+      viewerControls.startAutoRotation(0.003); // 较慢的自转速度
+    }
     
     // 显示图片
     if (item.imageKeywords) {
@@ -248,18 +260,6 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     return 3; // 默认时长
   };
 
-  // 【新增】检查图片是否可以加载
-  const checkImageLoadable = (url: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const img = document.createElement('img');
-      img.onload = () => resolve(true);
-      img.onerror = () => resolve(false);
-      img.src = url;
-      // 设置超时，避免永久等待
-      setTimeout(() => resolve(false), 5000);
-    });
-  };
-
   const searchAndShowImage = async (keywords: string) => {
     try {
       const response = await authFetch<any>('/api/ai/search-images', {
@@ -269,34 +269,16 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
       });
       
       if (response.images && response.images.length > 0) {
-        console.log(`搜索到 ${response.images.length} 张图片，正在验证可用性...`);
+        console.log(`搜索到 ${response.images.length} 张图片`);
         
-        // 【修复】验证图片是否可以加载，确保找到可用的图片
-        let validImage = null;
-        let checkedCount = 0;
-        const maxCheck = Math.min(response.images.length, 15); // 最多检查15张
-        
-        for (let i = 0; i < maxCheck; i++) {
-          const image = response.images[i];
-          checkedCount++;
-          
-          if (await checkImageLoadable(image.url)) {
-            validImage = image;
-            console.log(`找到可用图片 ${checkedCount}/${maxCheck}:`, image.title);
-            break;
-          } else {
-            console.log(`图片 ${checkedCount} 加载失败，继续查找...`);
-          }
-        }
-        
-        if (validImage) {
+        // 【简化】直接使用第一张图片
+        if (response.images[0]) {
           setCurrentImage({
-            src: validImage.url,
-            title: validImage.title || keywords,
+            src: response.images[0].url,
+            title: response.images[0].title || keywords,
             keywords
           });
         } else {
-          console.warn(`在 ${checkedCount} 张图片中未找到可用图片`);
           setCurrentImage(null);
         }
       }
