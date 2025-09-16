@@ -650,24 +650,14 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       let anchorWorld: THREE.Vector3;
       
       if (annotation.anchor && annotation.anchor.offset) {
-        const space = annotation.anchor.offsetSpace || 'local';
-        if (space === 'world') {
-          // 直接按世界坐标使用
-          anchorWorld = new THREE.Vector3(
-            annotation.anchor.offset[0],
-            annotation.anchor.offset[1],
-            annotation.anchor.offset[2]
-          );
-        } else {
-          // 标准格式：使用anchor.offset（局部坐标）
-          const anchorLocal = new THREE.Vector3(
-            annotation.anchor.offset[0],
-            annotation.anchor.offset[1],
-            annotation.anchor.offset[2]
-          );
-          targetObject.updateWorldMatrix(true, true);
-          anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
-        }
+        // 标准格式：使用anchor.offset（局部坐标）
+        const anchorLocal = new THREE.Vector3(
+          annotation.anchor.offset[0],
+          annotation.anchor.offset[1],
+          annotation.anchor.offset[2]
+        );
+        targetObject.updateWorldMatrix(true, true);
+        anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
       } else if (annotation.position) {
         // 兼容格式：直接使用position
         anchorWorld = new THREE.Vector3(
@@ -753,17 +743,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       });
       const line = new THREE.Line(lineGeom, lineMat);
       annotationGroup.add(line);
-
-      // 2.5. 将锚点吸附到目标对象包围盒表面，避免偏离
-      try {
-        const box = new THREE.Box3().setFromObject(targetObject);
-        const dir = anchorWorld.clone().sub(labelWorld).normalize();
-        const ray = new THREE.Ray(labelWorld.clone(), dir);
-        const hitPoint = new THREE.Vector3();
-        if (box.intersectRay(ray, hitPoint)) {
-          anchorWorld.copy(hitPoint);
-        }
-      } catch {}
 
       // 3. 创建文字标签
       const labelSprite = createLabelSprite(annotation);
