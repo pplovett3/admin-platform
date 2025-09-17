@@ -2,11 +2,13 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button, Form, Input, Space, message, Layout } from 'antd';
+import { GlobalOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
 import OutlineEditor from './components/OutlineEditor';
 import PropertyPanel from './components/PropertyPanel';
 import CoursewareViewer from './components/CoursewareViewer';
 import CoursePreviewPlayer from './components/CoursePreviewPlayer';
+import PublishDialog from './components/PublishDialog';
 
 const { Sider, Content } = Layout;
 
@@ -20,6 +22,7 @@ export default function EditAICoursePage() {
   const [courseData, setCourseData] = useState<any>(null);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [publishDialogVisible, setPublishDialogVisible] = useState(false);
 
   async function load() {
     if (!id) return;
@@ -167,6 +170,15 @@ export default function EditAICoursePage() {
           >
             预览播放
           </Button>
+          <Button 
+            type="primary" 
+            icon={<GlobalOutlined />}
+            onClick={() => setPublishDialogVisible(true)}
+            disabled={!courseData?.outline || courseData.outline.length === 0}
+            style={{ backgroundColor: '#1890ff', borderColor: '#1890ff' }}
+          >
+            发布分享
+          </Button>
         </Space>
       </div>
 
@@ -238,6 +250,17 @@ export default function EditAICoursePage() {
         courseData={courseData}
         visible={previewVisible}
         onClose={() => setPreviewVisible(false)}
+      />
+
+      {/* 发布对话框 */}
+      <PublishDialog
+        courseId={id}
+        visible={publishDialogVisible}
+        onClose={() => setPublishDialogVisible(false)}
+        onPublished={(publishData) => {
+          message.success('发布成功！');
+          // 可以在这里更新UI状态或刷新数据
+        }}
       />
     </div>
   );

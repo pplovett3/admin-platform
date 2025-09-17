@@ -41,7 +41,7 @@
 5) 三维课件保存
    - 以统一 JSON `courseware.json` 存储完整三维课件（模型地址、标注列表、动画时间线、步骤信息、渲染设置）
 
-#### B. AI 讲课制作器（待详细设计）
+#### B. AI 讲课制作器
 1) 课件导入
    - 读取已制作的三维课件内容（模型、标注、动画）
 2) 知识点扩展
@@ -53,7 +53,21 @@
 5) 预览与发布
    - 网页预览、Unity VR数字人讲解
 
-#### C. 平台接入
+#### C. 课程发布与公开查看器
+1) 发布配置
+   - 完全公开：任何人都可以直接访问
+   - 发布设置：允许下载、显示作者、自动播放等配置
+   - 手动更新：编辑后需要重新发布才更新公开版本
+2) 公开查看页面
+   - 独立的公开访问页面，无需登录
+   - 基础播放功能：观看、控制播放进度、分享功能
+   - 移动端自适应：支持主流手机浏览器的响应式设计
+   - 智能分层存储：轻量数据存服务器，重资源存NAS
+3) 访问路由
+   - 路由方案：`https://yourdomain.com/course/{publishId}`
+   - 分享链接：支持一键复制分享链接
+
+#### D. 平台接入
 - 在 `admin-platform/web` 左侧导航新增"**三维课件**"；支持新建、编辑、列表管理
 - 移除资源管理中通过点击模型进行编辑的入口
 
@@ -183,6 +197,14 @@
 - POST `/api/ai/search-images`  图片检索（返回URL/标题/摘要/来源/版权/可选bbox）
 - POST `/api/ai/tts`  草稿预览实时合成（返回临时URL，不写入清单）
 - POST `/api/ai/tts/batch`  发布流程内增量合成并写回清单与 `assets.audio`
+
+#### D. 课程发布与公开访问
+- POST `/api/ai-courses/:id/publish`  发布课程为公开访问
+- GET `/api/ai-courses/:id/publish`  获取发布状态和分享链接  
+- PUT `/api/ai-courses/:id/publish`  更新发布配置
+- DELETE `/api/ai-courses/:id/publish`  停用发布
+- GET `/api/public/course/:publishId`  公开访问课程数据（无需认证）
+- GET `/api/public/course/:publishId/stats`  获取访问统计（可选）
 
 ### 九、交互关键点
 - 选中高亮：OutlinePass 或材质描边，高亮与可见性互不干扰
