@@ -269,11 +269,40 @@ export default function PublicCoursePlayer({
     
     setCurrentSubtitle(item.say || '');
     
-    // 显示图片
+    // 显示图片 - 支持多种图片URL格式
+    let imageUrl = null;
+    
     if (item.imageUrl) {
+      imageUrl = item.imageUrl;
+    } else if (item.image && item.image.src) {
+      imageUrl = item.image.src; // 从image.src获取
+    } else if (item.originalImageUrl) {
+      imageUrl = item.originalImageUrl;
+    }
+    
+    if (imageUrl) {
+      // 处理CORS问题：如果是外部URL，可能需要通过代理访问
+      let processedImageUrl = imageUrl;
+      if (imageUrl.startsWith('https://dl.yf-xr.com/')) {
+        processedImageUrl = `/api/public/proxy?url=${encodeURIComponent(imageUrl)}`;
+      }
+        
       setCurrentImage({
-        url: item.imageUrl,
-        title: item.imageTitle || ''
+        url: processedImageUrl,
+        title: item.imageTitle || item.say || 'Course Image'
+      });
+      
+      console.log('设置图片显示:', {
+        原始URL: imageUrl,
+        处理后URL: processedImageUrl,
+        来源: item.imageUrl ? 'imageUrl' : item.image?.src ? 'image.src' : 'originalImageUrl'
+      });
+    } else {
+      console.warn('未找到图片URL:', {
+        hasImageUrl: !!item.imageUrl,
+        hasImageSrc: !!(item.image && item.image.src),
+        hasOriginalImageUrl: !!item.originalImageUrl,
+        itemKeys: Object.keys(item)
       });
     }
     
@@ -657,7 +686,10 @@ export default function PublicCoursePlayer({
         display: 'flex',
         alignItems: 'center',
         gap: '12px',
-        zIndex: 300
+        zIndex: 9999,
+        backdropFilter: 'blur(10px)',
+        border: '1px solid rgba(255, 255, 255, 0.2)',
+        boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)'
       }}>
         <Button 
           type="text" 

@@ -252,14 +252,10 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     };
 
     const setupLights = (scene: THREE.Scene) => {
-      // 使用经典三点补光法，确保模型各个角度都有良好的光照
+      // 使用高强度定向光照，移除环境光避免模型过暗
 
-      // 1. 环境光 - 提供整体基础亮度
-      const ambientLight = new THREE.AmbientLight(0x404040, 0.8); // 提高环境光强度
-      scene.add(ambientLight);
-
-      // 2. 主光源（Key Light）- 正面主要光照
-      const keyLight = new THREE.DirectionalLight(0xffffff, 1.5); // 提高主光强度
+      // 1. 主光源（Key Light）- 正面主要光照 (+30%强度)
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.95); // 1.5 * 1.3 = 1.95
       keyLight.position.set(10, 15, 10); // 正面稍偏右的位置
       keyLight.castShadow = true;
       
@@ -276,31 +272,27 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       
       scene.add(keyLight);
 
-      // 3. 补光源（Fill Light）- 左侧补光，减少阴影对比度
-      const fillLight = new THREE.DirectionalLight(0xffffff, 0.8); // 增加补光强度
+      // 2. 补光源（Fill Light）- 左侧补光，减少阴影对比度 (+30%强度)
+      const fillLight = new THREE.DirectionalLight(0xffffff, 1.04); // 0.8 * 1.3 = 1.04
       fillLight.position.set(-15, 10, 5); // 左侧位置
       scene.add(fillLight);
 
-      // 4. 背光源（Back Light）- 背面轮廓光
-      const backLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      // 3. 背光源（Back Light）- 背面轮廓光 (+30%强度)
+      const backLight = new THREE.DirectionalLight(0xffffff, 0.78); // 0.6 * 1.3 = 0.78
       backLight.position.set(-5, 8, -15); // 背面位置
       scene.add(backLight);
 
-      // 5. 顶部光源 - 增强顶部细节
-      const topLight = new THREE.DirectionalLight(0xffffff, 0.4);
+      // 4. 顶部光源 - 增强顶部细节 (+30%强度)
+      const topLight = new THREE.DirectionalLight(0xffffff, 0.52); // 0.4 * 1.3 = 0.52
       topLight.position.set(0, 20, 0); // 正上方
       scene.add(topLight);
 
-      // 6. 底部反射光 - 模拟地面反射
-      const bottomLight = new THREE.DirectionalLight(0x4488ff, 0.3); // 蓝色调的底部光
+      // 5. 底部反射光 - 模拟地面反射 (+30%强度)
+      const bottomLight = new THREE.DirectionalLight(0x4488ff, 0.39); // 0.3 * 1.3 = 0.39
       bottomLight.position.set(0, -10, 0); // 正下方
       scene.add(bottomLight);
 
-      // 7. 半球光 - 天空和地面的环境光
-      const hemisphereLight = new THREE.HemisphereLight(0x87CEEB, 0x654321, 0.6); // 天空蓝和地面棕
-      scene.add(hemisphereLight);
-
-      console.log('已设置专业三点补光法，共7个光源');
+      console.log('已设置高强度定向光照，共5个光源，无环境光和半球光');
     };
 
     // 自适应缩放标注
@@ -679,10 +671,10 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         canvas.height = textHeight;
         const context = canvas.getContext('2d')!;
         
-        // 绘制背景（圆角矩形）
-        context.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        // 绘制背景（圆角矩形） - 蓝色科技感
+        context.fillStyle = 'rgba(30, 50, 80, 0.95)'; // 深蓝色半透明背景
         context.strokeStyle = '#1890ff';
-        context.lineWidth = 3;
+        context.lineWidth = 2;
         
         const radius = 8;
         context.beginPath();
@@ -695,8 +687,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         context.fill();
         context.stroke();
         
-        // 绘制文字
-        context.fillStyle = '#333333';
+        // 绘制文字 - 白色文字
+        context.fillStyle = 'white';
         context.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
