@@ -189,11 +189,17 @@ export default function PublicThreeDViewer({ coursewareData, onControlsReady }: 
         .setKTX2Loader(ktx2)
         .setDRACOLoader(draco);
 
-      // 使用简单的加载方式（公开页面不需要认证）
-      console.log('Loading model from URL:', modelUrl);
-      const gltf = await new Promise<any>((resolve, reject) => {
-        loader.load(modelUrl, resolve, undefined, reject);
-      });
+        // 对于NAS的文件，使用代理来解决CORS问题
+        let loadUrl = modelUrl;
+        if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
+          loadUrl = `/api/files/proxy?url=${encodeURIComponent(modelUrl)}`;
+        }
+        
+        console.log('Loading model from URL:', modelUrl);
+        console.log('Actual load URL:', loadUrl);
+        const gltf = await new Promise<any>((resolve, reject) => {
+          loader.load(loadUrl, resolve, undefined, reject);
+        });
 
       const model = gltf.scene;
       modelRootRef.current = model;

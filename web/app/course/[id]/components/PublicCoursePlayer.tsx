@@ -162,14 +162,70 @@ export default function PublicCoursePlayer({
       viewerControlsRef.current.startAutoRotation();
     }
     
-    // 模拟TTS播放
-    return new Promise((resolve) => {
-      const estimatedDuration = Math.max(2, (item.say?.length || 0) * 0.15); // 每个字符0.15秒
-      setTimeout(() => {
-        setCurrentSubtitle('');
-        resolve(estimatedDuration);
-      }, estimatedDuration * 1000);
-    });
+    // 播放音频（如果有）
+    if (item.audioUrl) {
+      console.log('播放音频:', item.audioUrl);
+      return new Promise((resolve) => {
+        const audio = new Audio();
+        
+        // 使用代理来解决CORS问题
+        let audioUrl = item.audioUrl;
+        if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+          audioUrl = `/api/files/proxy?url=${encodeURIComponent(audioUrl)}`;
+        }
+        
+        audio.src = audioUrl;
+        playbackState.currentAudio = audio;
+        
+        audio.onended = () => {
+          setCurrentSubtitle('');
+          // 停止模型自转
+          if (viewerControlsRef.current?.stopAutoRotation) {
+            viewerControlsRef.current.stopAutoRotation();
+          }
+          resolve(audio.duration || item.audioDuration || 3);
+        };
+        
+        audio.onerror = (error) => {
+          console.error('音频播放失败:', error);
+          setCurrentSubtitle('');
+          // 停止模型自转
+          if (viewerControlsRef.current?.stopAutoRotation) {
+            viewerControlsRef.current.stopAutoRotation();
+          }
+          // 回退到估算时长
+          const estimatedDuration = Math.max(2, (item.say?.length || 0) * 0.15);
+          setTimeout(() => resolve(estimatedDuration), estimatedDuration * 1000);
+        };
+        
+        audio.play().catch((error) => {
+          console.error('音频播放启动失败:', error);
+          // 回退到估算时长
+          const estimatedDuration = Math.max(2, (item.say?.length || 0) * 0.15);
+          setTimeout(() => {
+            setCurrentSubtitle('');
+            if (viewerControlsRef.current?.stopAutoRotation) {
+              viewerControlsRef.current.stopAutoRotation();
+            }
+            resolve(estimatedDuration);
+          }, estimatedDuration * 1000);
+        });
+      });
+    } else {
+      // 没有音频时，模拟TTS播放
+      return new Promise((resolve) => {
+        const estimatedDuration = Math.max(2, (item.say?.length || 0) * 0.15); // 每个字符0.15秒
+        
+        setTimeout(() => {
+          setCurrentSubtitle('');
+          // 停止模型自转
+          if (viewerControlsRef.current?.stopAutoRotation) {
+            viewerControlsRef.current.stopAutoRotation();
+          }
+          resolve(estimatedDuration);
+        }, estimatedDuration * 1000);
+      });
+    }
   };
 
   const executeImageExplainItem = async (item: any): Promise<number> => {

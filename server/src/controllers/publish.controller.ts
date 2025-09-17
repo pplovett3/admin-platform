@@ -309,25 +309,35 @@ export async function getPublicCourse(req: Request, res: Response) {
       const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
       console.log('Using public download base:', publicBaseUrl);
       
-      // 处理模型URL
-      if (processedCoursewareData.modelUrl && !processedCoursewareData.modelUrl.startsWith('http')) {
+      // 处理模型URL - 优先使用修改后的模型
+      const modelUrl = processedCoursewareData.modifiedModelUrl || processedCoursewareData.modelUrl;
+      if (modelUrl && !modelUrl.startsWith('http')) {
         console.log('Original model URL:', processedCoursewareData.modelUrl);
-        // 如果是文件ID，需要查找对应的文件路径
-        const fileIdMatch = processedCoursewareData.modelUrl.match(/([a-f0-9]{24})/);
-        if (fileIdMatch) {
-          const fileId = fileIdMatch[1];
-          try {
-            const { FileModel } = await import('../models/File');
-            const file = await FileModel.findById(fileId);
-            if (file) {
-              processedCoursewareData.modelUrl = `${publicBaseUrl}/${file.storageRelPath}`;
-              console.log('Converted model URL:', processedCoursewareData.modelUrl);
-            }
-          } catch (error) {
-            console.error('Error finding file for model URL:', error);
-          }
+        console.log('Modified model URL:', processedCoursewareData.modifiedModelUrl);
+        console.log('Using model URL:', modelUrl);
+        // 如果是modifiedModels路径，直接拼接
+        if (modelUrl.startsWith('modifiedModels/')) {
+          processedCoursewareData.modelUrl = `${publicBaseUrl}/${modelUrl}`;
+          console.log('Converted modified model URL:', processedCoursewareData.modelUrl);
         } else {
-          processedCoursewareData.modelUrl = `${publicBaseUrl}/${processedCoursewareData.modelUrl}`;
+          // 如果是文件ID，需要查找对应的文件路径
+          const fileIdMatch = modelUrl.match(/([a-f0-9]{24})/);
+          if (fileIdMatch) {
+            const fileId = fileIdMatch[1];
+            try {
+              const { FileModel } = await import('../models/File');
+              const file = await FileModel.findById(fileId);
+              if (file) {
+                processedCoursewareData.modelUrl = `${publicBaseUrl}/${file.storageRelPath}`;
+                console.log('Converted file model URL:', processedCoursewareData.modelUrl);
+              }
+            } catch (error) {
+              console.error('Error finding file for model URL:', error);
+            }
+          } else {
+            processedCoursewareData.modelUrl = `${publicBaseUrl}/${modelUrl}`;
+            console.log('Direct model URL conversion:', processedCoursewareData.modelUrl);
+          }
         }
       }
 
