@@ -702,11 +702,15 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           map: texture,
           transparent: true,
           alphaTest: 0.1,
-          depthTest: true,
-          depthWrite: false
+          depthTest: false, // 禁用深度测试，确保标签始终在最前面
+          depthWrite: false,
+          sizeAttenuation: false // 禁用尺寸衰减，保持标签大小一致
         });
         
         const sprite = new THREE.Sprite(material);
+        
+        // 确保标签在最顶层显示
+        sprite.renderOrder = 999; // 高渲染顺序，确保最后渲染
         
         // 设置缩放和自适应标记
         const baseScale = 0.4;
@@ -878,7 +882,42 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
     };
 
-    // 高亮节点
+    // 清除自发光高亮
+    const clearEmissiveHighlight = () => {
+      for (const m of Array.from(highlightedMatsRef.current)) {
+        const backup = materialBackupRef.current.get(m);
+        if (backup) {
+          if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
+          if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
+        }
+      }
+      highlightedMatsRef.current.clear();
+    };
+
+    // 应用自发光高亮
+    const applyEmissiveHighlight = (obj: THREE.Object3D) => {
+      clearEmissiveHighlight();
+      obj.traverse(o => {
+        if ((o as any).material) {
+          const mats = Array.isArray((o as any).material) ? (o as any).material : [(o as any).material];
+          mats.forEach((mat: any) => {
+            try {
+              if (!materialBackupRef.current.has(mat)) {
+                materialBackupRef.current.set(mat, { 
+                  emissive: mat.emissive ? mat.emissive.clone() : undefined, 
+                  emissiveIntensity: mat.emissiveIntensity 
+                });
+              }
+              if (mat.emissive) mat.emissive.set(0x22d3ee); // 青色高亮
+              if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+              highlightedMatsRef.current.add(mat);
+            } catch {}
+          });
+        }
+      });
+    };
+
+    // 高亮节点 - 使用编辑器相同的自发光效果
     const highlightNode = (nodeKey: string, highlight: boolean) => {
       console.log('设置高亮:', nodeKey, highlight);
       
@@ -893,12 +932,21 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
 
       if (highlight) {
-        // 添加到高亮列表
+        // 清除之前的高亮
+        clearEmissiveHighlight();
+        
+        // 应用自发光高亮（使用三维课件编辑器的算法）
+        applyEmissiveHighlight(targetObject);
+        
+        // 同时使用轮廓高亮
         if (outlineRef.current) {
           outlineRef.current.selectedObjects = [targetObject];
         }
+        
+        console.log('已高亮节点:', targetObject.name || targetObject.uuid);
       } else {
-        // 从高亮列表移除
+        // 清除高亮
+        clearEmissiveHighlight();
         if (outlineRef.current) {
           outlineRef.current.selectedObjects = [];
         }
@@ -1075,6 +1123,22 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           mixerRef.current.stopAllAction();
         }
       };
+    }, [width, height]);
+
+    // 监听尺寸变化，更新渲染器和相机
+    useEffect(() => {
+      if (rendererRef.current && cameraRef.current) {
+        rendererRef.current.setSize(width, height);
+        cameraRef.current.aspect = width / height;
+        cameraRef.current.updateProjectionMatrix();
+        
+        // 更新后处理composer
+        if (composerRef.current) {
+          composerRef.current.setSize(width, height);
+        }
+        
+        console.log('ThreeDViewer尺寸更新:', { width, height });
+      }
     }, [width, height]);
 
     // 加载模型

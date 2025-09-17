@@ -48,6 +48,10 @@ export default function PublicCoursePlayer({
   });
   const [currentSubtitle, setCurrentSubtitle] = useState<string>('');
   const [currentImage, setCurrentImage] = useState<any>(null);
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [needsUserInteraction, setNeedsUserInteraction] = useState(true);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [viewerImageSrc, setViewerImageSrc] = useState('');
   const playbackTimerRef = useRef<NodeJS.Timeout>();
   const [totalItems, setTotalItems] = useState(0);
   const [currentItemNumber, setCurrentItemNumber] = useState(0);
@@ -96,7 +100,130 @@ export default function PublicCoursePlayer({
     return segment.items[playbackState.currentItemIndex];
   };
 
+  // 初始化音频上下文（移动端兼容）
+  const initAudioContext = async () => {
+    if (audioContext) return audioContext;
+    
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        console.warn('浏览器不支持AudioContext');
+        return null;
+      }
+      
+      const ctx = new AudioContextClass();
+      
+      // 在iOS上需要用户交互后才能启动AudioContext
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+      
+      setAudioContext(ctx);
+      setNeedsUserInteraction(false);
+      console.log('AudioContext初始化成功:', ctx.state);
+      return ctx;
+    } catch (error) {
+      console.error('AudioContext初始化失败:', error);
+      return null;
+    }
+  };
+
+  // 通用音频播放函数（移动端兼容）
+  const playAudioWithMobileSupport = async (audioUrl: string, onEnded: () => void, onError: (duration: number) => void, estimatedDuration: number = 3): Promise<void> => {
+    const audio = new Audio();
+    
+    // 移动端兼容性设置
+    audio.preload = 'auto';
+    audio.crossOrigin = 'anonymous';
+    
+    // 使用公开代理来解决CORS问题
+    let processedUrl = audioUrl;
+    if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+      processedUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
+    }
+    
+    audio.src = processedUrl;
+    playbackState.currentAudio = audio;
+    
+    audio.onended = onEnded;
+    audio.onerror = () => onError(estimatedDuration);
+    
+    try {
+      // 在iOS上确保AudioContext已启动
+      if (audioContext && audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+      
+      await audio.play();
+      console.log('音频播放成功:', audioUrl);
+    } catch (error: any) {
+      if (error.name === 'NotAllowedError') {
+        console.warn('音频自动播放被阻止，尝试用户交互');
+        // 在移动端显示播放提示
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (isMobile) {
+          // 移动端使用更友好的方式
+          try {
+            // 尝试手动触发播放
+            document.addEventListener('touchstart', async function autoPlay() {
+              document.removeEventListener('touchstart', autoPlay);
+              try {
+                await audio.play();
+                console.log('触摸后音频播放成功');
+              } catch (retryError) {
+                console.error('触摸后音频播放仍失败:', retryError);
+                onError(estimatedDuration);
+              }
+            }, { once: true });
+            
+            // 如果3秒内没有触摸，回退到默认时长
+            setTimeout(() => {
+              if (audio.paused) {
+                onError(estimatedDuration);
+              }
+            }, 3000);
+          } catch (retryError) {
+            onError(estimatedDuration);
+          }
+        } else {
+          // 桌面端显示确认对话框
+          const userConfirm = window.confirm('需要您的许可才能播放音频，点击确定继续');
+          if (userConfirm) {
+            try {
+              await audio.play();
+            } catch (retryError) {
+              console.error('重试音频播放失败:', retryError);
+              onError(estimatedDuration);
+            }
+          } else {
+            onError(estimatedDuration);
+          }
+        }
+      } else {
+        console.error('音频播放出错:', error);
+        onError(estimatedDuration);
+      }
+    }
+  };
+
+  // 处理图片点击放大
+  const handleImageClick = (imageSrc: string) => {
+    setViewerImageSrc(imageSrc);
+    setImageViewerVisible(true);
+  };
+
+  // 关闭图片查看器
+  const closeImageViewer = () => {
+    setImageViewerVisible(false);
+    setViewerImageSrc('');
+  };
+
   const startPlayback = async () => {
+    // 首次播放时初始化音频上下文
+    if (needsUserInteraction) {
+      await initAudioContext();
+    }
+    
     const currentItem = getCurrentItem();
     if (!currentItem) return;
 
@@ -607,7 +734,7 @@ export default function PublicCoursePlayer({
       {/* 3D查看器 */}
       <div style={{ 
         width: '100%', 
-        height: isFullscreen ? '100%' : 'calc(100vh - 80px)', // 非全屏时为控件留出空间
+        height: isFullscreen ? '100%' : 'calc(100vh - 140px)', // 非全屏时为控件和字幕留出更多空间
         position: 'absolute', 
         top: 0, 
         left: 0 
@@ -616,7 +743,7 @@ export default function PublicCoursePlayer({
           ref={viewerControlsRef}
           coursewareData={courseData?.coursewareData}
           width={typeof window !== 'undefined' ? window.innerWidth : 1920}
-          height={typeof window !== 'undefined' ? (isFullscreen ? window.innerHeight : window.innerHeight - 80) : 1080}
+          height={typeof window !== 'undefined' ? (isFullscreen ? window.innerHeight : window.innerHeight - 140) : 1080}
         />
       </div>
 
@@ -631,8 +758,20 @@ export default function PublicCoursePlayer({
           background: 'rgba(0, 0, 0, 0.8)',
           borderRadius: '8px',
           overflow: 'hidden',
-          zIndex: 1000
-        }}>
+          zIndex: 1000,
+          cursor: 'pointer',
+          transition: 'transform 0.2s ease',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+        }}
+        onClick={() => handleImageClick(currentImage.url)}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'scale(1.05)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'scale(1)';
+        }}
+        title="点击放大查看"
+        >
           <img 
             src={currentImage.url} 
             alt={currentImage.title}
@@ -646,9 +785,13 @@ export default function PublicCoursePlayer({
             <div style={{
               padding: '8px',
               color: 'white',
-              fontSize: '12px'
+              fontSize: '12px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
             }}>
-              {currentImage.title}
+              <span>{currentImage.title}</span>
+              <span style={{ fontSize: '10px', opacity: 0.7 }}>🔍 点击放大</span>
             </div>
           )}
         </div>
@@ -658,7 +801,7 @@ export default function PublicCoursePlayer({
       {currentSubtitle && (
         <div style={{
           position: 'absolute',
-          bottom: isFullscreen ? '100px' : '100px',
+          bottom: isFullscreen ? '100px' : '80px',
           left: '50%',
           transform: 'translateX(-50%)',
           background: 'rgba(0, 0, 0, 0.8)',
@@ -677,7 +820,7 @@ export default function PublicCoursePlayer({
       {/* 播放控制栏 */}
       <div style={{
         position: 'absolute',
-        bottom: isFullscreen ? '20px' : '10px',
+        bottom: isFullscreen ? '20px' : '20px',
         left: '50%',
         transform: 'translateX(-50%)',
         background: 'rgba(0, 0, 0, 0.8)',
@@ -745,6 +888,319 @@ export default function PublicCoursePlayer({
           </Space>
         )}
       </div>
+
+      {/* 图片查看器模态框 */}
+      {imageViewerVisible && (
+        <ImageViewer 
+          src={viewerImageSrc} 
+          visible={imageViewerVisible} 
+          onClose={closeImageViewer} 
+        />
+      )}
     </div>
   );
 }
+
+// 图片查看器组件
+interface ImageViewerProps {
+  src: string;
+  visible: boolean;
+  onClose: () => void;
+}
+
+const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  // 重置状态
+  const resetView = () => {
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  };
+
+  // 缩放处理
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    const newScale = Math.max(0.5, Math.min(5, scale + delta));
+    setScale(newScale);
+  };
+
+  // 鼠标按下
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) { // 左键
+      setIsDragging(true);
+      setDragStart({ x: e.clientX, y: e.clientY });
+      setDragOffset(position);
+    }
+  };
+
+  // 鼠标移动
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      setPosition({
+        x: dragOffset.x + dx,
+        y: dragOffset.y + dy
+      });
+    }
+  };
+
+  // 鼠标松开
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  // 触摸事件处理（移动端支持）
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      // 单指拖拽
+      const touch = e.touches[0];
+      setIsDragging(true);
+      setDragStart({ x: touch.clientX, y: touch.clientY });
+      setDragOffset(position);
+    } else if (e.touches.length === 2) {
+      // 双指缩放
+      e.preventDefault();
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.preventDefault();
+    
+    if (e.touches.length === 1 && isDragging) {
+      // 单指拖拽
+      const touch = e.touches[0];
+      const dx = touch.clientX - dragStart.x;
+      const dy = touch.clientY - dragStart.y;
+      setPosition({
+        x: dragOffset.x + dx,
+        y: dragOffset.y + dy
+      });
+    } else if (e.touches.length === 2) {
+      // 双指缩放逻辑可以在这里添加
+      // 为简化，暂时只支持按钮缩放
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+  };
+
+  // 双击重置
+  const handleDoubleClick = () => {
+    if (scale === 1) {
+      setScale(2);
+    } else {
+      resetView();
+    }
+  };
+
+  // 键盘事件
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!visible) return;
+      
+      switch (e.key) {
+        case 'Escape':
+          onClose();
+          break;
+        case '+':
+        case '=':
+          setScale(prev => Math.min(5, prev + 0.2));
+          break;
+        case '-':
+          setScale(prev => Math.max(0.5, prev - 0.2));
+          break;
+        case '0':
+          resetView();
+          break;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [visible, onClose]);
+
+  // 组件卸载时重置
+  useEffect(() => {
+    if (visible) {
+      resetView();
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        zIndex: 10000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: isDragging ? 'grabbing' : scale > 1 ? 'grab' : 'default'
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+      onWheel={handleWheel}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* 顶部工具栏 */}
+      <div style={{
+        position: 'absolute',
+        top: '20px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: 'rgba(0, 0, 0, 0.7)',
+        borderRadius: '25px',
+        padding: '8px 16px',
+        color: 'white',
+        fontSize: '14px',
+        zIndex: 10001,
+        display: 'flex',
+        gap: '16px',
+        alignItems: 'center',
+        maxWidth: '90vw',
+        overflow: 'hidden'
+      }}>
+        <span>缩放: {Math.round(scale * 100)}%</span>
+        <span style={{ display: window.innerWidth > 640 ? 'inline' : 'none' }}>|</span>
+        <span style={{ 
+          display: window.innerWidth > 640 ? 'inline' : 'none',
+          whiteSpace: 'nowrap'
+        }}>
+          {window.innerWidth > 768 ? '滚轮缩放 • 拖拽移动 • 双击重置 • ESC关闭' : '拖拽移动 • 双击重置'}
+        </span>
+      </div>
+
+      {/* 关闭按钮 */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          width: '40px',
+          height: '40px',
+          borderRadius: '50%',
+          border: 'none',
+          background: 'rgba(255, 255, 255, 0.2)',
+          color: 'white',
+          fontSize: '20px',
+          cursor: 'pointer',
+          zIndex: 10001,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backdropFilter: 'blur(10px)'
+        }}
+        title="关闭 (ESC)"
+      >
+        ×
+      </button>
+
+      {/* 缩放控制按钮 */}
+      <div style={{
+        position: 'absolute',
+        bottom: '20px',
+        right: '20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        zIndex: 10001
+      }}>
+        <button
+          onClick={() => setScale(prev => Math.min(5, prev + 0.2))}
+          style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            border: 'none',
+            background: 'rgba(255, 255, 255, 0.2)',
+            color: 'white',
+            fontSize: '18px',
+            cursor: 'pointer',
+            backdropFilter: 'blur(10px)'
+          }}
+          title="放大 (+)"
+        >
+          +
+        </button>
+        <button
+          onClick={() => setScale(prev => Math.max(0.5, prev - 0.2))}
+          style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            border: 'none',
+            background: 'rgba(255, 255, 255, 0.2)',
+            color: 'white',
+            fontSize: '18px',
+            cursor: 'pointer',
+            backdropFilter: 'blur(10px)'
+          }}
+          title="缩小 (-)"
+        >
+          -
+        </button>
+        <button
+          onClick={resetView}
+          style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            border: 'none',
+            background: 'rgba(255, 255, 255, 0.2)',
+            color: 'white',
+            fontSize: '12px',
+            cursor: 'pointer',
+            backdropFilter: 'blur(10px)'
+          }}
+          title="重置 (0)"
+        >
+          1:1
+        </button>
+      </div>
+
+      {/* 图片 */}
+      <img
+        ref={imageRef}
+        src={src}
+        alt="放大查看"
+        style={{
+          maxWidth: scale === 1 ? '90vw' : 'none',
+          maxHeight: scale === 1 ? '90vh' : 'none',
+          transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
+          cursor: isDragging ? 'grabbing' : scale > 1 ? 'grab' : 'default',
+          userSelect: 'none',
+          pointerEvents: 'auto'
+        }}
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        onDragStart={(e) => e.preventDefault()}
+      />
+    </div>
+  );
+};

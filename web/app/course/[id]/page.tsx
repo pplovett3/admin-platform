@@ -92,9 +92,14 @@ export default function PublicCoursePage() {
       setLoadingMessage('正在加载3D模型...');
       setLoadingProgress(40);
       
-      // 预加载3D模型（简单检查）
+      // 预加载3D模型（完整下载）
       if (data.coursewareData?.modifiedModelUrl) {
-        await preloadModel(data.coursewareData.modifiedModelUrl);
+        let modelUrl = data.coursewareData.modifiedModelUrl;
+        // 如果是dl.yf-xr.com的URL，通过代理访问
+        if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
+          modelUrl = `/api/public/proxy?url=${encodeURIComponent(modelUrl)}`;
+        }
+        await preloadModel(modelUrl);
       }
       setLoadingProgress(60);
       
@@ -126,14 +131,30 @@ export default function PublicCoursePage() {
     }
   };
 
-  // 预加载3D模型
+  // 预加载3D模型 - 真正加载模型文件
   const preloadModel = async (modelUrl: string): Promise<void> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const loader = new XMLHttpRequest();
-      loader.open('HEAD', modelUrl, true);
-      loader.onload = () => resolve();
-      loader.onerror = () => resolve(); // 即使失败也继续
-      loader.timeout = 5000; // 5秒超时
+      loader.open('GET', modelUrl, true);
+      loader.responseType = 'blob';
+      loader.onload = () => {
+        if (loader.status === 200) {
+          console.log('模型文件预加载完成:', modelUrl, '大小:', loader.response.size);
+          resolve();
+        } else {
+          console.warn('模型预加载失败，但继续:', loader.status);
+          resolve(); // 即使失败也继续
+        }
+      };
+      loader.onerror = () => {
+        console.warn('模型预加载出错，但继续');
+        resolve(); // 即使失败也继续
+      };
+      loader.timeout = 15000; // 15秒超时
+      loader.ontimeout = () => {
+        console.warn('模型预加载超时，但继续');
+        resolve();
+      };
       loader.send();
     });
   };
@@ -285,91 +306,42 @@ export default function PublicCoursePage() {
         background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)',
         color: 'white'
       }}>
-        <div style={{ textAlign: 'center', maxWidth: '400px', padding: '20px' }}>
-          <div style={{ marginBottom: '30px' }}>
-            <div style={{ 
-              fontSize: '24px', 
-              fontWeight: 'bold', 
-              marginBottom: '10px' 
-            }}>
-              🎓 AI智能课程加载中
-            </div>
-            <div style={{ 
-              fontSize: '14px', 
-              opacity: 0.8,
-              marginBottom: '20px' 
-            }}>
-              正在为您准备高质量的学习体验
-            </div>
-          </div>
-          
-          {/* 进度条 */}
+        <div style={{ textAlign: 'center', maxWidth: '300px', padding: '20px' }}>
           <div style={{ 
-            width: '100%', 
-            height: '8px', 
-            backgroundColor: 'rgba(255,255,255,0.2)', 
-            borderRadius: '4px',
-            overflow: 'hidden',
-            marginBottom: '20px'
-          }}>
-            <div style={{ 
-              width: `${loadingProgress}%`, 
-              height: '100%', 
-              backgroundColor: '#52c41a',
-              borderRadius: '4px',
-              transition: 'width 0.3s ease',
-              background: 'linear-gradient(90deg, #52c41a, #73d13d)'
-            }} />
-          </div>
-          
-          {/* 加载信息 */}
-          <div style={{ 
-            fontSize: '16px', 
-            marginBottom: '10px',
-            minHeight: '24px'
+            fontSize: '18px', 
+            fontWeight: 'bold', 
+            marginBottom: '20px',
+            color: 'white'
           }}>
             {loadingMessage}
           </div>
           
+          {/* 简洁进度条 */}
           <div style={{ 
-            fontSize: '14px', 
-            opacity: 0.7 
+            width: '100%', 
+            height: '4px', 
+            backgroundColor: 'rgba(255,255,255,0.2)', 
+            borderRadius: '2px',
+            overflow: 'hidden',
+            marginBottom: '16px'
           }}>
-            {loadingProgress}% 完成
+            <div style={{ 
+              width: `${loadingProgress}%`, 
+              height: '100%', 
+              backgroundColor: '#1890ff',
+              borderRadius: '2px',
+              transition: 'width 0.3s ease'
+            }} />
           </div>
           
-          {/* 加载动画 */}
           <div style={{ 
-            marginTop: '30px',
-            display: 'flex',
-            justifyContent: 'center',
-            gap: '4px'
+            fontSize: '14px', 
+            opacity: 0.8,
+            color: 'white'
           }}>
-            {[0, 1, 2].map(i => (
-              <div key={i} style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: 'rgba(255,255,255,0.6)',
-                animation: `pulse 1.4s ease-in-out ${i * 0.16}s infinite both`
-              }} />
-            ))}
+            {loadingProgress}%
           </div>
         </div>
-        
-        {/* CSS动画 */}
-        <style jsx>{`
-          @keyframes pulse {
-            0%, 80%, 100% {
-              transform: scale(0);
-              opacity: 0.5;
-            }
-            40% {
-              transform: scale(1);
-              opacity: 1;
-            }
-          }
-        `}</style>
       </div>
     );
   }
@@ -527,6 +499,11 @@ export default function PublicCoursePage() {
             color: '#1890ff'
           }}>
             💡 提示：建议佩戴耳机以获得更好的学习体验
+            {/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && (
+              <div style={{ marginTop: '8px', fontSize: '12px', color: '#ff6b6b' }}>
+                📱 移动端用户：首次播放可能需要您手动点击音频播放
+              </div>
+            )}
           </div>
         </div>
       </Modal>
