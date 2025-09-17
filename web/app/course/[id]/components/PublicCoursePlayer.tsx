@@ -62,6 +62,39 @@ export default function PublicCoursePlayer({
     }
   }, [courseData]);
 
+  // 移动端音频检测
+  useEffect(() => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    console.log('🔍 设备检测:', {
+      userAgent: navigator.userAgent,
+      isMobile,
+      isPlaying,
+      needsUserInteraction
+    });
+    
+    if (isMobile) {
+      console.log('📱 检测到移动端设备，预设音频按钮显示逻辑');
+      
+      // 页面加载后立即显示音频按钮
+      if (!audioContext || audioContext.state === 'suspended') {
+        setShowMobileAudioButton(true);
+        console.log('📱 移动端AudioContext未初始化，显示音频按钮');
+      }
+      
+      // 播放开始后的延迟检测
+      if (isPlaying) {
+        const timer = setTimeout(() => {
+          if (needsUserInteraction) {
+            setShowMobileAudioButton(true);
+            console.log('📱 播放中检测到需要用户交互，显示音频按钮');
+          }
+        }, 1000);
+        
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isPlaying, needsUserInteraction, audioContext]);
+
   // 计算当前步骤序号
   useEffect(() => {
     if (courseData?.courseData?.outline) {
@@ -230,34 +263,45 @@ export default function PublicCoursePlayer({
   // 手动播放音频（移动端专用）
   const handleManualAudioPlay = async () => {
     try {
-      console.log('用户手动启动音频播放');
+      console.log('🔊 用户手动启动音频播放');
       
       // 先播放一个静音音频来解锁权限
       const unlockAudio = new Audio();
       unlockAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAAAAAAAAAAAAAAAAAZGF0YQAAAAA=';
       unlockAudio.volume = 0;
+      unlockAudio.muted = false;
+      unlockAudio.autoplay = false;
       
       try {
         await unlockAudio.play();
-        console.log('音频权限解锁成功');
+        console.log('✅ 音频权限解锁成功');
       } catch (e) {
-        console.log('静音音频播放失败:', e);
+        console.log('❌ 静音音频播放失败:', e);
       }
       
       // 初始化音频上下文
       await initAudioContext();
       
-      // 创建一个测试音频来确保权限
-      const testAudio = new Audio();
-      testAudio.volume = 0.1;
-      testAudio.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcBz+S2fLNeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcB';
+      // 创建多个测试音频来确保权限
+      const testUrls = [
+        'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcBz+S2fLNeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcB',
+        'data:audio/mpeg;base64,SUQzAwAAAAABClRJVDIAAAAOAAABVGVzdABUUEUxAAAADgAAAVRlc3QAUEJSTEQAAAAOAAABVGVZMU='
+      ];
       
-      try {
-        await testAudio.play();
-        testAudio.pause();
-        console.log('测试音频播放成功');
-      } catch (e) {
-        console.log('测试音频播放失败:', e);
+      for (const testSrc of testUrls) {
+        try {
+          const testAudio = new Audio();
+          testAudio.volume = 0.1;
+          testAudio.src = testSrc;
+          testAudio.muted = false;
+          
+          await testAudio.play();
+          testAudio.pause();
+          console.log('✅ 测试音频播放成功:', testSrc.substring(0, 50));
+          break; // 成功一个就够了
+        } catch (e: any) {
+          console.log('❌ 测试音频播放失败:', e.name);
+        }
       }
       
       // 隐藏音频按钮
@@ -269,9 +313,10 @@ export default function PublicCoursePlayer({
         onPlayStateChange(true);
       }
       
-      message.success('音频已启用，播放将继续进行');
+      message.success('🎵 音频已启用，播放将继续进行');
+      console.log('🎉 音频手动启用完成');
     } catch (error) {
-      console.error('手动启动音频失败:', error);
+      console.error('💥 手动启动音频失败:', error);
       message.error('音频启动失败，请重试');
     }
   };
@@ -860,8 +905,28 @@ export default function PublicCoursePlayer({
             </div>
           </div>
           
-          {/* 右侧分享按钮 */}
-          <div>
+          {/* 右侧按钮组 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {/* 移动端音频按钮 */}
+            {showMobileAudioButton && (
+              <Button 
+                type="primary"
+                danger
+                icon={<SoundOutlined />} 
+                onClick={handleManualAudioPlay}
+                size="small"
+                style={{
+                  background: 'linear-gradient(45deg, #ff6b6b, #ff8e8e)',
+                  border: 'none',
+                  borderRadius: '20px',
+                  animation: 'pulse 2s infinite',
+                  boxShadow: '0 0 10px rgba(255, 107, 107, 0.5)'
+                }}
+              >
+                启用音频
+              </Button>
+            )}
+            
             <Button 
               type="text" 
               icon={<ShareAltOutlined />} 
@@ -963,35 +1028,6 @@ export default function PublicCoursePlayer({
         </div>
       )}
 
-      {/* 移动端音频播放按钮 */}
-      {showMobileAudioButton && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'rgba(255, 99, 71, 0.9)',
-          borderRadius: '50px',
-          padding: '15px 25px',
-          color: 'white',
-          fontSize: '16px',
-          fontWeight: 'bold',
-          cursor: 'pointer',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          backdropFilter: 'blur(10px)',
-          border: '2px solid rgba(255, 255, 255, 0.3)',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-          animation: 'pulse 2s infinite'
-        }}
-        onClick={handleManualAudioPlay}
-        >
-          <SoundOutlined style={{ fontSize: '20px' }} />
-          <span>点击启用音频播放</span>
-        </div>
-      )}
 
 
       {/* 图片查看器模态框 */}
@@ -1154,7 +1190,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
         right: 0,
         bottom: 0,
         backgroundColor: 'rgba(0, 0, 0, 0.9)',
-        zIndex: 10000,
+        zIndex: 2000,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -1184,7 +1220,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
         padding: '8px 16px',
         color: 'white',
         fontSize: '14px',
-        zIndex: 10001,
+        zIndex: 2001,
         display: 'flex',
         gap: '16px',
         alignItems: 'center',
@@ -1216,7 +1252,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
           color: 'white',
           fontSize: '20px',
           cursor: 'pointer',
-          zIndex: 10001,
+          zIndex: 2001,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -1235,7 +1271,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
-        zIndex: 10001
+        zIndex: 2001
       }}>
         <button
           onClick={() => setScale(prev => Math.min(5, prev + 0.2))}
