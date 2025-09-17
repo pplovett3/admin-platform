@@ -78,8 +78,10 @@ export async function publishCourse(req: Request, res: Response) {
       publishedCourse = await PublishedCourseModel.create(publishData);
     }
 
-    // 构建分享链接
-    const shareUrl = `${req.protocol}://${req.get('host')}/course/${publishedCourse.id}`;
+    // 构建分享链接 - 指向前端服务端口
+    const host = req.get('host') || '';
+    const frontendHost = host.replace(':4000', ':3000'); // 将后端端口替换为前端端口
+    const shareUrl = `${req.protocol}://${frontendHost}/course/${publishedCourse.id}`;
 
     res.json({
       success: true,
@@ -127,7 +129,9 @@ export async function getPublishStatus(req: Request, res: Response) {
       });
     }
 
-    const shareUrl = `${req.protocol}://${req.get('host')}/course/${publishedCourse.id}`;
+    const host = req.get('host') || '';
+    const frontendHost = host.replace(':4000', ':3000');
+    const shareUrl = `${req.protocol}://${frontendHost}/course/${publishedCourse.id}`;
 
     res.json({
       isPublished: true,

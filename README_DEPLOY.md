@@ -45,6 +45,7 @@
   - `JWT_SECRET`：默认 `change_me`
 - Web：
   - `NEXT_PUBLIC_API_URL`：默认 `http://localhost:4000`
+  - 生产环境需要设置为实际后端地址，如：`http://106.15.229.165:4000`
 
 ## 域名与反代示例（Nginx）
 将以下片段放到 Nginx `server` 配置中（以 `admin.example.com` 为例）：
