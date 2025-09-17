@@ -155,6 +155,13 @@ export default function PublicCoursePlayer({
   };
 
   const executeTalkItem = async (item: any): Promise<number> => {
+    console.log('执行talk步骤:', {
+      type: item.type,
+      say: item.say?.substring(0, 50) + '...',
+      audioUrl: item.audioUrl,
+      hasAudio: !!item.audioUrl
+    });
+    
     setCurrentSubtitle(item.say || '');
     
     // 开始模型自转

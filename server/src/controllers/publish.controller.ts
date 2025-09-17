@@ -309,42 +309,52 @@ export async function getPublicCourse(req: Request, res: Response) {
       modifiedModelUrl: processedCoursewareData.modifiedModelUrl
     });
 
-    // 如果配置了公开下载基地址，直接使用NAS的公开URL
-    if (config.publicDownloadBase) {
+    // 处理模型URL - 优先使用修改后的模型
+    if (processedCoursewareData.modifiedModelUrl) {
+      // 如果有修改后的模型URL且已经是完整URL，直接使用
+      if (processedCoursewareData.modifiedModelUrl.startsWith('http')) {
+        processedCoursewareData.modelUrl = processedCoursewareData.modifiedModelUrl;
+        console.log('Using complete modified model URL:', processedCoursewareData.modelUrl);
+      } else {
+        // 如果是相对路径，拼接基础URL
+        if (config.publicDownloadBase) {
+          const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
+          processedCoursewareData.modelUrl = `${publicBaseUrl}/${processedCoursewareData.modifiedModelUrl}`;
+          console.log('Converted modified model URL:', processedCoursewareData.modelUrl);
+        }
+      }
+    } else if (config.publicDownloadBase) {
+      // 处理原始模型URL
       const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
       console.log('Using public download base:', publicBaseUrl);
       
-      // 处理模型URL - 优先使用修改后的模型
-      const modelUrl = processedCoursewareData.modifiedModelUrl || processedCoursewareData.modelUrl;
+      const modelUrl = processedCoursewareData.modelUrl;
       if (modelUrl && !modelUrl.startsWith('http')) {
-        console.log('Original model URL:', processedCoursewareData.modelUrl);
-        console.log('Modified model URL:', processedCoursewareData.modifiedModelUrl);
-        console.log('Using model URL:', modelUrl);
-        // 如果是modifiedModels路径，直接拼接
-        if (modelUrl.startsWith('modifiedModels/')) {
-          processedCoursewareData.modelUrl = `${publicBaseUrl}/${modelUrl}`;
-          console.log('Converted modified model URL:', processedCoursewareData.modelUrl);
-        } else {
-          // 如果是文件ID，需要查找对应的文件路径
-          const fileIdMatch = modelUrl.match(/([a-f0-9]{24})/);
-          if (fileIdMatch) {
-            const fileId = fileIdMatch[1];
-            try {
-              const { FileModel } = await import('../models/File');
-              const file = await FileModel.findById(fileId);
-              if (file) {
-                processedCoursewareData.modelUrl = `${publicBaseUrl}/${file.storageRelPath}`;
-                console.log('Converted file model URL:', processedCoursewareData.modelUrl);
-              }
-            } catch (error) {
-              console.error('Error finding file for model URL:', error);
+        console.log('Processing original model URL:', modelUrl);
+        // 如果是文件ID，需要查找对应的文件路径
+        const fileIdMatch = modelUrl.match(/([a-f0-9]{24})/);
+        if (fileIdMatch) {
+          const fileId = fileIdMatch[1];
+          try {
+            const { FileModel } = await import('../models/File');
+            const file = await FileModel.findById(fileId);
+            if (file) {
+              processedCoursewareData.modelUrl = `${publicBaseUrl}/${file.storageRelPath}`;
+              console.log('Converted file model URL:', processedCoursewareData.modelUrl);
             }
-          } else {
-            processedCoursewareData.modelUrl = `${publicBaseUrl}/${modelUrl}`;
-            console.log('Direct model URL conversion:', processedCoursewareData.modelUrl);
+          } catch (error) {
+            console.error('Error finding file for model URL:', error);
           }
+        } else {
+          processedCoursewareData.modelUrl = `${publicBaseUrl}/${modelUrl}`;
+          console.log('Direct model URL conversion:', processedCoursewareData.modelUrl);
         }
       }
+    }
+
+    // 如果配置了公开下载基地址，处理其他资源URL
+    if (config.publicDownloadBase) {
+      const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
 
       // 处理课程数据中的图片URL
       if (processedCourseData.outline) {

@@ -772,7 +772,16 @@ export async function batchGenerateTTSForCourse(
 
       for (let itemIndex = 0; itemIndex < segment.items.length; itemIndex++) {
         const item = segment.items[itemIndex];
-        if (!item.say?.trim()) continue;
+        console.log(`检查步骤 ${segmentIndex}-${itemIndex}:`, {
+          type: item.type,
+          say: item.say?.substring(0, 50) + '...',
+          hasAudio: !!item.say?.trim()
+        });
+        
+        if (!item.say?.trim()) {
+          console.log(`跳过步骤 ${segmentIndex}-${itemIndex}: 没有配音文本`);
+          continue;
+        }
 
         const itemKey = `${segmentIndex}-${itemIndex}`;
         const text = item.say.trim();
