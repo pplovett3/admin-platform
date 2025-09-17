@@ -8,6 +8,7 @@ export default function RootShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isLogin = pathname === '/login';
   const isEditorFullscreen = pathname?.startsWith('/admin/three-courseware/editor') || pathname?.match(/^\/admin\/three-courseware\/[^\/]+$/);
+  const isPublicCourse = pathname?.startsWith('/course/');
 
   if (isLogin) {
     return (
@@ -20,6 +21,14 @@ export default function RootShell({ children }: { children: ReactNode }) {
   if (isEditorFullscreen) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--background)', color: 'var(--foreground)' }}>
+        <div style={{ height: '100vh', padding: 0, margin: 0 }}>{children}</div>
+      </div>
+    );
+  }
+
+  if (isPublicCourse) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#000', color: '#fff' }}>
         <div style={{ height: '100vh', padding: 0, margin: 0 }}>{children}</div>
       </div>
     );

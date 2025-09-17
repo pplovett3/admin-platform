@@ -47,16 +47,25 @@ export default function PublicCoursePage() {
     setError(null);
     
     try {
-      const response = await fetch(`/api/public/course/${publishId}`);
+      console.log('Loading course data for publishId:', publishId);
+      const apiUrl = `/api/public/course/${publishId}`;
+      console.log('API URL:', apiUrl);
+      
+      const response = await fetch(apiUrl);
+      console.log('Response status:', response.status);
       
       if (!response.ok) {
+        const errorText = await response.text();
+        console.log('Error response:', errorText);
+        
         if (response.status === 404) {
           throw new Error('课程不存在或已停用');
         }
-        throw new Error('加载失败');
+        throw new Error(`加载失败: ${response.status} ${errorText}`);
       }
       
       const data = await response.json();
+      console.log('Course data loaded:', data);
       setCourseData(data);
       
       // 如果设置了自动播放，延迟开始播放
@@ -66,6 +75,7 @@ export default function PublicCoursePage() {
         }, 1000);
       }
     } catch (error: any) {
+      console.error('Load course data error:', error);
       setError(error.message || '加载课程失败');
     } finally {
       setLoading(false);
@@ -134,13 +144,18 @@ export default function PublicCoursePage() {
     return (
       <div style={{ 
         display: 'flex', 
+        flexDirection: 'column',
         justifyContent: 'center', 
         alignItems: 'center', 
         height: '100vh',
-        background: '#f5f5f5'
+        background: '#f5f5f5',
+        color: '#333'
       }}>
         <Spin size="large" />
-        <Text style={{ marginLeft: 16 }}>正在加载课程...</Text>
+        <Text style={{ marginLeft: 16, marginTop: 16 }}>正在加载课程...</Text>
+        <Text style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+          课程ID: {publishId}
+        </Text>
       </div>
     );
   }
