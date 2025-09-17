@@ -64,31 +64,42 @@ export default function PublicCoursePlayer({
 
   // 移动端音频检测
   useEffect(() => {
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isMobile = isIOS || isAndroid;
+    
     console.log('🔍 设备检测:', {
       userAgent: navigator.userAgent,
+      isIOS,
+      isAndroid,
       isMobile,
       isPlaying,
-      needsUserInteraction
+      needsUserInteraction,
+      audioContextState: audioContext?.state || 'none'
     });
     
     if (isMobile) {
-      console.log('📱 检测到移动端设备，预设音频按钮显示逻辑');
+      console.log('📱 检测到移动端设备');
       
-      // 页面加载后立即显示音频按钮
-      if (!audioContext || audioContext.state === 'suspended') {
+      // iOS设备需要特殊处理
+      if (isIOS) {
+        // iOS总是需要用户交互来启用音频
         setShowMobileAudioButton(true);
-        console.log('📱 移动端AudioContext未初始化，显示音频按钮');
+        console.log('🍎 iOS设备：立即显示音频按钮');
+      } else if (isAndroid) {
+        // Android检查AudioContext状态
+        if (!audioContext || audioContext.state === 'suspended') {
+          setShowMobileAudioButton(true);
+          console.log('🤖 Android设备：AudioContext未初始化，显示音频按钮');
+        }
       }
       
       // 播放开始后的延迟检测
-      if (isPlaying) {
+      if (isPlaying && needsUserInteraction) {
         const timer = setTimeout(() => {
-          if (needsUserInteraction) {
-            setShowMobileAudioButton(true);
-            console.log('📱 播放中检测到需要用户交互，显示音频按钮');
-          }
-        }, 1000);
+          setShowMobileAudioButton(true);
+          console.log('📱 播放中检测到需要用户交互，显示音频按钮');
+        }, 500); // 减少延迟到500ms
         
         return () => clearTimeout(timer);
       }
@@ -263,45 +274,88 @@ export default function PublicCoursePlayer({
   // 手动播放音频（移动端专用）
   const handleManualAudioPlay = async () => {
     try {
-      console.log('🔊 用户手动启动音频播放');
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      console.log('🔊 用户手动启动音频播放, iOS:', isIOS);
       
-      // 先播放一个静音音频来解锁权限
-      const unlockAudio = new Audio();
-      unlockAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAAAAAAAAAAAAAAAAAZGF0YQAAAAA=';
-      unlockAudio.volume = 0;
-      unlockAudio.muted = false;
-      unlockAudio.autoplay = false;
-      
-      try {
-        await unlockAudio.play();
-        console.log('✅ 音频权限解锁成功');
-      } catch (e) {
-        console.log('❌ 静音音频播放失败:', e);
-      }
-      
-      // 初始化音频上下文
-      await initAudioContext();
-      
-      // 创建多个测试音频来确保权限
-      const testUrls = [
-        'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcBz+S2fLNeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcB',
-        'data:audio/mpeg;base64,SUQzAwAAAAABClRJVDIAAAAOAAABVGVzdABUUEUxAAAADgAAAVRlc3QAUEJSTEQAAAAOAAABVGVZMU='
-      ];
-      
-      for (const testSrc of testUrls) {
-        try {
-          const testAudio = new Audio();
-          testAudio.volume = 0.1;
-          testAudio.src = testSrc;
-          testAudio.muted = false;
-          
-          await testAudio.play();
-          testAudio.pause();
-          console.log('✅ 测试音频播放成功:', testSrc.substring(0, 50));
-          break; // 成功一个就够了
-        } catch (e: any) {
-          console.log('❌ 测试音频播放失败:', e.name);
+      // iOS需要特殊的音频解锁序列
+      if (isIOS) {
+        console.log('🍎 执行iOS音频解锁序列');
+        
+        // 1. 创建多个不同格式的测试音频
+        const iosTestAudios = [
+          { type: 'wav', src: 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAAAAAAAAAAAAAAAAAZGF0YQAAAAA=' },
+          { type: 'mp3', src: 'data:audio/mpeg;base64,SUQzAwAAAAABClRJVDIAAAAOAAABVGVzdA==' },
+          { type: 'wav-short', src: 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcBz+S2fLNeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcB' }
+        ];
+        
+        for (const audioData of iosTestAudios) {
+          try {
+            const testAudio = new Audio();
+            testAudio.src = audioData.src;
+            testAudio.volume = 0.01; // 极低音量
+            testAudio.muted = false;
+            testAudio.preload = 'auto';
+            
+            // iOS需要先设置事件监听器
+            const playPromise = new Promise<void>((resolve, reject) => {
+              testAudio.oncanplay = () => {
+                testAudio.play().then(() => {
+                  console.log(`✅ iOS ${audioData.type} 音频测试成功`);
+                  testAudio.pause();
+                  resolve();
+                }).catch(reject);
+              };
+              testAudio.onerror = reject;
+              setTimeout(reject, 2000); // 2秒超时
+            });
+            
+            await playPromise;
+            break; // 成功一个就够了
+          } catch (e: any) {
+            console.log(`❌ iOS ${audioData.type} 音频测试失败:`, e.name);
+          }
         }
+        
+        // 2. 初始化AudioContext（iOS特殊处理）
+        try {
+          if (!audioContext) {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            const ctx = new AudioContextClass();
+            
+            // iOS需要在用户交互中初始化
+            if (ctx.state === 'suspended') {
+              await ctx.resume();
+              console.log('🍎 iOS AudioContext 恢复成功');
+            }
+            
+            setAudioContext(ctx);
+          } else if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+            console.log('🍎 iOS AudioContext 重新恢复');
+          }
+        } catch (e: any) {
+          console.log('❌ iOS AudioContext 初始化失败:', e.name);
+        }
+        
+      } else {
+        // Android 和其他设备的处理
+        console.log('🤖 执行标准音频解锁序列');
+        
+        // 静音音频解锁
+        const unlockAudio = new Audio();
+        unlockAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAAAAAAAAAAAAAAAAAZGF0YQAAAAA=';
+        unlockAudio.volume = 0;
+        unlockAudio.muted = false;
+        
+        try {
+          await unlockAudio.play();
+          console.log('✅ 标准音频权限解锁成功');
+        } catch (e) {
+          console.log('❌ 静音音频播放失败:', e);
+        }
+        
+        // 初始化音频上下文
+        await initAudioContext();
       }
       
       // 隐藏音频按钮
@@ -322,6 +376,15 @@ export default function PublicCoursePlayer({
   };
 
   const startPlayback = async () => {
+    console.log('🎬 开始播放前检查');
+    
+    // 确保3D模型已加载
+    if (courseData?.coursewareData?.modifiedModelUrl && viewerControlsRef.current) {
+      console.log('🎯 确保3D模型加载完成');
+      // 等待3D视图器准备好
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
     // 首次播放时初始化音频上下文
     if (needsUserInteraction) {
       await initAudioContext();
@@ -330,7 +393,7 @@ export default function PublicCoursePlayer({
     const currentItem = getCurrentItem();
     if (!currentItem) return;
 
-    console.log('播放步骤:', currentItem);
+    console.log('🎬 播放步骤:', currentItem);
     
     // 清除之前的定时器
     if (playbackTimerRef.current) {
