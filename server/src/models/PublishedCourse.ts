@@ -95,7 +95,7 @@ const PublishedCourseSchema = new Schema<IPublishedCourse>({
   timestamps: true,
   // 自定义ID字段
   toJSON: { 
-    transform: function(doc, ret) {
+    transform: function(doc: any, ret: any) {
       ret.id = ret._id.toString();
       return ret;
     }
