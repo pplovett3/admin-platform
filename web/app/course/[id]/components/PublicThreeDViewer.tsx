@@ -190,6 +190,7 @@ export default function PublicThreeDViewer({ coursewareData, onControlsReady }: 
         .setDRACOLoader(draco);
 
       // 使用简单的加载方式（公开页面不需要认证）
+      console.log('Loading model from URL:', modelUrl);
       const gltf = await new Promise<any>((resolve, reject) => {
         loader.load(modelUrl, resolve, undefined, reject);
       });

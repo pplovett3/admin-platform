@@ -259,17 +259,71 @@ export async function getPublicCourse(req: Request, res: Response) {
     publishedCourse.stats.lastViewedAt = new Date();
     await publishedCourse.save();
 
-    // 构建资源URL
-    const resourceBaseUrl = `${req.protocol}://${req.get('host')}/api/files`;
+    // 处理课件数据中的文件路径，转换为公开访问URL
+    const processedCoursewareData = { ...publishedCourse.coursewareData };
+    const processedCourseData = { ...publishedCourse.courseData };
+
+    // 如果配置了公开下载基地址，直接使用NAS的公开URL
+    if (config.publicDownloadBase) {
+      const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
+      console.log('Using public download base:', publicBaseUrl);
+      
+      // 处理模型URL
+      if (processedCoursewareData.modelUrl && !processedCoursewareData.modelUrl.startsWith('http')) {
+        console.log('Original model URL:', processedCoursewareData.modelUrl);
+        // 如果是文件ID，需要查找对应的文件路径
+        const fileIdMatch = processedCoursewareData.modelUrl.match(/([a-f0-9]{24})/);
+        if (fileIdMatch) {
+          const fileId = fileIdMatch[1];
+          try {
+            const { FileModel } = await import('../models/File');
+            const file = await FileModel.findById(fileId);
+            if (file) {
+              processedCoursewareData.modelUrl = `${publicBaseUrl}/${file.storageRelPath}`;
+              console.log('Converted model URL:', processedCoursewareData.modelUrl);
+            }
+          } catch (error) {
+            console.error('Error finding file for model URL:', error);
+          }
+        } else {
+          processedCoursewareData.modelUrl = `${publicBaseUrl}/${processedCoursewareData.modelUrl}`;
+        }
+      }
+
+      // 处理课程数据中的图片URL
+      if (processedCourseData.outline) {
+        for (const segment of processedCourseData.outline) {
+          if (segment.items) {
+            for (const item of segment.items) {
+              if (item.imageUrl && !item.imageUrl.startsWith('http')) {
+                const fileIdMatch = item.imageUrl.match(/([a-f0-9]{24})/);
+                if (fileIdMatch) {
+                  const fileId = fileIdMatch[1];
+                  try {
+                    const { FileModel } = await import('../models/File');
+                    const file = await FileModel.findById(fileId);
+                    if (file) {
+                      item.imageUrl = `${publicBaseUrl}/${file.storageRelPath}`;
+                    }
+                  } catch (error) {
+                    console.error('Error finding file for image URL:', error);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
 
     const responseData = {
       id: publishedCourse.id,
       title: publishedCourse.title,
       description: publishedCourse.description,
       publishConfig: publishedCourse.publishConfig,
-      courseData: publishedCourse.courseData,
-      coursewareData: publishedCourse.coursewareData,
-      resourceBaseUrl,
+      courseData: processedCourseData,
+      coursewareData: processedCoursewareData,
+      resourceBaseUrl: config.publicDownloadBase || `${req.protocol}://${req.get('host')}/api/public/files`,
       stats: {
         viewCount: publishedCourse.stats.viewCount
       },
