@@ -37,7 +37,6 @@ export default function PublicCoursePage() {
   const [showPlayConfirm, setShowPlayConfirm] = useState(false);
   const [courseData, setCourseData] = useState<PublishedCourseData | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // 加载课程数据
   useEffect(() => {
@@ -270,30 +269,7 @@ export default function PublicCoursePage() {
     }
   };
 
-  // 全屏功能
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen()?.then(() => {
-        setIsFullscreen(true);
-      });
-    } else {
-      document.exitFullscreen()?.then(() => {
-        setIsFullscreen(false);
-      });
-    }
-  };
 
-  // 监听全屏状态变化
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
 
   if (loading) {
     return (
@@ -379,86 +355,14 @@ export default function PublicCoursePage() {
     <div style={{
       width: '100%',
       height: '100vh',
-      background: '#000',
-      display: 'flex',
-      flexDirection: 'column',
-      position: 'relative'
+      background: '#000'
     }}>
-      {/* 顶部信息栏（非全屏时显示） */}
-      {!isFullscreen && (
-        <div style={{
-          background: 'rgba(0, 0, 0, 0.8)',
-          padding: '12px 20px',
-          color: 'white',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '12px'
-        }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <Title level={4} style={{ color: 'white', margin: 0, fontSize: '16px' }}>
-              {courseData.title}
-            </Title>
-            {courseData.description && (
-              <Text style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '12px' }}>
-                {courseData.description}
-              </Text>
-            )}
-          </div>
-          <Space>
-            <Text style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '12px' }}>
-              {courseData.stats.viewCount} 次观看
-            </Text>
-            <Button 
-              type="text" 
-              icon={<ShareAltOutlined />} 
-              onClick={handleShare}
-              style={{ color: 'white' }}
-              size="small"
-            >
-              分享
-            </Button>
-            <Button 
-              type="text" 
-              icon={<FullscreenOutlined />} 
-              onClick={toggleFullscreen}
-              style={{ color: 'white' }}
-              size="small"
-            >
-              全屏
-            </Button>
-          </Space>
-        </div>
-      )}
-
-      {/* 主播放区域 */}
-      <div style={{ flex: 1, position: 'relative' }}>
-        <PublicCoursePlayer
-          courseData={courseData}
-          isPlaying={isPlaying}
-          onPlayStateChange={setIsPlaying}
-          isFullscreen={isFullscreen}
-          onShare={handleShare}
-          onToggleFullscreen={toggleFullscreen}
-        />
-      </div>
-
-      {/* 底部控制栏（移动端友好） */}
-      {!isFullscreen && (
-        <div style={{
-          background: 'rgba(0, 0, 0, 0.8)',
-          padding: '8px 20px',
-          color: 'white',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center'
-        }}>
-          <Text style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '12px', textAlign: 'center' }}>
-            由 3D AI 课件系统 生成 • 发布于 {new Date(courseData.publishedAt).toLocaleDateString()}
-          </Text>
-        </div>
-      )}
+      <PublicCoursePlayer
+        courseData={courseData}
+        isPlaying={isPlaying}
+        onPlayStateChange={setIsPlaying}
+        onShare={handleShare}
+      />
 
       {/* 播放确认对话框 */}
       <Modal

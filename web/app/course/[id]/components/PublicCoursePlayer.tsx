@@ -7,9 +7,6 @@ import {
   StepBackwardOutlined, 
   StepForwardOutlined,
   ShareAltOutlined,
-  FullscreenOutlined,
-  ExpandOutlined,
-  CompressOutlined,
   SoundOutlined
 } from '@ant-design/icons';
 import PublicThreeDViewer, { PublicThreeDViewerControls } from './PublicThreeDViewer';
@@ -20,9 +17,7 @@ interface PublicCoursePlayerProps {
   courseData: any;
   isPlaying: boolean;
   onPlayStateChange: (playing: boolean) => void;
-  isFullscreen: boolean;
   onShare: () => void;
-  onToggleFullscreen: () => void;
 }
 
 interface PlaybackState {
@@ -36,9 +31,7 @@ export default function PublicCoursePlayer({
   courseData, 
   isPlaying, 
   onPlayStateChange, 
-  isFullscreen,
-  onShare,
-  onToggleFullscreen
+  onShare
 }: PublicCoursePlayerProps) {
   const threeDViewerRef = useRef<HTMLDivElement>(null);
   const viewerControlsRef = useRef<PublicThreeDViewerControls>(null);
@@ -206,9 +199,15 @@ export default function PublicCoursePlayer({
         
         // 检查是否是移动端且需要用户交互
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        if (isMobile && error.name === 'NotAllowedError') {
+        const isNotAllowed = error.name === 'NotAllowedError' || error.name === 'AbortError';
+        
+        if (isMobile && isNotAllowed) {
           setShowMobileAudioButton(true);
-          console.log('移动端需要用户手动启动音频播放');
+          console.log('移动端需要用户手动启动音频播放, 错误:', error.name);
+        } else {
+          // 对于其他音频错误，也尝试显示手动播放按钮
+          console.log('音频播放失败，显示手动播放按钮');
+          setShowMobileAudioButton(true);
         }
         
         onError(estimatedDuration);
@@ -231,13 +230,39 @@ export default function PublicCoursePlayer({
   // 手动播放音频（移动端专用）
   const handleManualAudioPlay = async () => {
     try {
-      // 尝试初始化音频上下文
-      if (!audioContext) {
-        await initAudioContext();
+      console.log('用户手动启动音频播放');
+      
+      // 先播放一个静音音频来解锁权限
+      const unlockAudio = new Audio();
+      unlockAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAAAAAAAAAAAAAAAAAZGF0YQAAAAA=';
+      unlockAudio.volume = 0;
+      
+      try {
+        await unlockAudio.play();
+        console.log('音频权限解锁成功');
+      } catch (e) {
+        console.log('静音音频播放失败:', e);
+      }
+      
+      // 初始化音频上下文
+      await initAudioContext();
+      
+      // 创建一个测试音频来确保权限
+      const testAudio = new Audio();
+      testAudio.volume = 0.1;
+      testAudio.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcBz+S2fLNeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmYcB';
+      
+      try {
+        await testAudio.play();
+        testAudio.pause();
+        console.log('测试音频播放成功');
+      } catch (e) {
+        console.log('测试音频播放失败:', e);
       }
       
       // 隐藏音频按钮
       setShowMobileAudioButton(false);
+      setNeedsUserInteraction(false);
       
       // 继续当前播放
       if (!isPlaying) {
@@ -770,24 +795,101 @@ export default function PublicCoursePlayer({
         width: '100%', 
         height: '100vh', 
         position: 'relative',
-        overflow: 'hidden' // 防止内容超出
-      }}>
-      {/* 3D查看器 */}
-      <div style={{ 
-        width: '100%', 
-        height: isFullscreen ? '100vh' : 'calc(100vh - 140px)', // 非全屏时为控件和字幕留出更多空间
-        position: 'absolute', 
-        top: 0, 
-        left: 0,
         overflow: 'hidden'
       }}>
-        <PublicThreeDViewer
-          ref={viewerControlsRef}
-          coursewareData={courseData?.coursewareData}
-          width={typeof window !== 'undefined' ? window.innerWidth : 1920}
-          height={typeof window !== 'undefined' ? (isFullscreen ? window.innerHeight : window.innerHeight - 140) : 1080}
-        />
-      </div>
+        {/* 顶部控制栏 */}
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: '60px',
+          background: 'rgba(0, 0, 0, 0.9)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 20px',
+          backdropFilter: 'blur(10px)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+        }}>
+          {/* 左侧标题 */}
+          <div style={{ color: 'white', fontSize: '16px', fontWeight: 'bold' }}>
+            {courseData.title || '课程播放中'}
+          </div>
+          
+          {/* 中间播放控制 */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px'
+          }}>
+            <Button 
+              type="text" 
+              icon={<StepBackwardOutlined />} 
+              onClick={prevItem}
+              disabled={!canGoPrev}
+              style={{ color: 'white' }}
+              size="small"
+            />
+            
+            <Button 
+              type="text" 
+              icon={isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />} 
+              onClick={() => onPlayStateChange(!isPlaying)}
+              style={{ color: 'white', fontSize: '20px' }}
+              size="large"
+            />
+            
+            <Button 
+              type="text" 
+              icon={<StepForwardOutlined />} 
+              onClick={nextItem}
+              disabled={!canGoNext}
+              style={{ color: 'white' }}
+              size="small"
+            />
+            
+            <div style={{ 
+              color: 'white', 
+              fontSize: '14px', 
+              minWidth: '80px',
+              textAlign: 'center'
+            }}>
+              {currentItemNumber} / {totalItems}
+            </div>
+          </div>
+          
+          {/* 右侧分享按钮 */}
+          <div>
+            <Button 
+              type="text" 
+              icon={<ShareAltOutlined />} 
+              onClick={onShare}
+              style={{ color: 'white' }}
+              size="small"
+            >
+              分享
+            </Button>
+          </div>
+        </div>
+
+        {/* 3D查看器 */}
+        <div style={{ 
+          width: '100%', 
+          height: 'calc(100vh - 60px)', // 为顶部控制栏留出空间
+          position: 'absolute', 
+          top: '60px', 
+          left: 0,
+          overflow: 'hidden'
+        }}>
+          <PublicThreeDViewer
+            ref={viewerControlsRef}
+            coursewareData={courseData?.coursewareData}
+            width={typeof window !== 'undefined' ? window.innerWidth : 1920}
+            height={typeof window !== 'undefined' ? window.innerHeight - 60 : 1020}
+          />
+        </div>
 
       {/* 图片叠加层 */}
       {currentImage && (
@@ -843,17 +945,19 @@ export default function PublicCoursePlayer({
       {currentSubtitle && (
         <div style={{
           position: 'absolute',
-          bottom: isFullscreen ? '100px' : '80px',
+          bottom: '20px',
           left: '50%',
           transform: 'translateX(-50%)',
           background: 'rgba(0, 0, 0, 0.8)',
           color: 'white',
-          padding: '8px 16px',
-          borderRadius: '20px',
-          fontSize: '14px',
-          maxWidth: '90%',
+          padding: '12px 24px',
+          borderRadius: '25px',
+          fontSize: '16px',
+          maxWidth: '80%',
           textAlign: 'center',
-          zIndex: 1000
+          zIndex: 1000,
+          backdropFilter: 'blur(10px)',
+          border: '1px solid rgba(255, 255, 255, 0.2)'
         }}>
           {currentSubtitle}
         </div>
@@ -889,75 +993,6 @@ export default function PublicCoursePlayer({
         </div>
       )}
 
-      {/* 播放控制栏 */}
-      <div style={{
-        position: 'absolute',
-        bottom: isFullscreen ? '20px' : '20px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        background: 'rgba(0, 0, 0, 0.8)',
-        borderRadius: '25px',
-        padding: '8px 16px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        zIndex: 9999,
-        backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
-        boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)'
-      }}>
-        <Button 
-          type="text" 
-          icon={<StepBackwardOutlined />} 
-          onClick={prevItem}
-          disabled={!canGoPrev}
-          style={{ color: 'white' }}
-          size="small"
-        />
-        
-        <Button 
-          type="text" 
-          icon={isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />} 
-          onClick={() => onPlayStateChange(!isPlaying)}
-          style={{ color: 'white', fontSize: '18px' }}
-          size="small"
-        />
-        
-        <Button 
-          type="text" 
-          icon={<StepForwardOutlined />} 
-          onClick={nextItem}
-          disabled={!canGoNext}
-          style={{ color: 'white' }}
-          size="small"
-        />
-
-        <div style={{ 
-          color: 'white', 
-          fontSize: '12px', 
-          minWidth: '60px',
-          textAlign: 'center'
-        }}>
-          {currentItemNumber} / {totalItems}
-        </div>
-
-        <Space>
-          <Button 
-            type="text" 
-            icon={<ShareAltOutlined />} 
-            onClick={onShare}
-            style={{ color: 'white' }}
-            size="small"
-          />
-          <Button 
-            type="text" 
-            icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />} 
-            onClick={onToggleFullscreen}
-            style={{ color: 'white' }}
-            size="small"
-          />
-        </Space>
-      </div>
 
       {/* 图片查看器模态框 */}
       {imageViewerVisible && (
