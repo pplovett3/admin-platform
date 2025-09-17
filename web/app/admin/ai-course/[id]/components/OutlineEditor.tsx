@@ -1,7 +1,7 @@
 "use client";
 import { useState } from 'react';
 import { Tree, Button, Space, Modal, Form, Input, Select, message, Collapse, Tag } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, DragOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, DragOutlined, MessageOutlined, PictureOutlined, VideoCameraOutlined } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import {
   DndContext,
@@ -30,7 +30,7 @@ interface OutlineEditorProps {
 }
 
 // 可排序的段落组件
-function SortableSegment({ segment, segIndex, outline, onChange, onSelectItem, selectedKeys, onSelectKeys, onEditSegment, onDeleteSegment, onAddItem, onEditItem, onDeleteItem, getItemColor }: any) {
+function SortableSegment({ segment, segIndex, outline, onChange, onSelectItem, selectedKeys, onSelectKeys, onEditSegment, onDeleteSegment, onAddItem, onEditItem, onDeleteItem, getItemColor, getItemIcon }: any) {
   const {
     attributes,
     listeners,
@@ -91,10 +91,9 @@ function SortableSegment({ segment, segIndex, outline, onChange, onSelectItem, s
                 >
                   <DragOutlined />
                 </div>
-                <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120, display: 'inline-block' }}>
+                <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180, display: 'inline-block' }}>
                   {segment.title || `段落 ${segIndex + 1}`}
                 </span>
-                <Tag color="blue" style={{ marginLeft: 6, flexShrink: 0, fontSize: '10px', padding: '0 4px', lineHeight: '16px' }}>{segment.mode}</Tag>
               </div>
               <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
                 <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => onAddItem(segIndex)} title="添加项目" style={{ padding: '0 4px' }} />
@@ -127,6 +126,7 @@ function SortableSegment({ segment, segIndex, outline, onChange, onSelectItem, s
                     onEditItem={onEditItem}
                     onDeleteItem={onDeleteItem}
                     getItemColor={getItemColor}
+                    getItemIcon={getItemIcon}
                   />
                 ))}
               </SortableContext>
@@ -143,7 +143,7 @@ function SortableSegment({ segment, segIndex, outline, onChange, onSelectItem, s
 }
 
 // 可排序的步骤组件
-function SortableItem({ id, item, segIndex, itemIndex, selectedKeys, onSelectKeys, onEditItem, onDeleteItem, getItemColor }: any) {
+function SortableItem({ id, item, segIndex, itemIndex, selectedKeys, onSelectKeys, onEditItem, onDeleteItem, getItemColor, getItemIcon }: any) {
   const {
     attributes,
     listeners,
@@ -190,8 +190,10 @@ function SortableItem({ id, item, segIndex, itemIndex, selectedKeys, onSelectKey
           >
             <DragOutlined style={{ fontSize: '12px' }} />
           </div>
-          <Tag color={getItemColor(item.type)} style={{ fontSize: '11px' }}>{item.type}</Tag>
-          <span style={{ marginLeft: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 150 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', marginRight: 8 }}>
+            {getItemIcon(item.type)}
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 180 }}>
             {item.say?.slice(0, 50)}...
           </span>
           {item.estimatedDuration && (
@@ -271,6 +273,15 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
       case 'image.explain': return 'orange';
       case 'scene.action': return 'purple';
       default: return 'default';
+    }
+  };
+
+  const getItemIcon = (type: string) => {
+    switch (type) {
+      case 'talk': return <MessageOutlined style={{ color: '#52c41a' }} />;
+      case 'image.explain': return <PictureOutlined style={{ color: '#fa8c16' }} />;
+      case 'scene.action': return <VideoCameraOutlined style={{ color: '#722ed1' }} />;
+      default: return <MessageOutlined style={{ color: '#d9d9d9' }} />;
     }
   };
 
@@ -416,6 +427,7 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
                   onEditItem={editItem}
                   onDeleteItem={deleteItem}
                   getItemColor={getItemColor}
+                  getItemIcon={getItemIcon}
                 />
               ))}
             </SortableContext>

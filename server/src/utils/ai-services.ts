@@ -100,6 +100,7 @@ export async function generateCourseWithDeepSeek(params: CourseGenerationParams)
           "say": "现在我们来看实际的发动机模型",
           "actions": [
             {"type": "camera.focus", "target": {"nodeKey": "实际存在的nodeKey"}},
+            {"type": "highlight.show", "target": {"nodeKey": "实际存在的nodeKey"}},
             {"type": "annotation.show", "ids": ["实际存在的标注ID"]}
           ],
           "estimatedDuration": 45
@@ -109,10 +110,21 @@ export async function generateCourseWithDeepSeek(params: CourseGenerationParams)
   ]
 }
 
+## 支持的动作类型：
+scene.action段落中的actions数组只能使用以下动作类型：
+- \`camera.focus\`: 相机对焦到指定对象 {"type": "camera.focus", "target": {"nodeKey": "对象标识"}}
+- \`highlight.show\`: 高亮显示指定对象 {"type": "highlight.show", "target": {"nodeKey": "对象标识"}}
+- \`highlight.hide\`: 隐藏对象高亮 {"type": "highlight.hide", "target": {"nodeKey": "对象标识"}}
+- \`annotation.show\`: 显示指定标注 {"type": "annotation.show", "ids": ["标注ID列表"]}
+- \`annotation.hide\`: 隐藏指定标注 {"type": "annotation.hide", "ids": ["标注ID列表"]}
+- \`animation.play\`: 播放动画 {"type": "animation.play", "animationId": "动画ID"}
+- \`visibility.set\`: 设置对象显隐 {"type": "visibility.set", "items": [{"nodeKey": "对象标识", "visible": true/false}]}
+
 注意：
 - 确保所有引用的nodeKey都来自提供的标注列表
 - 动画播放要指定具体的animationId
-- 每个段落预估时长，总时长控制在目标范围内`;
+- 每个段落预估时长，总时长控制在目标范围内
+- 严格按照上述动作类型格式，不要创造新的动作类型`;
 
   const messages: DeepSeekMessage[] = [
     { role: 'system', content: systemPrompt },

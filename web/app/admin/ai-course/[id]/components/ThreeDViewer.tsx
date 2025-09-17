@@ -1485,6 +1485,38 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         
         let currentHoverObject: THREE.Object3D | null = null;
         
+        // 辅助函数：检查对象是否有实际几何体（非空对象）
+        const hasGeometry = (obj: THREE.Object3D): boolean => {
+          // 检查对象本身是否是Mesh且有几何体
+          if (obj instanceof THREE.Mesh && obj.geometry) {
+            const geometry = obj.geometry;
+            // 检查几何体是否有顶点
+            if (geometry.attributes.position && geometry.attributes.position.count > 0) {
+              return true;
+            }
+          }
+          return false;
+        };
+
+        // 查找有效的可选取对象（向上遍历父级，找到有几何体的对象）
+        const findSelectableObject = (obj: THREE.Object3D): THREE.Object3D | null => {
+          let current = obj;
+          // 向上遍历10层，找到有几何体的对象
+          for (let i = 0; i < 10 && current; i++) {
+            if (hasGeometry(current)) {
+              return current;
+            }
+            // 检查直接子级是否有几何体
+            for (const child of current.children) {
+              if (hasGeometry(child)) {
+                return child;
+              }
+            }
+            current = current.parent as THREE.Object3D;
+          }
+          return null;
+        };
+
         // 鼠标移动事件：显示悬停预览
         const onMouseMove = (event: MouseEvent) => {
           const rect = dom.getBoundingClientRect();
@@ -1493,8 +1525,19 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
           raycaster.setFromCamera(mouse, cameraRef.current!);
           const intersects = raycaster.intersectObject(sceneRef.current!, true);
           
-          if (intersects.length > 0) {
-            const obj = intersects[0].object;
+          let validObject: THREE.Object3D | null = null;
+          
+          // 查找第一个有效的可选取对象
+          for (const intersect of intersects) {
+            const selectableObj = findSelectableObject(intersect.object);
+            if (selectableObj) {
+              validObject = selectableObj;
+              break;
+            }
+          }
+          
+          if (validObject) {
+            const obj = validObject;
             
             // 如果悬停的是新对象，更新高亮和提示
             if (obj !== currentHoverObject) {
