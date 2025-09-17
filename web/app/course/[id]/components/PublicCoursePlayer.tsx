@@ -168,10 +168,10 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 使用代理来解决CORS问题
+        // 使用公开代理来解决CORS问题
         let audioUrl = item.audioUrl;
         if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
-          audioUrl = `/api/files/proxy?url=${encodeURIComponent(audioUrl)}`;
+          audioUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
         }
         
         audio.src = audioUrl;
@@ -198,9 +198,29 @@ export default function PublicCoursePlayer({
           setTimeout(() => resolve(estimatedDuration), estimatedDuration * 1000);
         };
         
+        // 尝试播放音频，如果失败则回退到文本显示
         audio.play().catch((error) => {
           console.error('音频播放启动失败:', error);
-          // 回退到估算时长
+          
+          // 检查是否是用户交互限制
+          if (error.name === 'NotAllowedError') {
+            console.log('需要用户交互才能播放音频，显示文本替代');
+            // 设置音频为预备状态，等待用户交互后播放
+            playbackState.currentAudio = audio;
+            // 显示提示用户点击播放
+            if (typeof window !== 'undefined') {
+              // 尝试在下次用户交互时播放
+              const playOnInteraction = () => {
+                audio.play().catch(console.error);
+                document.removeEventListener('click', playOnInteraction);
+                document.removeEventListener('touchstart', playOnInteraction);
+              };
+              document.addEventListener('click', playOnInteraction, { once: true });
+              document.addEventListener('touchstart', playOnInteraction, { once: true });
+            }
+          }
+          
+          // 无论如何都要显示文本内容
           const estimatedDuration = Math.max(2, (item.say?.length || 0) * 0.15);
           setTimeout(() => {
             setCurrentSubtitle('');

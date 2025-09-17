@@ -189,10 +189,10 @@ export default function PublicThreeDViewer({ coursewareData, onControlsReady }: 
         .setKTX2Loader(ktx2)
         .setDRACOLoader(draco);
 
-        // 对于NAS的文件，使用代理来解决CORS问题
+        // 对于NAS的文件，使用公开代理来解决CORS问题
         let loadUrl = modelUrl;
         if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
-          loadUrl = `/api/files/proxy?url=${encodeURIComponent(modelUrl)}`;
+          loadUrl = `/api/public/proxy?url=${encodeURIComponent(modelUrl)}`;
         }
         
         console.log('Loading model from URL:', modelUrl);

@@ -303,6 +303,11 @@ export async function getPublicCourse(req: Request, res: Response) {
     // 处理课件数据中的文件路径，转换为公开访问URL
     const processedCoursewareData = { ...publishedCourse.coursewareData };
     const processedCourseData = { ...publishedCourse.courseData };
+    
+    console.log('Raw courseware data:', {
+      modelUrl: processedCoursewareData.modelUrl,
+      modifiedModelUrl: processedCoursewareData.modifiedModelUrl
+    });
 
     // 如果配置了公开下载基地址，直接使用NAS的公开URL
     if (config.publicDownloadBase) {
