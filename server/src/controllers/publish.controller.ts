@@ -47,6 +47,24 @@ export async function publishCourse(req: Request, res: Response) {
       thumbnail: undefined as string | undefined
     };
 
+    // 调试：检查课程原始数据中的图片URL
+    console.log('原始课程数据检查:');
+    if (courseDataWithAudio.outline) {
+      courseDataWithAudio.outline.forEach((segment: any, segIndex: number) => {
+        if (segment.items) {
+          segment.items.forEach((item: any, itemIndex: number) => {
+            if (item.type === 'image.explain') {
+              console.log(`段落${segIndex}-步骤${itemIndex} (${item.type}):`, {
+                hasImageUrl: !!item.imageUrl,
+                imageUrl: item.imageUrl,
+                allKeys: Object.keys(item)
+              });
+            }
+          });
+        }
+      });
+    }
+
     if (ttsConfig && aiCourse.outline && aiCourse.outline.length > 0) {
       console.log('开始批量生成TTS配音...');
       try {

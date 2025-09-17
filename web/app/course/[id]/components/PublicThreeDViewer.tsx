@@ -252,36 +252,55 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     };
 
     const setupLights = (scene: THREE.Scene) => {
-      // 环境光 - 与编辑器完全一致
-      const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+      // 使用经典三点补光法，确保模型各个角度都有良好的光照
+
+      // 1. 环境光 - 提供整体基础亮度
+      const ambientLight = new THREE.AmbientLight(0x404040, 0.8); // 提高环境光强度
       scene.add(ambientLight);
 
-      // 主光源 - 与编辑器完全一致
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-      directionalLight.position.set(15, 20, 10);
-      directionalLight.castShadow = true;
+      // 2. 主光源（Key Light）- 正面主要光照
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.5); // 提高主光强度
+      keyLight.position.set(10, 15, 10); // 正面稍偏右的位置
+      keyLight.castShadow = true;
       
-      // 阴影设置 - 与编辑器完全一致
-      directionalLight.shadow.mapSize.width = 2048;
-      directionalLight.shadow.mapSize.height = 2048;
-      directionalLight.shadow.camera.near = 0.5;
-      directionalLight.shadow.camera.far = 50;
-      directionalLight.shadow.camera.left = -20;
-      directionalLight.shadow.camera.right = 20;
-      directionalLight.shadow.camera.top = 20;
-      directionalLight.shadow.camera.bottom = -20;
-      directionalLight.shadow.bias = -0.0001;
+      // 阴影设置
+      keyLight.shadow.mapSize.width = 2048;
+      keyLight.shadow.mapSize.height = 2048;
+      keyLight.shadow.camera.near = 0.5;
+      keyLight.shadow.camera.far = 50;
+      keyLight.shadow.camera.left = -20;
+      keyLight.shadow.camera.right = 20;
+      keyLight.shadow.camera.top = 20;
+      keyLight.shadow.camera.bottom = -20;
+      keyLight.shadow.bias = -0.0001;
       
-      scene.add(directionalLight);
+      scene.add(keyLight);
 
-      // 补光源 - 与编辑器完全一致
-      const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
-      fillLight.position.set(-5, 5, -5);
+      // 3. 补光源（Fill Light）- 左侧补光，减少阴影对比度
+      const fillLight = new THREE.DirectionalLight(0xffffff, 0.8); // 增加补光强度
+      fillLight.position.set(-15, 10, 5); // 左侧位置
       scene.add(fillLight);
 
-      // 半球光 - 与编辑器完全一致
-      const hemisphereLight = new THREE.HemisphereLight(0x555555, 0x333333, 0.4);
+      // 4. 背光源（Back Light）- 背面轮廓光
+      const backLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      backLight.position.set(-5, 8, -15); // 背面位置
+      scene.add(backLight);
+
+      // 5. 顶部光源 - 增强顶部细节
+      const topLight = new THREE.DirectionalLight(0xffffff, 0.4);
+      topLight.position.set(0, 20, 0); // 正上方
+      scene.add(topLight);
+
+      // 6. 底部反射光 - 模拟地面反射
+      const bottomLight = new THREE.DirectionalLight(0x4488ff, 0.3); // 蓝色调的底部光
+      bottomLight.position.set(0, -10, 0); // 正下方
+      scene.add(bottomLight);
+
+      // 7. 半球光 - 天空和地面的环境光
+      const hemisphereLight = new THREE.HemisphereLight(0x87CEEB, 0x654321, 0.6); // 天空蓝和地面棕
       scene.add(hemisphereLight);
+
+      console.log('已设置专业三点补光法，共7个光源');
     };
 
     // 自适应缩放标注
@@ -514,12 +533,24 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           );
           targetObject.updateWorldMatrix(true, true);
           anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+          
+          // 【修复】考虑模型根节点的坐标偏移
+          if (modelRootRef.current) {
+            modelRootRef.current.updateWorldMatrix(true, true);
+            const rootPosition = new THREE.Vector3();
+            modelRootRef.current.matrixWorld.decompose(rootPosition, new THREE.Quaternion(), new THREE.Vector3());
+            // 如果根节点不在原点，添加根节点的位置偏移
+            if (rootPosition.length() > 0.001) {
+              console.log('检测到模型根节点偏移:', rootPosition.toArray(), '为标注添加根节点偏移');
+              anchorWorld.add(rootPosition);
+            }
+          }
         } else if (annotation.position) {
-          // 兼容旧格式：直接使用position
+          // 兼容格式：直接使用position
           anchorWorld = new THREE.Vector3(
-            annotation.position.x,
-            annotation.position.y,
-            annotation.position.z
+            annotation.position.x || annotation.position[0], 
+            annotation.position.y || annotation.position[1], 
+            annotation.position.z || annotation.position[2]
           );
         } else {
           // 如果没有偏移信息，计算对象边界框中心点并添加固定偏移
@@ -532,9 +563,49 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           console.warn('标注缺少偏移信息，使用默认固定偏移:', annotation.id);
         }
 
-        // 2. 计算标签位置（相对标注点偏移）
-        const labelOffset = new THREE.Vector3(0.5, 0.8, 0); // 标签偏移
-        const labelWorld = anchorWorld.clone().add(labelOffset);
+        // 2. 计算标签位置（基于完整的label.offset逻辑）
+        let labelWorld: THREE.Vector3;
+        
+        if (annotation.label && annotation.label.offset) {
+          // 标准格式：使用label.offset
+          if (annotation.label.isLocal) {
+            // 新数据：局部偏移（相对于标注点的局部坐标）
+            const offsetLocal = new THREE.Vector3(
+              annotation.label.offset[0],
+              annotation.label.offset[1],
+              annotation.label.offset[2]
+            );
+            // 应用目标对象的变换
+            const pos = new THREE.Vector3();
+            const quat = new THREE.Quaternion();
+            const scl = new THREE.Vector3();
+            targetObject.matrixWorld.decompose(pos, quat, scl);
+            const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
+            labelWorld = anchorWorld.clone().add(offsetWorld);
+          } else {
+            // 旧数据：世界偏移
+            labelWorld = new THREE.Vector3(
+              anchorWorld.x + annotation.label.offset[0],
+              anchorWorld.y + annotation.label.offset[1], 
+              anchorWorld.z + annotation.label.offset[2]
+            );
+          }
+        } else if (annotation.labelOffset) {
+          // 兼容格式
+          labelWorld = anchorWorld.clone().add(new THREE.Vector3(
+            annotation.labelOffset.x || 0,
+            annotation.labelOffset.y || 0,
+            annotation.labelOffset.z || 0
+          ));
+        } else {
+          // 默认偏移
+          labelWorld = new THREE.Vector3(
+            anchorWorld.x + 0.2,
+            anchorWorld.y + 0.1,
+            anchorWorld.z + 0.0
+          );
+          console.warn('标注缺少偏移信息，使用默认固定偏移:', annotation.id);
+        }
 
         // 创建标注组
         const annotationGroup = new THREE.Group();

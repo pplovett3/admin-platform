@@ -571,14 +571,14 @@ export default function PublicCoursePlayer({
   return (
     <div style={{ 
       width: '100%', 
-      height: isFullscreen ? '100vh' : '100vh', 
+      height: '100vh', 
       position: 'relative',
       overflow: 'hidden' // 防止内容超出
     }}>
       {/* 3D查看器 */}
       <div style={{ 
         width: '100%', 
-        height: isFullscreen ? '100%' : 'calc(100% - 80px)', // 非全屏时为控件留出空间
+        height: isFullscreen ? '100%' : 'calc(100vh - 80px)', // 非全屏时为控件留出空间
         position: 'absolute', 
         top: 0, 
         left: 0 
@@ -648,7 +648,7 @@ export default function PublicCoursePlayer({
       {/* 播放控制栏 */}
       <div style={{
         position: 'absolute',
-        bottom: '10px',
+        bottom: isFullscreen ? '20px' : '10px',
         left: '50%',
         transform: 'translateX(-50%)',
         background: 'rgba(0, 0, 0, 0.8)',
