@@ -778,6 +778,7 @@ export async function batchGenerateTTSForCourse(
           hasAudio: !!item.say?.trim()
         });
         
+        // 检查所有有配音文本的步骤，不限制类型
         if (!item.say?.trim()) {
           console.log(`跳过步骤 ${segmentIndex}-${itemIndex}: 没有配音文本`);
           continue;

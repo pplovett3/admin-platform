@@ -11,7 +11,7 @@ import {
   ExpandOutlined,
   SoundOutlined
 } from '@ant-design/icons';
-import PublicThreeDViewer from './PublicThreeDViewer';
+import PublicThreeDViewer, { PublicThreeDViewerControls } from './PublicThreeDViewer';
 
 const { Text } = Typography;
 
@@ -40,7 +40,7 @@ export default function PublicCoursePlayer({
   onToggleFullscreen
 }: PublicCoursePlayerProps) {
   const threeDViewerRef = useRef<HTMLDivElement>(null);
-  const viewerControlsRef = useRef<any>(null);
+  const viewerControlsRef = useRef<PublicThreeDViewerControls>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     currentSegmentIndex: 0,
     currentItemIndex: 0,
@@ -256,6 +256,14 @@ export default function PublicCoursePlayer({
   };
 
   const executeImageExplainItem = async (item: any): Promise<number> => {
+    console.log('执行image.explain步骤:', {
+      type: item.type,
+      say: item.say?.substring(0, 50) + '...',
+      audioUrl: item.audioUrl,
+      imageUrl: item.imageUrl,
+      hasAudio: !!item.audioUrl
+    });
+    
     setCurrentSubtitle(item.say || '');
     
     // 显示图片
@@ -271,37 +279,170 @@ export default function PublicCoursePlayer({
       viewerControlsRef.current.startAutoRotation();
     }
     
-    // 模拟播放
-    return new Promise((resolve) => {
-      const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
-      setTimeout(() => {
-        setCurrentSubtitle('');
-        setCurrentImage(null);
-        resolve(estimatedDuration);
-      }, estimatedDuration * 1000);
-    });
+    // 播放音频（如果有）
+    if (item.audioUrl) {
+      console.log('播放image.explain音频:', item.audioUrl);
+      return new Promise((resolve) => {
+        const audio = new Audio();
+        
+        // 使用公开代理来解决CORS问题
+        let audioUrl = item.audioUrl;
+        if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+          audioUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
+        }
+        
+        audio.src = audioUrl;
+        playbackState.currentAudio = audio;
+        
+        audio.onended = () => {
+          setCurrentSubtitle('');
+          setCurrentImage(null);
+          // 停止模型自转
+          if (viewerControlsRef.current?.stopAutoRotation) {
+            viewerControlsRef.current.stopAutoRotation();
+          }
+          resolve(audio.duration || item.audioDuration || 5);
+        };
+        
+        audio.onerror = (error) => {
+          console.error('image.explain音频播放失败:', error);
+          const estimatedDuration = Math.max(5, (item.say?.length || 0) * 0.15);
+          setTimeout(() => {
+            setCurrentSubtitle('');
+            setCurrentImage(null);
+            if (viewerControlsRef.current?.stopAutoRotation) {
+              viewerControlsRef.current.stopAutoRotation();
+            }
+            resolve(estimatedDuration);
+          }, estimatedDuration * 1000);
+        };
+        
+        // 尝试播放音频
+        audio.play().catch((error) => {
+          console.error('image.explain音频播放启动失败:', error);
+          
+          // 用户交互处理
+          if (error.name === 'NotAllowedError') {
+            if (typeof window !== 'undefined') {
+              const playOnInteraction = () => {
+                audio.play().catch(console.error);
+                document.removeEventListener('click', playOnInteraction);
+                document.removeEventListener('touchstart', playOnInteraction);
+              };
+              document.addEventListener('click', playOnInteraction, { once: true });
+              document.addEventListener('touchstart', playOnInteraction, { once: true });
+            }
+          }
+          
+          // 回退到文本显示
+          const estimatedDuration = Math.max(5, (item.say?.length || 0) * 0.15);
+          setTimeout(() => {
+            setCurrentSubtitle('');
+            setCurrentImage(null);
+            if (viewerControlsRef.current?.stopAutoRotation) {
+              viewerControlsRef.current.stopAutoRotation();
+            }
+            resolve(estimatedDuration);
+          }, estimatedDuration * 1000);
+        });
+      });
+    } else {
+      // 没有音频时，模拟播放
+      return new Promise((resolve) => {
+        const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
+        setTimeout(() => {
+          setCurrentSubtitle('');
+          setCurrentImage(null);
+          // 停止模型自转
+          if (viewerControlsRef.current?.stopAutoRotation) {
+            viewerControlsRef.current.stopAutoRotation();
+          }
+          resolve(estimatedDuration);
+        }, estimatedDuration * 1000);
+      });
+    }
   };
 
   const executeSceneActionItem = async (item: any): Promise<number> => {
-    setCurrentSubtitle(item.say || '');
+    console.log('执行scene.action步骤:', {
+      type: item.type,
+      say: item.say?.substring(0, 50) + '...',
+      audioUrl: item.audioUrl,
+      actions: item.actions,
+      hasAudio: !!item.audioUrl
+    });
     
-    // 停止自转
-    if (viewerControlsRef.current?.stopAutoRotation) {
-      viewerControlsRef.current.stopAutoRotation();
-    }
+    setCurrentSubtitle(item.say || '');
     
     // 执行3D动作
     if (item.actions && viewerControlsRef.current) {
       executeActionsWithControls(item.actions, viewerControlsRef.current);
     }
     
-    return new Promise((resolve) => {
-      const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
-      setTimeout(() => {
-        setCurrentSubtitle('');
-        resolve(estimatedDuration);
-      }, estimatedDuration * 1000);
-    });
+    // 播放音频（如果有）
+    if (item.audioUrl) {
+      console.log('播放scene.action音频:', item.audioUrl);
+      return new Promise((resolve) => {
+        const audio = new Audio();
+        
+        // 使用公开代理来解决CORS问题
+        let audioUrl = item.audioUrl;
+        if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+          audioUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
+        }
+        
+        audio.src = audioUrl;
+        playbackState.currentAudio = audio;
+        
+        audio.onended = () => {
+          setCurrentSubtitle('');
+          resolve(audio.duration || item.audioDuration || 3);
+        };
+        
+        audio.onerror = (error) => {
+          console.error('scene.action音频播放失败:', error);
+          const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
+          setTimeout(() => {
+            setCurrentSubtitle('');
+            resolve(estimatedDuration);
+          }, estimatedDuration * 1000);
+        };
+        
+        // 尝试播放音频
+        audio.play().catch((error) => {
+          console.error('scene.action音频播放启动失败:', error);
+          
+          // 用户交互处理
+          if (error.name === 'NotAllowedError') {
+            if (typeof window !== 'undefined') {
+              const playOnInteraction = () => {
+                audio.play().catch(console.error);
+                document.removeEventListener('click', playOnInteraction);
+                document.removeEventListener('touchstart', playOnInteraction);
+              };
+              document.addEventListener('click', playOnInteraction, { once: true });
+              document.addEventListener('touchstart', playOnInteraction, { once: true });
+            }
+          }
+          
+          // 回退到文本显示
+          const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
+          setTimeout(() => {
+            setCurrentSubtitle('');
+            resolve(estimatedDuration);
+          }, estimatedDuration * 1000);
+        });
+      });
+    } else {
+      // 没有音频时，模拟播放
+      return new Promise((resolve) => {
+        const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
+        setTimeout(() => {
+          setCurrentSubtitle('');
+          resolve(estimatedDuration);
+        }, estimatedDuration * 1000);
+      });
+    }
   };
 
   const executeActionsWithControls = (actions: any[], viewerControls: any) => {
@@ -427,10 +568,8 @@ export default function PublicCoursePlayer({
       {/* 3D查看器 */}
       <div style={{ width: '100%', height: '100%' }}>
         <PublicThreeDViewer
+          ref={viewerControlsRef}
           coursewareData={courseData?.coursewareData}
-          onControlsReady={(controls) => {
-            viewerControlsRef.current = controls;
-          }}
         />
       </div>
 
