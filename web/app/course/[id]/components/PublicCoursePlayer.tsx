@@ -9,6 +9,7 @@ import {
   ShareAltOutlined,
   FullscreenOutlined,
   ExpandOutlined,
+  CompressOutlined,
   SoundOutlined
 } from '@ant-design/icons';
 import PublicThreeDViewer, { PublicThreeDViewerControls } from './PublicThreeDViewer';
@@ -52,6 +53,7 @@ export default function PublicCoursePlayer({
   const [needsUserInteraction, setNeedsUserInteraction] = useState(true);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [viewerImageSrc, setViewerImageSrc] = useState('');
+  const [showMobileAudioButton, setShowMobileAudioButton] = useState(false);
   const playbackTimerRef = useRef<NodeJS.Timeout>();
   const [totalItems, setTotalItems] = useState(0);
   const [currentItemNumber, setCurrentItemNumber] = useState(0);
@@ -201,6 +203,14 @@ export default function PublicCoursePlayer({
         }
       } else {
         console.error('音频播放出错:', error);
+        
+        // 检查是否是移动端且需要用户交互
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (isMobile && error.name === 'NotAllowedError') {
+          setShowMobileAudioButton(true);
+          console.log('移动端需要用户手动启动音频播放');
+        }
+        
         onError(estimatedDuration);
       }
     }
@@ -216,6 +226,29 @@ export default function PublicCoursePlayer({
   const closeImageViewer = () => {
     setImageViewerVisible(false);
     setViewerImageSrc('');
+  };
+
+  // 手动播放音频（移动端专用）
+  const handleManualAudioPlay = async () => {
+    try {
+      // 尝试初始化音频上下文
+      if (!audioContext) {
+        await initAudioContext();
+      }
+      
+      // 隐藏音频按钮
+      setShowMobileAudioButton(false);
+      
+      // 继续当前播放
+      if (!isPlaying) {
+        onPlayStateChange(true);
+      }
+      
+      message.success('音频已启用，播放将继续进行');
+    } catch (error) {
+      console.error('手动启动音频失败:', error);
+      message.error('音频启动失败，请重试');
+    }
   };
 
   const startPlayback = async () => {
@@ -725,19 +758,28 @@ export default function PublicCoursePlayer({
   })();
 
   return (
-    <div style={{ 
-      width: '100%', 
-      height: '100vh', 
-      position: 'relative',
-      overflow: 'hidden' // 防止内容超出
-    }}>
+    <>
+      <style>{`
+        @keyframes pulse {
+          0% { transform: translate(-50%, -50%) scale(1); }
+          50% { transform: translate(-50%, -50%) scale(1.05); }
+          100% { transform: translate(-50%, -50%) scale(1); }
+        }
+      `}</style>
+      <div style={{ 
+        width: '100%', 
+        height: '100vh', 
+        position: 'relative',
+        overflow: 'hidden' // 防止内容超出
+      }}>
       {/* 3D查看器 */}
       <div style={{ 
         width: '100%', 
-        height: isFullscreen ? '100%' : 'calc(100vh - 140px)', // 非全屏时为控件和字幕留出更多空间
+        height: isFullscreen ? '100vh' : 'calc(100vh - 140px)', // 非全屏时为控件和字幕留出更多空间
         position: 'absolute', 
         top: 0, 
-        left: 0 
+        left: 0,
+        overflow: 'hidden'
       }}>
         <PublicThreeDViewer
           ref={viewerControlsRef}
@@ -817,6 +859,36 @@ export default function PublicCoursePlayer({
         </div>
       )}
 
+      {/* 移动端音频播放按钮 */}
+      {showMobileAudioButton && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'rgba(255, 99, 71, 0.9)',
+          borderRadius: '50px',
+          padding: '15px 25px',
+          color: 'white',
+          fontSize: '16px',
+          fontWeight: 'bold',
+          cursor: 'pointer',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          backdropFilter: 'blur(10px)',
+          border: '2px solid rgba(255, 255, 255, 0.3)',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+          animation: 'pulse 2s infinite'
+        }}
+        onClick={handleManualAudioPlay}
+        >
+          <SoundOutlined style={{ fontSize: '20px' }} />
+          <span>点击启用音频播放</span>
+        </div>
+      )}
+
       {/* 播放控制栏 */}
       <div style={{
         position: 'absolute',
@@ -869,24 +941,22 @@ export default function PublicCoursePlayer({
           {currentItemNumber} / {totalItems}
         </div>
 
-        {isFullscreen && (
-          <Space>
-            <Button 
-              type="text" 
-              icon={<ShareAltOutlined />} 
-              onClick={onShare}
-              style={{ color: 'white' }}
-              size="small"
-            />
-            <Button 
-              type="text" 
-              icon={<ExpandOutlined />} 
-              onClick={onToggleFullscreen}
-              style={{ color: 'white' }}
-              size="small"
-            />
-          </Space>
-        )}
+        <Space>
+          <Button 
+            type="text" 
+            icon={<ShareAltOutlined />} 
+            onClick={onShare}
+            style={{ color: 'white' }}
+            size="small"
+          />
+          <Button 
+            type="text" 
+            icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />} 
+            onClick={onToggleFullscreen}
+            style={{ color: 'white' }}
+            size="small"
+          />
+        </Space>
       </div>
 
       {/* 图片查看器模态框 */}
@@ -897,7 +967,8 @@ export default function PublicCoursePlayer({
           onClose={closeImageViewer} 
         />
       )}
-    </div>
+      </div>
+    </>
   );
 }
 

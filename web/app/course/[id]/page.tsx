@@ -462,49 +462,96 @@ export default function PublicCoursePage() {
 
       {/* 播放确认对话框 */}
       <Modal
-        title={
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '20px', marginBottom: '8px' }}>🎓</div>
-            <div>准备开始学习</div>
-          </div>
-        }
+        title={null}
         open={showPlayConfirm}
-        onOk={() => {
-          setShowPlayConfirm(false);
-          setIsPlaying(true);
-        }}
-        onCancel={() => {
-          setShowPlayConfirm(false);
-        }}
-        okText="开始播放"
-        cancelText="稍后播放"
+        footer={null}
         centered
-        width={400}
+        width={360}
         maskClosable={false}
+        styles={{
+          mask: { backdropFilter: 'blur(10px)' },
+          content: {
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(20px)',
+            borderRadius: '20px',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2)'
+          }
+        }}
       >
-        <div style={{ textAlign: 'center', padding: '20px 0' }}>
-          <div style={{ marginBottom: '16px', fontSize: '16px' }}>
-            课程资源已加载完成！
-          </div>
-          <div style={{ marginBottom: '16px', color: '#666' }}>
-            <div>✅ 3D模型已就绪</div>
-            <div>✅ 音频文件已预加载</div>
-            <div>✅ 图片资源已准备</div>
-          </div>
+        <div style={{ textAlign: 'center', padding: '40px 20px' }}>
           <div style={{ 
-            background: '#f0f8ff', 
-            padding: '12px', 
-            borderRadius: '6px',
-            fontSize: '14px',
-            color: '#1890ff'
+            fontSize: '48px', 
+            marginBottom: '16px',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}>🎓</div>
+          
+          <div style={{ 
+            fontSize: '24px', 
+            fontWeight: 'bold',
+            marginBottom: '32px',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
           }}>
-            💡 提示：建议佩戴耳机以获得更好的学习体验
-            {/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && (
-              <div style={{ marginTop: '8px', fontSize: '12px', color: '#ff6b6b' }}>
-                📱 移动端用户：首次播放可能需要您手动点击音频播放
-              </div>
-            )}
+            准备开始学习
           </div>
+          
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <Button 
+              size="large"
+              style={{
+                borderRadius: '25px',
+                padding: '8px 24px',
+                height: 'auto',
+                background: 'rgba(102, 126, 234, 0.1)',
+                borderColor: 'rgba(102, 126, 234, 0.3)',
+                color: '#667eea'
+              }}
+              onClick={() => {
+                setShowPlayConfirm(false);
+              }}
+            >
+              稍后播放
+            </Button>
+            
+            <Button 
+              type="primary"
+              size="large"
+              style={{
+                borderRadius: '25px',
+                padding: '8px 24px',
+                height: 'auto',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                border: 'none',
+                boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)'
+              }}
+              onClick={() => {
+                setShowPlayConfirm(false);
+                setIsPlaying(true);
+              }}
+            >
+              开始播放
+            </Button>
+          </div>
+          
+          {/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && (
+            <div style={{ 
+              marginTop: '24px', 
+              fontSize: '12px', 
+              color: '#999',
+              background: 'rgba(255, 107, 107, 0.1)',
+              padding: '8px 12px',
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 107, 107, 0.2)'
+            }}>
+              📱 移动端提示：播放过程中如无声音，请点击屏幕中央的音频图标
+            </div>
+          )}
         </div>
       </Modal>
 
