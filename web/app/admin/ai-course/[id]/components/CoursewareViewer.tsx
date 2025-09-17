@@ -88,6 +88,13 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
               viewerControls.hideAnnotations(action.ids);
             }
             break;
+          case 'annotation.highlight':
+            // 【修复】将 annotation.highlight 统一处理为高亮显示
+            console.log(`高亮显示: ${action.target?.nodeKey}`);
+            if (action.target?.nodeKey) {
+              viewerControls.highlightNode(action.target.nodeKey, true);
+            }
+            break;
           case 'animation.play':
             console.log(`播放动画: ${action.animationId} (${action.startTime}s - ${action.endTime}s)`);
             if (action.animationId) {

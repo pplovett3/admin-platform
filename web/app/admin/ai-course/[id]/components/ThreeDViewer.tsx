@@ -1466,22 +1466,125 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         const dom = rendererRef.current.domElement;
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-        const onClick = (event: MouseEvent) => {
+        
+        // 创建悬停提示
+        const hoverTooltip = document.createElement('div');
+        hoverTooltip.style.cssText = `
+          position: absolute;
+          background: rgba(0, 0, 0, 0.8);
+          color: white;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 12px;
+          pointer-events: none;
+          z-index: 1000;
+          white-space: nowrap;
+        `;
+        document.body.appendChild(hoverTooltip);
+        hoverTooltip.style.display = 'none';
+        
+        let currentHoverObject: THREE.Object3D | null = null;
+        
+        // 鼠标移动事件：显示悬停预览
+        const onMouseMove = (event: MouseEvent) => {
           const rect = dom.getBoundingClientRect();
           mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
           mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
           raycaster.setFromCamera(mouse, cameraRef.current!);
           const intersects = raycaster.intersectObject(sceneRef.current!, true);
+          
+          if (intersects.length > 0) {
+            const obj = intersects[0].object;
+            
+            // 如果悬停的是新对象，更新高亮和提示
+            if (obj !== currentHoverObject) {
+              // 清除之前的高亮
+              if (currentHoverObject && outlineRef.current) {
+                outlineRef.current.selectedObjects = [];
+              }
+              
+              // 设置新的高亮
+              currentHoverObject = obj;
+              if (outlineRef.current) {
+                outlineRef.current.selectedObjects = [obj];
+              }
+              
+              // 显示对象名称（只显示最后一层级）
+              const objName = obj.name || `Object_${obj.uuid.slice(0, 8)}`;
+              const displayName = objName.split('/').pop() || objName;
+              hoverTooltip.textContent = displayName;
+              hoverTooltip.style.display = 'block';
+            }
+            
+            // 更新提示位置
+            hoverTooltip.style.left = (event.clientX + 10) + 'px';
+            hoverTooltip.style.top = (event.clientY - 25) + 'px';
+          } else {
+            // 鼠标不在任何对象上，清除高亮和提示
+            if (currentHoverObject && outlineRef.current) {
+              outlineRef.current.selectedObjects = [];
+              currentHoverObject = null;
+            }
+            hoverTooltip.style.display = 'none';
+          }
+        };
+        
+        // 点击事件：确认选择
+        const onClick = (event: MouseEvent) => {
+          // 清理事件监听器和提示
           dom.removeEventListener('click', onClick, true);
-          if (intersects.length === 0) return resolve(null);
-          const obj = intersects[0].object;
+          dom.removeEventListener('mousemove', onMouseMove);
+          document.body.removeChild(hoverTooltip);
+          
+          // 清除高亮
+          if (outlineRef.current) {
+            outlineRef.current.selectedObjects = [];
+          }
+          
+          if (!currentHoverObject) return resolve(null);
+          
+          const obj = currentHoverObject;
           // 生成与 nodeMap 对齐的 key：优先完整路径，其次名称，最后 uuid
           const fullPath = getFullObjectPath(obj);
           if (fullPath && nodeMapRef.current.has(fullPath)) return resolve(fullPath);
           if (obj.name && nodeMapRef.current.has(obj.name)) return resolve(obj.name);
           return resolve(obj.uuid || null);
         };
+        
+        // 取消选择（按ESC键或右键）
+        const onCancel = (event: KeyboardEvent | MouseEvent) => {
+          if ((event instanceof KeyboardEvent && event.key === 'Escape') || 
+              (event instanceof MouseEvent && event.button === 2)) {
+            // 清理事件监听器和提示
+            dom.removeEventListener('click', onClick, true);
+            dom.removeEventListener('mousemove', onMouseMove);
+            dom.removeEventListener('contextmenu', onCancel as EventListener);
+            document.removeEventListener('keydown', onCancel as EventListener);
+            document.body.removeChild(hoverTooltip);
+            
+            // 清除高亮
+            if (outlineRef.current) {
+              outlineRef.current.selectedObjects = [];
+            }
+            
+            resolve(null);
+          }
+        };
+        
+        // 添加事件监听器
         dom.addEventListener('click', onClick, true);
+        dom.addEventListener('mousemove', onMouseMove);
+        dom.addEventListener('contextmenu', onCancel as EventListener);
+        document.addEventListener('keydown', onCancel as EventListener);
+        
+        // 改变鼠标样式提示
+        dom.style.cursor = 'crosshair';
+        
+        // 清理时恢复鼠标样式
+        const cleanup = () => {
+          dom.style.cursor = '';
+        };
+        setTimeout(cleanup, 100); // 延迟一点确保样式应用
       })
     };
 

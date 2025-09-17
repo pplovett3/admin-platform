@@ -75,6 +75,26 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
     }
   }, [visible, courseData?.coursewareId]);
 
+  // 【修复】每次打开预览时，重新解析最新的课程数据
+  useEffect(() => {
+    if (visible && courseData) {
+      console.log('预览打开，重新解析最新课程数据');
+      // 重置播放状态
+      setPlaybackState({
+        isPlaying: false,
+        currentSegmentIndex: 0,
+        currentItemIndex: 0,
+        progress: 0
+      });
+      // 清除预加载的音频缓存，确保使用最新内容
+      setPreloadedAudios(new Map());
+      setCurrentSubtitle('');
+      setCurrentImage(null);
+      // 停止之前的播放
+      stopPlayback();
+    }
+  }, [visible, courseData]);
+
   // 播放状态变化处理
   useEffect(() => {
     if (playbackState.isPlaying) {
@@ -636,6 +656,13 @@ export default function CoursePreviewPlayer({ courseData, visible, onClose }: Co
             console.log(`[${index + 1}] 隐藏高亮:`, action.target?.nodeKey);
             if (action.target?.nodeKey) {
               viewerControls.highlightNode(action.target.nodeKey, false);
+            }
+            break;
+          case 'annotation.highlight':
+            // 【修复】将 annotation.highlight 统一处理为高亮显示
+            console.log(`[${index + 1}] 高亮显示:`, action.target?.nodeKey);
+            if (action.target?.nodeKey) {
+              viewerControls.highlightNode(action.target.nodeKey, true);
             }
             break;
           default:

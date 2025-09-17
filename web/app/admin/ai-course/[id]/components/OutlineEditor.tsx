@@ -3,6 +3,25 @@ import { useState } from 'react';
 import { Tree, Button, Space, Modal, Form, Input, Select, message, Collapse, Tag } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, DragOutlined } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface OutlineEditorProps {
   outline: any[];
@@ -10,11 +29,211 @@ interface OutlineEditorProps {
   onSelectItem: (item: any) => void;
 }
 
+// 可排序的段落组件
+function SortableSegment({ segment, segIndex, outline, onChange, onSelectItem, selectedKeys, onSelectKeys, onEditSegment, onDeleteSegment, onAddItem, onEditItem, onDeleteItem, getItemColor }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `segment-${segIndex}` });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // 处理段落内步骤的拖拽排序
+  const handleItemDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeIndex = segment.items.findIndex((item: any, index: number) => `item-${segIndex}-${index}` === active.id);
+    const overIndex = segment.items.findIndex((item: any, index: number) => `item-${segIndex}-${index}` === over.id);
+
+    if (activeIndex !== -1 && overIndex !== -1) {
+      const newOutline = [...outline];
+      const newItems = arrayMove(segment.items, activeIndex, overIndex);
+      newOutline[segIndex].items = newItems;
+      onChange(newOutline);
+      message.success('步骤排序已更新');
+    }
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <Collapse style={{ marginBottom: 16, background: 'var(--color-bg-container)' }}>
+        <Collapse.Panel
+          header={
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 12 }}>
+                <div
+                  {...listeners}
+                  style={{ 
+                    cursor: 'grab', 
+                    padding: '4px', 
+                    marginRight: 8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    color: '#999'
+                  }}
+                  title="拖拽排序"
+                >
+                  <DragOutlined />
+                </div>
+                <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120, display: 'inline-block' }}>
+                  {segment.title || `段落 ${segIndex + 1}`}
+                </span>
+                <Tag color="blue" style={{ marginLeft: 6, flexShrink: 0, fontSize: '10px', padding: '0 4px', lineHeight: '16px' }}>{segment.mode}</Tag>
+              </div>
+              <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
+                <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => onAddItem(segIndex)} title="添加项目" style={{ padding: '0 4px' }} />
+                <Button type="text" size="small" icon={<EditOutlined />} onClick={() => onEditSegment(segment, segIndex)} title="编辑段落" style={{ padding: '0 4px' }} />
+                <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => onDeleteSegment(segIndex)} title="删除段落" style={{ padding: '0 4px' }} />
+              </Space>
+            </div>
+          }
+          key={segIndex}
+        >
+          {segment.items && segment.items.length > 0 ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleItemDragEnd}
+            >
+              <SortableContext 
+                items={segment.items.map((_: any, index: number) => `item-${segIndex}-${index}`)}
+                strategy={verticalListSortingStrategy}
+              >
+                {segment.items.map((item: any, itemIndex: number) => (
+                  <SortableItem
+                    key={`item-${segIndex}-${itemIndex}`}
+                    id={`item-${segIndex}-${itemIndex}`}
+                    item={item}
+                    segIndex={segIndex}
+                    itemIndex={itemIndex}
+                    selectedKeys={selectedKeys}
+                    onSelectKeys={onSelectKeys}
+                    onEditItem={onEditItem}
+                    onDeleteItem={onDeleteItem}
+                    getItemColor={getItemColor}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <div style={{ textAlign: 'center', color: '#999', padding: 20 }}>
+              暂无项目，点击上方"+"按钮添加
+            </div>
+          )}
+        </Collapse.Panel>
+      </Collapse>
+    </div>
+  );
+}
+
+// 可排序的步骤组件
+function SortableItem({ id, item, segIndex, itemIndex, selectedKeys, onSelectKeys, onEditItem, onDeleteItem, getItemColor }: any) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        ...style,
+        padding: 12,
+        border: '1px solid var(--color-border)',
+        borderRadius: 6,
+        marginBottom: 8,
+        cursor: 'pointer',
+        backgroundColor: selectedKeys.includes(`${segIndex}-${itemIndex}`) ? 'var(--color-primary-bg)' : 'var(--color-bg-container)'
+      }}
+      onClick={() => onSelectKeys([`${segIndex}-${itemIndex}`], { node: { key: `${segIndex}-${itemIndex}` } })}
+      {...attributes}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 8 }}>
+          <div
+            {...listeners}
+            style={{ 
+              cursor: 'grab', 
+              padding: '2px 4px', 
+              marginRight: 8,
+              display: 'flex',
+              alignItems: 'center',
+              color: '#999'
+            }}
+            title="拖拽排序"
+          >
+            <DragOutlined style={{ fontSize: '12px' }} />
+          </div>
+          <Tag color={getItemColor(item.type)} style={{ fontSize: '11px' }}>{item.type}</Tag>
+          <span style={{ marginLeft: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 150 }}>
+            {item.say?.slice(0, 50)}...
+          </span>
+          {item.estimatedDuration && (
+            <Tag style={{ marginLeft: 8, fontSize: '11px' }}>{item.estimatedDuration}s</Tag>
+          )}
+        </div>
+        <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
+          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => onEditItem(item, segIndex, itemIndex)} title="编辑项目" style={{ padding: '0 4px' }} />
+          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => onDeleteItem(segIndex, itemIndex)} title="删除项目" style={{ padding: '0 4px' }} />
+        </Space>
+      </div>
+    </div>
+  );
+}
+
 export default function OutlineEditor({ outline, onChange, onSelectItem }: OutlineEditorProps) {
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [form] = Form.useForm();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // 处理段落的拖拽排序
+  const handleSegmentDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeIndex = outline.findIndex((_, index) => `segment-${index}` === active.id);
+    const overIndex = outline.findIndex((_, index) => `segment-${index}` === over.id);
+
+    if (activeIndex !== -1 && overIndex !== -1) {
+      const newOutline = arrayMove(outline, activeIndex, overIndex);
+      onChange(newOutline);
+      message.success('段落排序已更新');
+    }
+  };
 
   // 将 outline 转换为 Tree 数据结构
   const convertToTreeData = (outline: any[]): DataNode[] => {
@@ -172,61 +391,35 @@ export default function OutlineEditor({ outline, onChange, onSelectItem }: Outli
             暂无课程大纲，请点击"AI生成初稿"或手动添加段落
           </div>
         ) : (
-          <div>
-            {outline.map((segment, segIndex) => (
-              <Collapse key={segIndex} style={{ marginBottom: 16, background: 'var(--color-bg-container)' }}>
-                <Collapse.Panel
-                  header={
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, marginRight: 12 }}>
-                        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 120, display: 'inline-block' }}>
-                          {segment.title || `段落 ${segIndex + 1}`}
-                        </span>
-                        <Tag color="blue" style={{ marginLeft: 6, flexShrink: 0, fontSize: '10px', padding: '0 4px', lineHeight: '16px' }}>{segment.mode}</Tag>
-                      </div>
-                      <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
-                        <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addItem(segIndex)} title="添加项目" style={{ padding: '0 4px' }} />
-                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editSegment(segment, segIndex)} title="编辑段落" style={{ padding: '0 4px' }} />
-                        <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteSegment(segIndex)} title="删除段落" style={{ padding: '0 4px' }} />
-                      </Space>
-                    </div>
-                  }
-                  key={segIndex}
-                >
-                  {segment.items?.map((item: any, itemIndex: number) => (
-                    <div
-                      key={itemIndex}
-                      style={{
-                        padding: 12,
-                        border: '1px solid var(--color-border)',
-                        borderRadius: 6,
-                        marginBottom: 8,
-                        cursor: 'pointer',
-                        backgroundColor: selectedKeys.includes(`${segIndex}-${itemIndex}`) ? 'var(--color-primary-bg)' : 'var(--color-bg-container)'
-                      }}
-                      onClick={() => onTreeSelect([`${segIndex}-${itemIndex}`], { node: { key: `${segIndex}-${itemIndex}` } })}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }}>
-                        <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
-                          <Tag color={getItemColor(item.type)} style={{ fontSize: '11px' }}>{item.type}</Tag>
-                          <span style={{ marginLeft: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 180 }}>
-                            {item.say?.slice(0, 50)}...
-                          </span>
-                          {item.estimatedDuration && (
-                            <Tag style={{ marginLeft: 8, fontSize: '11px' }}>{item.estimatedDuration}s</Tag>
-                          )}
-                        </div>
-                        <Space onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0 }} size={2}>
-                          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => editItem(item, segIndex, itemIndex)} title="编辑项目" style={{ padding: '0 4px' }} />
-                          <Button type="text" size="small" icon={<DeleteOutlined />} onClick={() => deleteItem(segIndex, itemIndex)} title="删除项目" style={{ padding: '0 4px' }} />
-                        </Space>
-                      </div>
-                    </div>
-                  )) || []}
-                </Collapse.Panel>
-              </Collapse>
-            ))}
-          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleSegmentDragEnd}
+          >
+            <SortableContext 
+              items={outline.map((_, index) => `segment-${index}`)}
+              strategy={verticalListSortingStrategy}
+            >
+              {outline.map((segment, segIndex) => (
+                <SortableSegment
+                  key={`segment-${segIndex}`}
+                  segment={segment}
+                  segIndex={segIndex}
+                  outline={outline}
+                  onChange={onChange}
+                  onSelectItem={onSelectItem}
+                  selectedKeys={selectedKeys}
+                  onSelectKeys={onTreeSelect}
+                  onEditSegment={editSegment}
+                  onDeleteSegment={deleteSegment}
+                  onAddItem={addItem}
+                  onEditItem={editItem}
+                  onDeleteItem={deleteItem}
+                  getItemColor={getItemColor}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         )}
       </div>
 
