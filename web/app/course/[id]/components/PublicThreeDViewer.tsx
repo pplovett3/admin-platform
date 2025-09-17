@@ -690,38 +690,65 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       controlsRef.current.update();
     };
 
-    // 智能匹配节点
+    // 智能匹配节点 - 增强版
     const findNodeBySmartMatch = (nodeKey: string): THREE.Object3D | undefined => {
       const nodeMap = nodeMapRef.current;
       
+      console.log('智能匹配节点:', nodeKey);
+      console.log('可用节点总数:', nodeMap.size);
+      
       // 1. 精确匹配
       if (nodeMap.has(nodeKey)) {
+        console.log('精确匹配成功:', nodeKey);
         return nodeMap.get(nodeKey)!;
       }
       
-      // 2. 名称匹配
+      // 2. 提取最后的路径段进行匹配
+      const targetSegments = nodeKey.split('/');
+      const targetName = targetSegments[targetSegments.length - 1]; // 最后一段，如"左后轮"
+      
+      console.log('目标名称:', targetName);
+      
+      // 3. 按名称匹配
       for (const [key, object] of nodeMap.entries()) {
-        if (object.name === nodeKey) {
+        if (object.name === targetName) {
+          console.log('名称匹配成功:', object.name, '键:', key);
           return object;
         }
       }
       
-      // 3. 路径末尾匹配
+      // 4. 路径末尾匹配
       for (const [key, object] of nodeMap.entries()) {
-        if (key.endsWith(`/${nodeKey}`) || key.endsWith(nodeKey)) {
+        if (key.endsWith(`/${targetName}`) || key.endsWith(targetName)) {
+          console.log('路径末尾匹配成功:', key);
           return object;
         }
       }
       
-      // 4. 模糊匹配
-      const lowerNodeKey = nodeKey.toLowerCase();
+      // 5. 如果是完整路径，尝试匹配路径结构（忽略UUID）
+      if (targetSegments.length > 1) {
+        const pathPattern = targetSegments.slice(1).join('/'); // 去掉第一个UUID部分
+        console.log('路径模式:', pathPattern);
+        
+        for (const [key, object] of nodeMap.entries()) {
+          if (key.includes(pathPattern)) {
+            console.log('路径模式匹配成功:', key);
+            return object;
+          }
+        }
+      }
+      
+      // 6. 模糊匹配
+      const lowerTargetName = targetName.toLowerCase();
       for (const [key, object] of nodeMap.entries()) {
-        if (key.toLowerCase().includes(lowerNodeKey) || 
-            object.name.toLowerCase().includes(lowerNodeKey)) {
+        if (key.toLowerCase().includes(lowerTargetName) || 
+            object.name.toLowerCase().includes(lowerTargetName)) {
+          console.log('模糊匹配成功:', key, '目标:', targetName);
           return object;
         }
       }
       
+      console.warn('所有匹配方式都失败，节点未找到:', nodeKey);
       return undefined;
     };
 
@@ -872,7 +899,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       autoRotationRef.current = false;
     };
 
-    // 播放动画
+    // 播放动画 - 增强智能匹配
     const playAnimation = (animationId: string) => {
       console.log('播放动画:', animationId);
       
@@ -884,20 +911,67 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       // 停止所有当前动画
       mixerRef.current.stopAllAction();
 
-      // 查找动画
+      console.log('可用动画:', animationsRef.current.map(clip => ({ name: clip.name, uuid: clip.uuid })));
+
+      // 1. 精确UUID匹配
       let targetAnimation = animationsRef.current.find(clip => clip.uuid === animationId);
-      if (!targetAnimation) {
+      if (targetAnimation) {
+        console.log('UUID精确匹配成功:', targetAnimation.name);
+      } else {
+        // 2. 精确名称匹配
         targetAnimation = animationsRef.current.find(clip => clip.name === animationId);
+        if (targetAnimation) {
+          console.log('名称精确匹配成功:', targetAnimation.name);
+        } else {
+          // 3. 模糊名称匹配（根据关键词）
+          const lowerAnimationId = animationId.toLowerCase();
+          
+          // 根据UUID中的关键词尝试匹配已知动画类型
+          if (lowerAnimationId.includes('71361f28') || lowerAnimationId.includes('拆装') || lowerAnimationId.includes('assembly')) {
+            // 查找拆装相关动画
+            targetAnimation = animationsRef.current.find(clip => 
+              clip.name.includes('拆装') || clip.name.includes('assembly') || clip.name.includes('安装')
+            );
+            if (targetAnimation) {
+              console.log('关键词匹配成功（拆装）:', targetAnimation.name);
+            }
+          }
+          
+          if (!targetAnimation && (lowerAnimationId.includes('旋转') || lowerAnimationId.includes('rotate'))) {
+            // 查找旋转相关动画
+            targetAnimation = animationsRef.current.find(clip => 
+              clip.name.includes('旋转') || clip.name.includes('rotate') || clip.name.includes('转动')
+            );
+            if (targetAnimation) {
+              console.log('关键词匹配成功（旋转）:', targetAnimation.name);
+            }
+          }
+          
+          // 4. 如果还没找到，使用第一个非"All Animations"的动画
+          if (!targetAnimation) {
+            targetAnimation = animationsRef.current.find(clip => clip.name !== 'All Animations');
+            if (targetAnimation) {
+              console.log('使用第一个可用动画:', targetAnimation.name);
+            }
+          }
+        }
       }
 
       if (targetAnimation) {
         const action = mixerRef.current.clipAction(targetAnimation);
         action.reset();
         action.play();
-        console.log('开始播放动画:', targetAnimation.name);
+        console.log('开始播放动画:', targetAnimation.name, 'UUID:', targetAnimation.uuid);
       } else {
         console.warn('未找到动画:', animationId);
-        console.log('可用动画:', animationsRef.current.map(clip => ({ name: clip.name, uuid: clip.uuid })));
+        console.log('尝试播放第一个动画作为回退');
+        if (animationsRef.current.length > 0) {
+          const fallbackAnimation = animationsRef.current[0];
+          const action = mixerRef.current.clipAction(fallbackAnimation);
+          action.reset();
+          action.play();
+          console.log('回退播放动画:', fallbackAnimation.name);
+        }
       }
     };
 

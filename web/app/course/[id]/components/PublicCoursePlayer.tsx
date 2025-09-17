@@ -262,7 +262,9 @@ export default function PublicCoursePlayer({
       say: item.say?.substring(0, 50) + '...',
       audioUrl: item.audioUrl,
       imageUrl: item.imageUrl,
-      hasAudio: !!item.audioUrl
+      originalImageUrl: item.originalImageUrl,
+      hasAudio: !!item.audioUrl,
+      allKeys: Object.keys(item)
     });
     
     setCurrentSubtitle(item.say || '');
@@ -567,14 +569,25 @@ export default function PublicCoursePlayer({
   })();
 
   return (
-    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
-      {/* 3D查看器 - 全屏显示 */}
-      <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}>
+    <div style={{ 
+      width: '100%', 
+      height: isFullscreen ? '100vh' : '100vh', 
+      position: 'relative',
+      overflow: 'hidden' // 防止内容超出
+    }}>
+      {/* 3D查看器 */}
+      <div style={{ 
+        width: '100%', 
+        height: isFullscreen ? '100%' : 'calc(100% - 80px)', // 非全屏时为控件留出空间
+        position: 'absolute', 
+        top: 0, 
+        left: 0 
+      }}>
         <PublicThreeDViewer
           ref={viewerControlsRef}
           coursewareData={courseData?.coursewareData}
           width={typeof window !== 'undefined' ? window.innerWidth : 1920}
-          height={typeof window !== 'undefined' ? window.innerHeight : 1080}
+          height={typeof window !== 'undefined' ? (isFullscreen ? window.innerHeight : window.innerHeight - 80) : 1080}
         />
       </div>
 
@@ -616,7 +629,7 @@ export default function PublicCoursePlayer({
       {currentSubtitle && (
         <div style={{
           position: 'absolute',
-          bottom: isFullscreen ? '80px' : '20px',
+          bottom: isFullscreen ? '100px' : '100px',
           left: '50%',
           transform: 'translateX(-50%)',
           background: 'rgba(0, 0, 0, 0.8)',
@@ -635,7 +648,7 @@ export default function PublicCoursePlayer({
       {/* 播放控制栏 */}
       <div style={{
         position: 'absolute',
-        bottom: '20px',
+        bottom: '10px',
         left: '50%',
         transform: 'translateX(-50%)',
         background: 'rgba(0, 0, 0, 0.8)',
