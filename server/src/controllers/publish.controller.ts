@@ -4,6 +4,7 @@ import { PublishedCourseModel, IPublishConfig } from '../models/PublishedCourse'
 import { AICourseModel } from '../models/AICourse';
 import { CoursewareModel } from '../models/Courseware';
 import { config } from '../config/env';
+import { batchGenerateTTSForCourse } from '../utils/ai-services';
 import * as crypto from 'crypto';
 import * as path from 'path';
 
@@ -11,7 +12,7 @@ import * as path from 'path';
 export async function publishCourse(req: Request, res: Response) {
   try {
     const { courseId } = req.params;
-    const { publishConfig = {} } = req.body;
+    const { publishConfig = {}, ttsConfig } = req.body;
     const user = (req as any).user;
 
     if (!courseId || !Types.ObjectId.isValid(courseId)) {
@@ -38,6 +39,50 @@ export async function publishCourse(req: Request, res: Response) {
     // 检查是否已有发布记录
     let existingPublish = await PublishedCourseModel.findOne({ originalCourseId: courseId });
 
+    // 如果提供了TTS配置，批量生成并保存配音
+    let courseDataWithAudio = aiCourse.toObject();
+    let resourcePaths = {
+      audio: [] as string[],
+      images: [] as string[],
+      thumbnail: undefined as string | undefined
+    };
+
+    if (ttsConfig && aiCourse.outline && aiCourse.outline.length > 0) {
+      console.log('开始批量生成TTS配音...');
+      try {
+        const ttsResults = await batchGenerateTTSForCourse(
+          aiCourse.outline,
+          user.userId,
+          ttsConfig
+        );
+
+        // 将TTS结果写入课程数据
+        if (courseDataWithAudio.outline) {
+          for (let segmentIndex = 0; segmentIndex < courseDataWithAudio.outline.length; segmentIndex++) {
+            const segment = courseDataWithAudio.outline[segmentIndex];
+          if (!segment.items) continue;
+
+          for (let itemIndex = 0; itemIndex < segment.items.length; itemIndex++) {
+            const itemKey = `${segmentIndex}-${itemIndex}`;
+            if (ttsResults[itemKey]) {
+              const item = segment.items[itemIndex];
+              item.audioUrl = ttsResults[itemKey].audioUrl;
+              item.audioDuration = ttsResults[itemKey].duration;
+              item.audioFileId = ttsResults[itemKey].fileId;
+              
+              // 记录音频文件路径
+              resourcePaths.audio.push(ttsResults[itemKey].audioUrl);
+            }
+          }
+          }
+        }
+        console.log(`TTS生成完成，共生成 ${resourcePaths.audio.length} 个音频文件`);
+      } catch (error) {
+        console.error('批量TTS生成失败:', error);
+        // TTS失败不阻止发布，只是记录错误
+      }
+    }
+
     const publishData = {
       originalCourseId: new Types.ObjectId(courseId),
       title: aiCourse.title,
@@ -51,13 +96,9 @@ export async function publishCourse(req: Request, res: Response) {
         autoPlay: true,
         ...publishConfig
       } as IPublishConfig,
-      courseData: aiCourse.toObject(),
+      courseData: courseDataWithAudio,
       coursewareData: courseware.toObject(),
-      resourcePaths: {
-        audio: [],
-        images: [],
-        thumbnail: undefined
-      },
+      resourcePaths,
       stats: {
         viewCount: 0,
         shareCount: 0

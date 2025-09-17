@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { Modal, Form, Switch, Input, Button, Space, message, Typography, Alert } from 'antd';
+import { Modal, Form, Switch, Input, Button, Space, message, Typography, Alert, Select } from 'antd';
 import { ShareAltOutlined, CopyOutlined, GlobalOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
 
@@ -41,6 +41,8 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
   const [loading, setLoading] = useState(false);
   const [publishStatus, setPublishStatus] = useState<PublishStatus | null>(null);
   const [checking, setChecking] = useState(false);
+  const [enableTTS, setEnableTTS] = useState(false);
+  const [ttsProviders, setTTSProviders] = useState<any[]>([]);
 
   // 获取发布状态
   const checkPublishStatus = async () => {
@@ -65,17 +67,52 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
   useEffect(() => {
     if (visible) {
       checkPublishStatus();
+      loadTTSProviders();
     }
   }, [visible, courseId]);
 
+  // 加载TTS供应商列表
+  const loadTTSProviders = async () => {
+    try {
+      const response = await authFetch<any>('/api/ai/tts/providers');
+      setTTSProviders(response.providers || []);
+    } catch (error) {
+      console.error('加载TTS供应商失败:', error);
+    }
+  };
+
   // 发布课程
-  const handlePublish = async (values: PublishConfig) => {
+  const handlePublish = async (values: any) => {
     setLoading(true);
     try {
+      const { ttsProvider, ttsVoice, ...publishConfig } = values;
+      
+      // 构建请求体
+      const requestBody: any = { publishConfig };
+      
+      // 如果启用了TTS，添加TTS配置
+      if (enableTTS && ttsProvider && ttsVoice) {
+        const provider = ttsProviders.find(p => p.id === ttsProvider);
+        const voice = provider?.voices?.find((v: any) => v.id === ttsVoice);
+        
+        if (provider && voice) {
+          requestBody.ttsConfig = {
+            provider: ttsProvider,
+            ...(ttsProvider === 'azure' ? {
+              voiceName: voice.id,
+              language: voice.locale || 'zh-CN'
+            } : {
+              voice_id: voice.id,
+              speed: 1.0
+            })
+          };
+        }
+      }
+      
       const response = await authFetch(`/api/ai-courses/${courseId}/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publishConfig: values })
+        body: JSON.stringify(requestBody)
       });
 
       message.success(publishStatus?.isPublished ? '发布配置已更新' : '课程发布成功！');
@@ -278,6 +315,58 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
             disabled // TODO: 后续实现
           />
         </Form.Item>
+
+        <Form.Item 
+          label="生成配音文件"
+        >
+          <Switch 
+            checked={enableTTS}
+            onChange={setEnableTTS}
+            checkedChildren="启用" 
+            unCheckedChildren="禁用"
+          />
+          <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>
+            启用后将为课程生成配音文件并保存到NAS，确保播放稳定性
+          </div>
+        </Form.Item>
+
+        {enableTTS && (
+          <>
+            <Form.Item 
+              name="ttsProvider" 
+              label="TTS供应商"
+              rules={[{ required: enableTTS, message: '请选择TTS供应商' }]}
+            >
+              <Select placeholder="选择TTS供应商">
+                {ttsProviders.map(provider => (
+                  <Select.Option key={provider.id} value={provider.id}>
+                    {provider.name} - {provider.description}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item 
+              name="ttsVoice" 
+              label="音色选择"
+              rules={[{ required: enableTTS, message: '请选择音色' }]}
+            >
+              <Select 
+                placeholder="选择音色"
+                disabled={!form.getFieldValue('ttsProvider')}
+              >
+                {(() => {
+                  const selectedProvider = ttsProviders.find(p => p.id === form.getFieldValue('ttsProvider'));
+                  return selectedProvider?.voices?.map((voice: any) => (
+                    <Select.Option key={voice.id} value={voice.id}>
+                      {voice.name} ({voice.gender || voice.locale})
+                    </Select.Option>
+                  )) || [];
+                })()}
+              </Select>
+            </Form.Item>
+          </>
+        )}
 
         <div style={{ textAlign: 'right', marginTop: 24 }}>
           <Space>

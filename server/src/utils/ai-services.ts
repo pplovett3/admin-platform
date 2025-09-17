@@ -1,4 +1,9 @@
 import { config } from '../config/env';
+import { FileModel } from '../models/File';
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
+import { Types } from 'mongoose';
 
 // DeepSeek API 接口
 export interface DeepSeekMessage {
@@ -685,4 +690,173 @@ function estimateAudioDuration(text: string): number {
   const characters = text.length;
   const minutes = characters / charactersPerMinute;
   return Math.ceil(minutes * 60 * 1000); // 返回毫秒
+}
+
+// 保存音频到NAS并返回公开URL
+export async function saveAudioToNAS(
+  audioData: Buffer, 
+  filename: string, 
+  userId: string,
+  mimeType: string = 'audio/wav'
+): Promise<{ fileId: string; publicUrl: string; storageRelPath: string }> {
+  try {
+    // 生成文件哈希
+    const sha256 = crypto.createHash('sha256').update(audioData).digest('hex');
+    
+    // 构建存储路径: tts/用户ID/年月/哈希值.wav
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const ext = path.extname(filename) || '.wav';
+    const relDir = `tts/${userId}/${yearMonth}`;
+    const storageFilename = `${sha256}${ext}`;
+    const storageRelPath = `${relDir}/${storageFilename}`;
+
+    // 确保目录存在
+    const targetDir = path.join(config.storageRoot, relDir);
+    fs.mkdirSync(targetDir, { recursive: true });
+    
+    // 保存文件
+    const finalPath = path.join(config.storageRoot, storageRelPath);
+    fs.writeFileSync(finalPath, audioData);
+
+    // 保存到File模型
+    const fileRecord = await FileModel.create({
+      ownerUserId: new Types.ObjectId(userId),
+      ownerRole: 'teacher', // 假设TTS文件都是教师创建的
+      visibility: 'public', // TTS文件设为公开，便于课程播放
+      type: 'other', // 或者我们可以添加新的类型'audio'
+      originalName: filename,
+      originalNameSaved: storageFilename,
+      ext: ext,
+      size: audioData.length,
+      sha256: sha256,
+      storageRelPath: storageRelPath.replace(/\\/g, '/'),
+      storageDir: relDir.replace(/\\/g, '/'),
+    } as any);
+
+    // 构建公开URL
+    const publicUrl = config.publicDownloadBase 
+      ? `${config.publicDownloadBase.replace(/\/$/, '')}/${storageRelPath.replace(/\\/g, '/')}`
+      : `/api/files/${fileRecord._id}/download`;
+
+    return {
+      fileId: (fileRecord._id as any).toString(),
+      publicUrl,
+      storageRelPath: storageRelPath.replace(/\\/g, '/')
+    };
+  } catch (error) {
+    console.error('Save audio to NAS error:', error);
+    throw error;
+  }
+}
+
+// 批量生成TTS并保存到NAS
+export async function batchGenerateTTSForCourse(
+  courseOutline: any[],
+  userId: string,
+  ttsConfig: {
+    provider: 'azure' | 'minimax';
+    voiceName?: string;
+    voice_id?: string;
+    speed?: number;
+    rate?: string;
+    language?: string;
+  }
+): Promise<{ [itemKey: string]: { audioUrl: string; duration: number; fileId: string } }> {
+  const results: { [itemKey: string]: { audioUrl: string; duration: number; fileId: string } } = {};
+  
+  try {
+    for (let segmentIndex = 0; segmentIndex < courseOutline.length; segmentIndex++) {
+      const segment = courseOutline[segmentIndex];
+      if (!segment.items) continue;
+
+      for (let itemIndex = 0; itemIndex < segment.items.length; itemIndex++) {
+        const item = segment.items[itemIndex];
+        if (!item.say?.trim()) continue;
+
+        const itemKey = `${segmentIndex}-${itemIndex}`;
+        const text = item.say.trim();
+        
+        try {
+          console.log(`生成TTS: ${itemKey} - ${text.substring(0, 50)}...`);
+          
+          let audioData: Buffer | null = null;
+          let duration = 0;
+
+          if (ttsConfig.provider === 'azure') {
+            const result = await generateTTSWithAzure({
+              text,
+              voiceName: ttsConfig.voiceName || 'zh-CN-XiaoxiaoNeural',
+              language: ttsConfig.language || 'zh-CN',
+              rate: ttsConfig.rate || '+0%'
+            });
+
+            if (result.success && result.audioData) {
+              audioData = result.audioData;
+              duration = result.duration || estimateAudioDuration(text);
+            }
+          } else if (ttsConfig.provider === 'minimax') {
+            // Minimax是异步的，需要等待完成
+            const generateResult = await generateTTSWithMinimax({
+              text,
+              voice_setting: {
+                voice_id: ttsConfig.voice_id || 'female-shaonv',
+                speed: ttsConfig.speed || 1.0
+              }
+            });
+
+            if (generateResult.base_resp?.status_code === 0 && generateResult.task_id) {
+              // 轮询等待完成
+              let attempts = 0;
+              const maxAttempts = 30; // 最多等待5分钟
+              
+              while (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 10000)); // 等待10秒
+                
+                const statusResult = await queryTTSStatus(generateResult.task_id);
+                if (statusResult.status === 'Success' && statusResult.file_id) {
+                  const downloadUrl = await getFileDownloadUrl(statusResult.file_id);
+                  if (downloadUrl) {
+                    // 下载音频数据
+                    const response = await fetch(downloadUrl);
+                    if (response.ok) {
+                      audioData = Buffer.from(await response.arrayBuffer());
+                      duration = estimateAudioDuration(text);
+                    }
+                  }
+                  break;
+                } else if (statusResult.status === 'Failed') {
+                  throw new Error('Minimax TTS generation failed');
+                }
+                attempts++;
+              }
+            }
+          }
+
+          if (audioData) {
+            // 保存到NAS
+            const filename = `course_${itemKey}_${Date.now()}.wav`;
+            const saveResult = await saveAudioToNAS(audioData, filename, userId, 'audio/wav');
+            
+            results[itemKey] = {
+              audioUrl: saveResult.publicUrl,
+              duration: duration,
+              fileId: saveResult.fileId
+            };
+            
+            console.log(`TTS保存成功: ${itemKey} -> ${saveResult.publicUrl}`);
+          } else {
+            console.warn(`TTS生成失败: ${itemKey}`);
+          }
+        } catch (error) {
+          console.error(`TTS生成错误 ${itemKey}:`, error);
+          // 继续处理下一个
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Batch TTS generation error:', error);
+  }
+
+  return results;
 }
