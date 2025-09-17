@@ -190,7 +190,8 @@ export default function PublicCoursePlayer({
           if (viewerControlsRef.current?.stopAutoRotation) {
             viewerControlsRef.current.stopAutoRotation();
           }
-          resolve(audio.duration || item.audioDuration || 3);
+          // 立即解析，不等待额外时间
+          resolve(0); // 返回0表示立即跳转
         };
         
         audio.onerror = (error) => {
@@ -301,7 +302,8 @@ export default function PublicCoursePlayer({
           if (viewerControlsRef.current?.stopAutoRotation) {
             viewerControlsRef.current.stopAutoRotation();
           }
-          resolve(audio.duration || item.audioDuration || 5);
+          // 立即解析，不等待额外时间
+          resolve(0); // 返回0表示立即跳转
         };
         
         audio.onerror = (error) => {
@@ -396,7 +398,8 @@ export default function PublicCoursePlayer({
         
         audio.onended = () => {
           setCurrentSubtitle('');
-          resolve(audio.duration || item.audioDuration || 3);
+          // 立即解析，不等待额外时间
+          resolve(0); // 返回0表示立即跳转
         };
         
         audio.onerror = (error) => {
@@ -564,12 +567,14 @@ export default function PublicCoursePlayer({
   })();
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* 3D查看器 */}
-      <div style={{ width: '100%', height: '100%' }}>
+    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
+      {/* 3D查看器 - 全屏显示 */}
+      <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}>
         <PublicThreeDViewer
           ref={viewerControlsRef}
           coursewareData={courseData?.coursewareData}
+          width={typeof window !== 'undefined' ? window.innerWidth : 1920}
+          height={typeof window !== 'undefined' ? window.innerHeight : 1080}
         />
       </div>
 
@@ -584,7 +589,7 @@ export default function PublicCoursePlayer({
           background: 'rgba(0, 0, 0, 0.8)',
           borderRadius: '8px',
           overflow: 'hidden',
-          zIndex: 100
+          zIndex: 1000
         }}>
           <img 
             src={currentImage.url} 
@@ -621,7 +626,7 @@ export default function PublicCoursePlayer({
           fontSize: '14px',
           maxWidth: '90%',
           textAlign: 'center',
-          zIndex: 200
+          zIndex: 1000
         }}>
           {currentSubtitle}
         </div>

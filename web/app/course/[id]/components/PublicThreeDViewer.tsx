@@ -252,16 +252,16 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     };
 
     const setupLights = (scene: THREE.Scene) => {
-      // 环境光 - 调整以配合渐变背景
+      // 环境光 - 与编辑器完全一致
       const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
       scene.add(ambientLight);
 
-      // 主光源 - 启用阴影投射
+      // 主光源 - 与编辑器完全一致
       const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
       directionalLight.position.set(15, 20, 10);
       directionalLight.castShadow = true;
       
-      // 阴影设置
+      // 阴影设置 - 与编辑器完全一致
       directionalLight.shadow.mapSize.width = 2048;
       directionalLight.shadow.mapSize.height = 2048;
       directionalLight.shadow.camera.near = 0.5;
@@ -274,12 +274,12 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       
       scene.add(directionalLight);
 
-      // 补光源 - 无阴影，增强细节可见性
+      // 补光源 - 与编辑器完全一致
       const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
       fillLight.position.set(-5, 5, -5);
       scene.add(fillLight);
 
-      // 半球光 - 配合渐变背景
+      // 半球光 - 与编辑器完全一致
       const hemisphereLight = new THREE.HemisphereLight(0x555555, 0x333333, 0.4);
       scene.add(hemisphereLight);
     };
@@ -386,113 +386,279 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
     };
 
-    // 构建节点映射
+    // 构建节点映射 - 完全复制编辑器逻辑
     const buildNodeMap = (model: THREE.Object3D) => {
-      const nodeMap = new Map<string, THREE.Object3D>();
+      const map = new Map<string, THREE.Object3D>();
       
       model.traverse((child) => {
+        // 添加name映射
         if (child.name) {
-          nodeMap.set(child.name, child);
-          
-          // 也按路径存储
-          const path = getObjectPath(child);
-          nodeMap.set(path.join('/'), child);
+          map.set(child.name, child);
         }
         
+        // 添加UUID映射
         if (child.uuid) {
-          nodeMap.set(child.uuid, child);
+          map.set(child.uuid, child);
+        }
+        
+        // 生成完整路径（包括UUID前缀）
+        const fullPath = getFullObjectPath(child);
+        if (fullPath) {
+          map.set(fullPath, child);
+        }
+        
+        // 生成名称路径
+        const namePath = getObjectPath(child);
+        if (namePath) {
+          map.set(namePath, child);
         }
       });
       
-      nodeMapRef.current = nodeMap;
-      console.log('节点映射构建完成:', Array.from(nodeMap.keys()));
+      nodeMapRef.current = map;
+      console.log('节点映射构建完成，总数:', map.size);
+      console.log('样例节点键:', Array.from(map.keys()).slice(0, 10));
     };
 
-    // 获取对象路径
-    const getObjectPath = (obj: THREE.Object3D): string[] => {
-      const path: string[] = [];
-      let current: THREE.Object3D | null = obj;
+    // 获取对象名称路径 - 完全复制编辑器逻辑
+    const getObjectPath = (object: THREE.Object3D): string => {
+      const path = [];
+      let current = object;
       
-      while (current && current.name) {
-        path.unshift(current.name);
-        current = current.parent;
+      while (current && current !== modelRootRef.current) {
+        if (current.name) {
+          path.unshift(current.name);
+        }
+        current = current.parent!;
       }
       
-      return path;
+      return path.join('/');
     };
 
-    // 创建标注
+    // 获取完整对象路径 - 完全复制编辑器逻辑
+    const getFullObjectPath = (object: THREE.Object3D): string => {
+      const path = [];
+      let current = object;
+      
+      while (current && current !== modelRootRef.current) {
+        // 使用UUID/name组合格式
+        if (current.uuid && current.name) {
+          path.unshift(`${current.uuid}/${current.name}`);
+        } else if (current.name) {
+          path.unshift(current.name);
+        } else if (current.uuid) {
+          path.unshift(current.uuid);
+        }
+        current = current.parent!;
+      }
+      
+      return path.join('/');
+    };
+
+    // 创建标注 - 完全复制编辑器逻辑
     const createAnnotations = (annotations: any[]) => {
-      annotations.forEach((annotation) => {
-        const annotationGroup = createAnnotation(annotation);
-        if (annotationGroup) {
-          annotationsRef.current.push(annotationGroup);
-          sceneRef.current!.add(annotationGroup);
-          // 默认隐藏标注
-          annotationGroup.visible = false;
+      if (!sceneRef.current) return;
+
+      console.log('创建标注:', annotations.length, '个');
+
+      // 清除旧标注
+      annotationsRef.current.forEach(annotation => {
+        sceneRef.current!.remove(annotation);
+      });
+      annotationsRef.current = [];
+
+      // 创建新标注
+      annotations.forEach((annotation, index) => {
+        console.log(`处理标注 ${index + 1}:`, annotation.title, 'nodeKey:', annotation.nodeKey);
+        
+        // 尝试多种nodeKey匹配方式
+        let targetObject = nodeMapRef.current.get(annotation.nodeKey);
+        
+        // 如果没找到，尝试智能匹配
+        if (!targetObject) {
+          targetObject = findNodeBySmartMatch(annotation.nodeKey);
+        }
+        
+        if (targetObject) {
+          console.log('为对象创建标注:', targetObject.name || targetObject.uuid);
+          const annotationGroup = createAnnotationWithOffset(annotation, targetObject);
+          if (annotationGroup) {
+            annotationGroup.userData.annotationId = annotation.id;
+            annotationGroup.visible = false; // 默认隐藏，等待显示动作触发
+            sceneRef.current!.add(annotationGroup);
+            annotationsRef.current.push(annotationGroup);
+            console.log('标注创建成功（默认隐藏）:', annotation.title);
+          }
+        } else {
+          console.warn('未找到标注目标对象:', annotation.nodeKey);
+          console.log('可用nodeKey:', Array.from(nodeMapRef.current.keys()).slice(0, 10));
         }
       });
+      
+      console.log('标注创建完成，总计:', annotationsRef.current.length, '个');
     };
 
-    // 创建单个标注
-    const createAnnotation = (annotation: any): THREE.Object3D | null => {
+    // 创建带偏移的标注 - 完全复制编辑器逻辑
+    const createAnnotationWithOffset = (annotation: any, targetObject: THREE.Object3D): THREE.Group | null => {
       try {
-        // 创建标注组
-        const group = new THREE.Group();
-        group.userData.annotationId = annotation.id;
-        group.userData.nodeKey = annotation.nodeKey;
+        // 使用三维课件编辑器的完整算法
         
-        // 设置位置
-        if (annotation.position) {
-          group.position.set(
+        // 1. 计算标注点的世界坐标（基于anchor.offset）
+        let anchorWorld: THREE.Vector3;
+        
+        if (annotation.anchor && annotation.anchor.offset) {
+          // 标准格式：使用anchor.offset（局部坐标）
+          const anchorLocal = new THREE.Vector3(
+            annotation.anchor.offset[0],
+            annotation.anchor.offset[1],
+            annotation.anchor.offset[2]
+          );
+          targetObject.updateWorldMatrix(true, true);
+          anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+        } else if (annotation.position) {
+          // 兼容旧格式：直接使用position
+          anchorWorld = new THREE.Vector3(
             annotation.position.x,
             annotation.position.y,
             annotation.position.z
           );
+        } else {
+          // 如果没有偏移信息，计算对象边界框中心点并添加固定偏移
+          const box = new THREE.Box3().setFromObject(targetObject);
+          const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          anchorWorld = center.clone().add(
+            new THREE.Vector3(0, size.y * 0.6, 0) // 向上偏移
+          );
+          console.warn('标注缺少偏移信息，使用默认固定偏移:', annotation.id);
         }
 
-        // 创建标注图标
+        // 2. 计算标签位置（相对标注点偏移）
+        const labelOffset = new THREE.Vector3(0.5, 0.8, 0); // 标签偏移
+        const labelWorld = anchorWorld.clone().add(labelOffset);
+
+        // 创建标注组
+        const annotationGroup = new THREE.Group();
+        annotationGroup.userData.annotationId = annotation.id;
+        annotationGroup.userData.targetKey = annotation.targetKey || annotation.nodeKey;
+        
+        // 1. 创建标注点（蓝色圆点）
+        const pointGeom = new THREE.SphereGeometry(0.012, 16, 16);
+        const pointMat = new THREE.MeshBasicMaterial({ 
+          color: 0x1890ff,
+          depthTest: true,
+          transparent: true,
+          opacity: 1.0
+        });
+        const pointMesh = new THREE.Mesh(pointGeom, pointMat);
+        pointMesh.position.copy(anchorWorld);
+        pointMesh.renderOrder = 0;
+        pointMesh.userData.annotationId = annotation.id;
+        annotationGroup.add(pointMesh);
+        
+        // 2. 创建连接线
+        const lineGeom = new THREE.BufferGeometry().setFromPoints([anchorWorld, labelWorld]);
+        const lineMat = new THREE.LineBasicMaterial({ 
+          color: 0x1890ff,
+          transparent: true,
+          opacity: 0.8,
+          depthTest: true
+        });
+        const line = new THREE.Line(lineGeom, lineMat);
+        annotationGroup.add(line);
+
+        // 3. 创建文字标签
+        const labelSprite = createLabelSprite(annotation);
+        if (labelSprite) {
+          labelSprite.position.copy(labelWorld);
+          annotationGroup.add(labelSprite);
+        }
+
+        console.log('标注创建成功:', {
+          id: annotation.id,
+          title: annotation.title,
+          anchorWorld: anchorWorld.toArray(),
+          labelWorld: labelWorld.toArray()
+        });
+
+        return annotationGroup;
+      } catch (error) {
+        console.error('创建标注失败:', error);
+        return null;
+      }
+    };
+
+    // 创建标签精灵 - 完全复制编辑器逻辑
+    const createLabelSprite = (annotation: any): THREE.Sprite | null => {
+      try {
+        const title = annotation.title || annotation.label?.title || 'Annotation';
+        
+        // 根据文字长度动态计算画布尺寸
+        const measureCanvas = document.createElement('canvas');
+        const measureContext = measureCanvas.getContext('2d')!;
+        measureContext.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
+        const textMetrics = measureContext.measureText(title);
+        
+        const padding = 20;
+        const minWidth = 120;
+        const textWidth = Math.max(minWidth, textMetrics.width + padding * 2);
+        const textHeight = 64;
+        
         const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
+        canvas.width = textWidth;
+        canvas.height = textHeight;
         const context = canvas.getContext('2d')!;
         
-        // 绘制圆形背景
-        context.fillStyle = '#ff6b35';
-        context.beginPath();
-        context.arc(32, 32, 28, 0, Math.PI * 2);
-        context.fill();
-        
-        // 绘制边框
-        context.strokeStyle = '#ffffff';
+        // 绘制背景（圆角矩形）
+        context.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        context.strokeStyle = '#1890ff';
         context.lineWidth = 3;
+        
+        const radius = 8;
+        context.beginPath();
+        context.moveTo(radius, 0);
+        context.arcTo(textWidth, 0, textWidth, textHeight, radius);
+        context.arcTo(textWidth, textHeight, 0, textHeight, radius);
+        context.arcTo(0, textHeight, 0, 0, radius);
+        context.arcTo(0, 0, textWidth, 0, radius);
+        context.closePath();
+        context.fill();
         context.stroke();
         
-        // 绘制问号
-        context.fillStyle = '#ffffff';
-        context.font = 'bold 24px Arial';
+        // 绘制文字
+        context.fillStyle = '#333333';
+        context.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
-        context.fillText('?', 32, 32);
-
+        context.fillText(title, textWidth / 2, textHeight / 2);
+        
         const texture = new THREE.CanvasTexture(canvas);
+        texture.magFilter = THREE.LinearFilter;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        
         const material = new THREE.SpriteMaterial({ 
           map: texture,
           transparent: true,
-          alphaTest: 0.1
+          alphaTest: 0.1,
+          depthTest: true,
+          depthWrite: false
         });
         
         const sprite = new THREE.Sprite(material);
-        sprite.scale.set(1, 1, 1);
+        
+        // 设置缩放和自适应标记
+        const baseScale = 0.4;
+        sprite.scale.set(textWidth * baseScale / 100, textHeight * baseScale / 100, 1);
         sprite.userData.isDistanceScaling = true;
-        sprite.userData.originalScale = { x: 1, y: 1, z: 1 };
+        sprite.userData.originalScale = {
+          x: textWidth * baseScale / 100,
+          y: textHeight * baseScale / 100,
+          z: 1
+        };
+        sprite.renderOrder = 10;
         
-        group.add(sprite);
-        
-        return group;
-        
+        return sprite;
       } catch (error) {
-        console.error('创建标注失败:', error, annotation);
+        console.error('创建标签精灵失败:', error);
         return null;
       }
     };
