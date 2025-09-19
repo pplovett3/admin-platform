@@ -448,3 +448,72 @@ export async function getPublicCourseStats(req: Request, res: Response) {
     res.status(500).json({ message });
   }
 }
+
+// 获取所有发布的课程列表（需要认证）
+export async function listPublishedCourses(req: Request, res: Response) {
+  try {
+    const q = (req.query.q as string) || '';
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const skip = (page - 1) * limit;
+    const user = (req as any).user;
+
+    const filter: any = { status: 'active' }; // 只返回激活的发布课程
+    
+    // 搜索过滤
+    if (q) {
+      filter.$or = [
+        { title: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } }
+      ];
+    }
+
+    // 权限过滤：非超级管理员只能看到自己发布的课程
+    if (user.role !== 'superadmin') {
+      if (!user?.userId || !Types.ObjectId.isValid(user.userId)) {
+        return res.status(401).json({ message: 'Invalid user' });
+      }
+      filter.publishedBy = new Types.ObjectId(user.userId);
+    }
+
+    const [items, total] = await Promise.all([
+      PublishedCourseModel
+        .find(filter)
+        .populate('publishedBy', 'name')
+        .select('_id title description publishConfig publishedAt lastUpdated stats') // 只返回基本信息，不包含完整课程数据
+        .sort({ publishedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      PublishedCourseModel.countDocuments(filter)
+    ]);
+
+    // 格式化返回数据，为Unity客户端提供清晰的结构
+    const formattedItems = items.map((item: any) => ({
+      publishId: item._id,
+      title: item.title,
+      description: item.description,
+      publishedBy: item.publishedBy?.name || 'Unknown',
+      publishedAt: item.publishedAt,
+      lastUpdated: item.lastUpdated,
+      isPublic: item.publishConfig?.isPublic || false,
+      autoPlay: item.publishConfig?.autoPlay || false,
+      viewCount: item.stats?.viewCount || 0
+    }));
+
+    res.json({
+      items: formattedItems,
+      pagination: { 
+        page, 
+        limit, 
+        total, 
+        pages: Math.ceil(total / limit) 
+      }
+    });
+
+  } catch (error) {
+    console.error('List published courses error:', error);
+    const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}

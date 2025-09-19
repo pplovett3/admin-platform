@@ -6,13 +6,17 @@ import {
   updatePublishConfig, 
   unpublishCourse,
   getPublicCourse,
-  getPublicCourseStats
+  getPublicCourseStats,
+  listPublishedCourses
 } from '../controllers/publish.controller';
 
 const router = Router();
 
 // 需要认证的发布管理路由
 router.use('/ai-courses/:courseId/publish', authenticate);
+
+// 发布课程列表 API（需要认证）
+router.get('/published-courses', authenticate, requireRole(['superadmin', 'schoolAdmin', 'teacher']), listPublishedCourses);
 
 // 发布管理 API
 router.post('/ai-courses/:courseId/publish', requireRole(['superadmin', 'schoolAdmin', 'teacher']), publishCourse);
