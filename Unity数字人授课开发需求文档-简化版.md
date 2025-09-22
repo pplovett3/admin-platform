@@ -252,30 +252,46 @@ GET /api/public/course/{publishId}
 | `annotation.hide` | 隐藏指定标注 | `ids[]` |
 | `animation.play` | 播放动画片段 | `animationId`, `startTime`, `endTime`, `blend` |
 
-### 4.4 音频资源清单 (assets.audio)
+### 4.4 资源获取方式
 
+**注意**: 当前API不提供汇总的assets清单，需要遍历课程步骤来收集资源。
+
+#### 4.4.1 音频资源获取
 ```json
+// 遍历每个步骤获取音频
 {
-  "assets": {
-    "audio": [
-      {
-        "id": "aud-1",
-        "url": "https://dl.yf-xr.com/audio/seg-1_item-1_ab12.mp3",
-        "hash": "ab12...",
-        "sr": 24000,
-        "codec": "mp3",
-        "duration": 6.2
-      }
-    ],
-    "images": [
-      {
-        "id": "img-1",
-        "src": "https://dl.yf-xr.com/images/engine-detail.jpg",
-        "title": "发动机结构图",
-        "license": "CC BY 4.0",
-        "sourceUrl": "https://site"
-      }
-    ]
+  "outline": [
+    {
+      "items": [
+        {
+          "audioUrl": "https://dl.yf-xr.com/tts/用户ID/年月/哈希值.wav",
+          "audioDuration": 14800  // 毫秒
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### 4.4.2 图片资源获取
+```json
+// 遍历image.explain类型步骤获取图片
+{
+  "type": "image.explain",
+  "image": {
+    "src": "http://example.com/image.jpg",
+    "title": "图片标题",
+    "source": {"url": "来源网站", "license": "许可证"}
+  }
+}
+```
+
+#### 4.4.3 3D模型资源
+```json
+// 在coursewareData中获取
+{
+  "coursewareData": {
+    "modelUrl": "https://dl.yf-xr.com/modifiedModels/.../模型文件.glb"
   }
 }
 ```

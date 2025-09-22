@@ -604,6 +604,24 @@ export async function getAzureVoices(): Promise<AzureVoice[]> {
   }
 }
 
+// Azure TTS 推荐的Unity兼容格式
+export const AZURE_TTS_FORMATS = {
+  // MP3格式 - 文件小，广泛兼容
+  'mp3-standard': 'audio-24khz-48kbitrate-mono-mp3',
+  'mp3-high': 'audio-24khz-96kbitrate-mono-mp3',
+  'mp3-stereo': 'audio-24khz-48kbitrate-stereo-mp3',
+  
+  // WAV格式 - 无损，Unity最佳兼容
+  'wav-mono': 'riff-24khz-16bit-mono-pcm',
+  'wav-stereo': 'riff-24khz-16bit-stereo-pcm',
+  
+  // 高质量格式
+  'wav-high': 'riff-48khz-16bit-mono-pcm',
+  
+  // 旧格式（不推荐）
+  'mp3-low': 'audio-16khz-32kbitrate-mono-mp3'
+} as const;
+
 // Azure TTS 文本转语音（同步API）
 export async function generateTTSWithAzure(params: AzureTTSParams): Promise<AzureTTSResult> {
   try {
@@ -638,7 +656,7 @@ export async function generateTTSWithAzure(params: AzureTTSParams): Promise<Azur
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/ssml+xml',
-          'X-Microsoft-OutputFormat': params.outputFormat || 'audio-16khz-32kbitrate-mono-mp3',
+          'X-Microsoft-OutputFormat': params.outputFormat || AZURE_TTS_FORMATS['mp3-standard'],
           'User-Agent': 'CoursewareEditor'
         },
         body: ssml
@@ -798,7 +816,8 @@ export async function batchGenerateTTSForCourse(
               text,
               voiceName: ttsConfig.voiceName || 'zh-CN-XiaoxiaoNeural',
               language: ttsConfig.language || 'zh-CN',
-              rate: ttsConfig.rate || '+0%'
+              rate: ttsConfig.rate || '+0%',
+              outputFormat: AZURE_TTS_FORMATS['wav-mono'] // 使用WAV格式确保Unity兼容性
             });
 
             if (result.success && result.audioData) {

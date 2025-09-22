@@ -81,6 +81,7 @@ git pull
 
 # 2) 后端更新与重启
 cd C:\admin-platform\server
+nssm set AdminPlatform-API AppEnvironmentExtra "PORT=4000;MONGODB_URI=mongodb://127.0.0.1:27017/admin_platform;JWT_SECRET=dev_secret_change_me;SEED_DEFAULT_ADMIN=false;STORAGE_ROOT=Y:\metaclassroom"
 npm ci
 npm run build
 nssm start AdminPlatform-API
@@ -243,3 +244,27 @@ nssm set AdminPlatform-API AppEnvironmentExtra "PORT=4000;MONGODB_URI=mongodb://
 nssm set AdminPlatform-API AppStdout C:\admin-platform\server\run-server.out.log
 nssm set AdminPlatform-API AppStderr C:\admin-platform\server\run-server.err.log
 nssm set AdminPlatform-API AppRotateFiles 1
+
+
+
+
+deepseek api key:sk-a5cc44206c5d411cbb633cd73a6c8bd0
+秘塔api key:mk-53C55DF41C6C448FD0BA54190CDA2A2F
+DEEPSEEK_API_KEY=sk-a5cc44206c5d411cbb633cd73a6c8bd0
+METASO_API_KEY=mk-53C55DF41C6C448FD0BA54190CDA2A2F
+
+
+
+
+nas 盘 XY切换
+# 停止服务
+nssm stop AdminPlatform-API
+
+# 设置包含 STORAGE_ROOT 的完整环境变量
+nssm set AdminPlatform-API AppEnvironmentExtra "PORT=4000;MONGODB_URI=mongodb://127.0.0.1:27017/admin_platform;JWT_SECRET=dev_secret_change_me;SEED_DEFAULT_ADMIN=false;STORAGE_ROOT=X:\metaclassroom"
+
+# 启动服务
+nssm start AdminPlatform-API
+
+# 检查服务状态
+nssm status AdminPlatform-API
