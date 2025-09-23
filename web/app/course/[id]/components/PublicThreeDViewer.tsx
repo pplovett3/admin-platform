@@ -44,7 +44,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     type MaterialBackup = {
       emissive?: THREE.Color;
       emissiveIntensity?: number;
-      originalMaterials?: any | any[];
     };
     const materialBackupRef = useRef<WeakMap<any, MaterialBackup>>(new WeakMap());
     const highlightedMatsRef = useRef<Set<any>>(new Set());
@@ -987,64 +986,39 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
     };
 
-    // 清除自发光高亮（恢复原始材质）
+    // 清除自发光高亮（与编辑器完全一致）
     const clearEmissiveHighlight = () => {
-      for (const mesh of Array.from(highlightedMatsRef.current)) {
-        const backup = materialBackupRef.current.get(mesh);
-        if (backup && backup.originalMaterials) {
-          // 恢复原始材质
-          const originalMats = backup.originalMaterials;
-          (mesh as any).material = originalMats.length === 1 ? originalMats[0] : originalMats;
-          console.log('🧹 恢复原始材质:', (mesh as any).name || (mesh as any).uuid);
+      for (const m of Array.from(highlightedMatsRef.current)) {
+        const backup = materialBackupRef.current.get(m);
+        if (backup) {
+          if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
+          if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
         }
-        // 删除WeakMap中的条目
-        materialBackupRef.current.delete(mesh);
       }
       highlightedMatsRef.current.clear();
     };
 
-    // 应用自发光高亮（克隆材质避免影响其他对象）
+    // 应用自发光高亮（与编辑器完全一致）
     const applyEmissiveHighlight = (obj: THREE.Object3D) => {
       clearEmissiveHighlight();
-      console.log('🎨 开始应用高亮到对象:', obj.name || obj.uuid);
-      
-      // 【修复】克隆材质，避免共享材质导致其他对象也被高亮
       obj.traverse((o: THREE.Object3D) => {
         const mesh = o as any;
         if (mesh.material) {
-          const originalMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          
-          // 为当前对象创建材质副本
-          const clonedMaterials = originalMaterials.map((mat: any) => {
-            const clonedMat = mat.clone();
-            
-            // 备份原始材质到对象上
-            if (!materialBackupRef.current.has(mesh)) {
-              materialBackupRef.current.set(mesh, { 
-                originalMaterials: originalMaterials,
-                mesh: mesh // 记录网格对象
-              });
-            }
-            
-            // 应用高亮效果到克隆材质
-            if (clonedMat.emissive) {
-              clonedMat.emissive.set(0x22d3ee); // 青色高亮
-            }
-            if ('emissiveIntensity' in clonedMat) {
-              clonedMat.emissiveIntensity = Math.max(clonedMat.emissiveIntensity || 0.2, 0.6);
-            }
-            
-            console.log('🎨 克隆并高亮材质:', clonedMat.name || clonedMat.uuid);
-            return clonedMat;
+          const materials: any[] = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach((mat: any) => {
+            const backup = { 
+              emissive: (mat.emissive ? mat.emissive.clone() : undefined), 
+              emissiveIntensity: mat.emissiveIntensity 
+            };
+            materialBackupRef.current.set(mat, backup);
+            try {
+              if (mat.emissive) mat.emissive.set(0x22d3ee);
+              if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+              highlightedMatsRef.current.add(mat);
+            } catch {}
           });
-          
-          // 应用克隆的高亮材质
-          mesh.material = clonedMaterials.length === 1 ? clonedMaterials[0] : clonedMaterials;
-          highlightedMatsRef.current.add(mesh); // 记录网格对象而不是材质
         }
       });
-      
-      console.log('🎨 高亮应用完成，总计对象数:', highlightedMatsRef.current.size);
     };
 
     // 高亮节点 - 使用编辑器相同的自发光效果
