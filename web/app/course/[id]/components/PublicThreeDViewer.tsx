@@ -41,11 +41,16 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const animationsRef = useRef<THREE.AnimationClip[]>([]);
     const nodeMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
     const annotationsRef = useRef<THREE.Object3D[]>([]);
-    const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
+    type MaterialBackup = {
+      emissive?: THREE.Color;
+      emissiveIntensity?: number;
+      originalMaterials?: any | any[];
+    };
+    const materialBackupRef = useRef<WeakMap<any, MaterialBackup>>(new WeakMap());
     const highlightedMatsRef = useRef<Set<any>>(new Set());
     const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
     const autoRotationRef = useRef<boolean>(false);
-    const rotationSpeedRef = useRef<number>(0.0015); // 降低70%：0.005 * 0.3 = 0.0015
+    const rotationSpeedRef = useRef<number>(0.0006); // 再降低速度（更慢）
     const cameraAnimationRef = useRef<any>(null);
     
     const [loading, setLoading] = useState(false);
@@ -525,25 +530,15 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           );
           targetObject.updateWorldMatrix(true, true);
           anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
-          
-          // 【修复】考虑模型根节点的坐标偏移
-          if (modelRootRef.current) {
-            modelRootRef.current.updateWorldMatrix(true, true);
-            const rootPosition = new THREE.Vector3();
-            modelRootRef.current.matrixWorld.decompose(rootPosition, new THREE.Quaternion(), new THREE.Vector3());
-            // 如果根节点不在原点，添加根节点的位置偏移
-            if (rootPosition.length() > 0.001) {
-              console.log('检测到模型根节点偏移:', rootPosition.toArray(), '为标注添加根节点偏移');
-              anchorWorld.add(rootPosition);
-            }
-          }
         } else if (annotation.position) {
-          // 兼容格式：直接使用position
-          anchorWorld = new THREE.Vector3(
+          // 兼容格式：与编辑器一致，按局部坐标乘以目标世界矩阵
+          const posLocal = new THREE.Vector3(
             annotation.position.x || annotation.position[0], 
             annotation.position.y || annotation.position[1], 
             annotation.position.z || annotation.position[2]
           );
+          targetObject.updateWorldMatrix(true, true);
+          anchorWorld = posLocal.clone().applyMatrix4(targetObject.matrixWorld);
         } else {
           // 如果没有偏移信息，计算对象边界框中心点并添加固定偏移
           const box = new THREE.Box3().setFromObject(targetObject);
@@ -883,39 +878,48 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
     };
 
-    // 清除自发光高亮
+    // 清除自发光高亮（兼容对象或材质备份）
     const clearEmissiveHighlight = () => {
-      for (const m of Array.from(highlightedMatsRef.current)) {
-        const backup = materialBackupRef.current.get(m);
-        if (backup) {
-          if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
-          if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
+      for (const item of Array.from(highlightedMatsRef.current)) {
+        const backup = materialBackupRef.current.get(item as any);
+        if (backup && backup.originalMaterials) {
+          try {
+            const originals = backup.originalMaterials;
+            (item as any).material = Array.isArray(originals) && originals.length === 1 ? originals[0] : originals;
+            continue;
+          } catch {}
+        }
+        const mat = item as any;
+        const matBackup = materialBackupRef.current.get(mat);
+        if (matBackup) {
+          if ('emissive' in mat && matBackup.emissive) mat.emissive.copy(matBackup.emissive);
+          if ('emissiveIntensity' in mat && typeof matBackup.emissiveIntensity === 'number') mat.emissiveIntensity = matBackup.emissiveIntensity;
         }
       }
       highlightedMatsRef.current.clear();
     };
 
-    // 应用自发光高亮
+    // 应用自发光高亮（克隆材质避免串色，只作用于当前对象）
     const applyEmissiveHighlight = (obj: THREE.Object3D) => {
       clearEmissiveHighlight();
-      obj.traverse(o => {
-        if ((o as any).material) {
-          const mats = Array.isArray((o as any).material) ? (o as any).material : [(o as any).material];
-          mats.forEach((mat: any) => {
-            try {
-              if (!materialBackupRef.current.has(mat)) {
-                materialBackupRef.current.set(mat, { 
-                  emissive: mat.emissive ? mat.emissive.clone() : undefined, 
-                  emissiveIntensity: mat.emissiveIntensity 
-                });
-              }
-              if (mat.emissive) mat.emissive.set(0x22d3ee); // 青色高亮
-              if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
-              highlightedMatsRef.current.add(mat);
-            } catch {}
-          });
-        }
-      });
+      if ((obj as any).material) {
+        const mats = Array.isArray((obj as any).material) ? (obj as any).material : [(obj as any).material];
+        const clonedMats = mats.map((mat: any) => {
+          const cloned = mat.clone();
+          if (!materialBackupRef.current.has(obj)) {
+            materialBackupRef.current.set(obj, {
+              originalMaterials: mats,
+              emissive: mat.emissive ? mat.emissive.clone() : undefined,
+              emissiveIntensity: mat.emissiveIntensity,
+            });
+          }
+          if (cloned.emissive) cloned.emissive.set(0x22d3ee);
+          if ('emissiveIntensity' in cloned) cloned.emissiveIntensity = Math.max(cloned.emissiveIntensity || 0.2, 0.6);
+          return cloned;
+        });
+        (obj as any).material = clonedMats.length === 1 ? clonedMats[0] : clonedMats;
+        highlightedMatsRef.current.add(obj);
+      }
     };
 
     // 高亮节点 - 使用编辑器相同的自发光效果
