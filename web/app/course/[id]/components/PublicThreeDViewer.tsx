@@ -234,6 +234,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         // 标注缩放更新
         updateAnnotationScaling();
         
+        // 标注位置更新（跟随模型自转）
+        updateAnnotationPositions();
+        
         // 相机动画更新
         if (cameraAnimationRef.current) {
           cameraAnimationRef.current.update();
@@ -323,6 +326,103 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             }
           }
         });
+      });
+    };
+
+    // 【新增】更新标注位置（跟随模型自转）
+    const updateAnnotationPositions = () => {
+      if (!modelRootRef.current) return;
+      
+      annotationsRef.current.forEach(annotationGroup => {
+        const annotationData = annotationGroup.userData.annotationData;
+        const targetKey = annotationGroup.userData.targetKey;
+        
+        if (!annotationData || !targetKey) return;
+        
+        // 找到目标对象
+        const targetObject = nodeMapRef.current.get(targetKey);
+        if (!targetObject) return;
+        
+        try {
+          // 重新计算标注点的世界坐标
+          let anchorWorld: THREE.Vector3;
+          
+          if (annotationData.anchor && annotationData.anchor.offset) {
+            const anchorLocal = new THREE.Vector3(
+              annotationData.anchor.offset[0],
+              annotationData.anchor.offset[1],
+              annotationData.anchor.offset[2]
+            );
+            targetObject.updateWorldMatrix(true, true);
+            anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
+          } else if (annotationData.position) {
+            const posLocal = new THREE.Vector3(
+              annotationData.position.x || annotationData.position[0], 
+              annotationData.position.y || annotationData.position[1], 
+              annotationData.position.z || annotationData.position[2]
+            );
+            targetObject.updateWorldMatrix(true, true);
+            anchorWorld = posLocal.clone().applyMatrix4(targetObject.matrixWorld);
+          } else {
+            return; // 没有位置信息，跳过更新
+          }
+          
+          // 重新计算标签位置
+          let labelWorld: THREE.Vector3;
+          
+          if (annotationData.label && annotationData.label.offset) {
+            if (annotationData.label.offsetSpace === 'local') {
+              const offsetLocal = new THREE.Vector3(
+                annotationData.label.offset[0],
+                annotationData.label.offset[1],
+                annotationData.label.offset[2]
+              );
+              const pos = new THREE.Vector3();
+              const quat = new THREE.Quaternion();
+              const scl = new THREE.Vector3();
+              targetObject.matrixWorld.decompose(pos, quat, scl);
+              const offsetWorld = offsetLocal.clone().applyQuaternion(quat);
+              labelWorld = anchorWorld.clone().add(offsetWorld);
+            } else {
+              labelWorld = new THREE.Vector3(
+                anchorWorld.x + annotationData.label.offset[0],
+                anchorWorld.y + annotationData.label.offset[1], 
+                anchorWorld.z + annotationData.label.offset[2]
+              );
+            }
+          } else if (annotationData.labelOffset) {
+            labelWorld = anchorWorld.clone().add(new THREE.Vector3(
+              annotationData.labelOffset.x || 0,
+              annotationData.labelOffset.y || 0,
+              annotationData.labelOffset.z || 0
+            ));
+          } else {
+            labelWorld = new THREE.Vector3(
+              anchorWorld.x + 0.2,
+              anchorWorld.y + 0.1,
+              anchorWorld.z + 0.0
+            );
+          }
+          
+          // 更新标注组中各个元素的位置
+          annotationGroup.traverse((child) => {
+            if (child instanceof THREE.Mesh && child.userData.annotationId) {
+              // 更新标注点位置
+              child.position.copy(anchorWorld);
+            } else if (child instanceof THREE.Line) {
+              // 更新连接线
+              const lineGeom = new THREE.BufferGeometry().setFromPoints([anchorWorld, labelWorld]);
+              child.geometry.dispose();
+              child.geometry = lineGeom;
+            } else if (child instanceof THREE.Sprite) {
+              // 更新标签位置
+              child.position.copy(labelWorld);
+            }
+          });
+          
+        } catch (error) {
+          // 静默处理错误，避免影响渲染
+        }
       });
     };
 
@@ -599,6 +699,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         const annotationGroup = new THREE.Group();
         annotationGroup.userData.annotationId = annotation.id;
         annotationGroup.userData.targetKey = annotation.targetKey || annotation.nodeKey;
+        annotationGroup.userData.annotationData = annotation; // 保存原始数据用于实时更新
         
         // 1. 创建标注点（蓝色圆点）
         const pointGeom = new THREE.SphereGeometry(0.012, 16, 16);
@@ -915,33 +1016,40 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 高亮节点 - 使用编辑器相同的自发光效果
     const highlightNode = (nodeKey: string, highlight: boolean) => {
-      console.log('设置高亮:', nodeKey, highlight);
+      console.log('🔆 发布页设置高亮:', nodeKey, highlight);
       
       let targetObject = nodeMapRef.current.get(nodeKey);
       if (!targetObject) {
         targetObject = findNodeBySmartMatch(nodeKey);
+        console.log('🔍 智能匹配结果:', targetObject?.name || targetObject?.uuid || 'null');
       }
       
       if (!targetObject) {
-        console.warn('未找到要高亮的节点:', nodeKey);
+        console.warn('❌ 发布页未找到要高亮的节点:', nodeKey);
+        console.log('📋 可用节点:', Array.from(nodeMapRef.current.keys()).slice(0, 10));
         return;
       }
+
+      console.log('🎯 发布页找到目标对象:', targetObject.name || targetObject.uuid);
 
       if (highlight) {
         // 清除之前的高亮
         clearEmissiveHighlight();
         
         // 应用自发光高亮（使用三维课件编辑器的算法）
+        console.log('✨ 发布页应用高亮效果');
         applyEmissiveHighlight(targetObject);
         
         // 同时使用轮廓高亮
         if (outlineRef.current) {
           outlineRef.current.selectedObjects = [targetObject];
+          console.log('🟡 发布页设置轮廓高亮');
         }
         
-        console.log('已高亮节点:', targetObject.name || targetObject.uuid);
+        console.log('✅ 发布页已高亮节点:', targetObject.name || targetObject.uuid);
       } else {
         // 清除高亮
+        console.log('🧹 发布页清除高亮');
         clearEmissiveHighlight();
         if (outlineRef.current) {
           outlineRef.current.selectedObjects = [];
