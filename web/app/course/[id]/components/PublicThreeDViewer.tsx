@@ -45,7 +45,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const highlightedMatsRef = useRef<Set<any>>(new Set());
     const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
     const autoRotationRef = useRef<boolean>(false);
-    const rotationSpeedRef = useRef<number>(0.005);
+    const rotationSpeedRef = useRef<number>(0.0015); // 降低70%：0.005 * 0.3 = 0.0015
     const cameraAnimationRef = useRef<any>(null);
     
     const [loading, setLoading] = useState(false);

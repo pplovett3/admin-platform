@@ -782,17 +782,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         targetObject.updateWorldMatrix(true, true);
         anchorWorld = anchorLocal.clone().applyMatrix4(targetObject.matrixWorld);
         
-        // 【修复】考虑模型根节点的坐标偏移
-        if (modelRootRef.current) {
-          modelRootRef.current.updateWorldMatrix(true, true);
-          const rootPosition = new THREE.Vector3();
-          modelRootRef.current.matrixWorld.decompose(rootPosition, new THREE.Quaternion(), new THREE.Vector3());
-          // 如果根节点不在原点，添加根节点的位置偏移
-          if (rootPosition.length() > 0.001) {
-            console.log('检测到模型根节点偏移:', rootPosition.toArray(), '为标注添加根节点偏移');
-            anchorWorld.add(rootPosition);
-          }
-        }
+        // 【修复】移除根节点偏移逻辑，与三维编辑器保持一致
+        // 标注位置应该基于目标对象的世界矩阵，不需要额外的根节点偏移
+        console.log('标注位置计算 - anchor.offset:', annotation.anchor.offset, '世界位置:', anchorWorld.toArray());
       } else if (annotation.position) {
         // 兼容格式：直接使用position
         anchorWorld = new THREE.Vector3(
@@ -801,15 +793,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
           annotation.position.z || annotation.position[2]
         );
         
-        // 【修复】为兼容格式也添加根节点偏移
-        if (modelRootRef.current) {
-          modelRootRef.current.updateWorldMatrix(true, true);
-          const rootPosition = new THREE.Vector3();
-          modelRootRef.current.matrixWorld.decompose(rootPosition, new THREE.Quaternion(), new THREE.Vector3());
-          if (rootPosition.length() > 0.001) {
-            anchorWorld.add(rootPosition);
-          }
-        }
+        // 【修复】移除兼容格式的根节点偏移，保持与三维编辑器一致
+        console.log('标注位置计算 - position:', annotation.position, '世界位置:', anchorWorld.toArray());
       } else {
         // 默认：使用对象中心
         const box = new THREE.Box3().setFromObject(targetObject);
@@ -1082,27 +1067,32 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     highlightedMatsRef.current.clear();
   };
 
-  // 应用自发光高亮
+  // 应用自发光高亮 - 只高亮当前对象，不遍历子对象
   const applyEmissiveHighlight = (obj: THREE.Object3D) => {
     clearEmissiveHighlight();
-    obj.traverse(o => {
-      if ((o as any).material) {
-        const mats = Array.isArray((o as any).material) ? (o as any).material : [(o as any).material];
-        mats.forEach((mat: any) => {
-          try {
-            if (!materialBackupRef.current.has(mat)) {
-              materialBackupRef.current.set(mat, { 
-                emissive: mat.emissive ? mat.emissive.clone() : undefined, 
-                emissiveIntensity: mat.emissiveIntensity 
-              });
-            }
-            if (mat.emissive) mat.emissive.set(0x22d3ee); // 青色高亮
-            if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
-            highlightedMatsRef.current.add(mat);
-          } catch {}
-        });
-      }
-    });
+    
+    // 【修复】只高亮当前对象，不使用traverse避免子对象也被高亮
+    if ((obj as any).material) {
+      const mats = Array.isArray((obj as any).material) ? (obj as any).material : [(obj as any).material];
+      mats.forEach((mat: any) => {
+        try {
+          if (!materialBackupRef.current.has(mat)) {
+            materialBackupRef.current.set(mat, { 
+              emissive: mat.emissive ? mat.emissive.clone() : undefined, 
+              emissiveIntensity: mat.emissiveIntensity 
+            });
+          }
+          if (mat.emissive) mat.emissive.set(0x22d3ee); // 青色高亮
+          if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+          highlightedMatsRef.current.add(mat);
+          console.log('高亮材质:', mat.name || mat.uuid);
+        } catch (error) {
+          console.warn('高亮材质失败:', error);
+        }
+      });
+    } else {
+      console.log('选中的对象没有材质，只使用轮廓高亮');
+    }
   };
 
   // 公开的控制方法
