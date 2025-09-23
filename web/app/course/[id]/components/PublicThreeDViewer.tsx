@@ -572,7 +572,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             const quat = new THREE.Quaternion();
             const scl = new THREE.Vector3();
             targetObject.matrixWorld.decompose(pos, quat, scl);
-            const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
+            // 仅应用旋转，忽略缩放，避免非均匀缩放导致偏移接近 0
+            const offsetWorld = offsetLocal.clone().applyQuaternion(quat);
             labelWorld = anchorWorld.clone().add(offsetWorld);
           } else {
             // 旧数据：世界偏移

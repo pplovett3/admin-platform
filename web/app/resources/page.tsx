@@ -34,7 +34,24 @@ export default function ResourcesPage() {
         const lower = raw.toLowerCase();
         if (!(lower.endsWith('.glb') || lower.includes('.glb?'))) return null;
         const viewerSrc = raw; // 直接使用直链：video.yf-xr.com 或 dl.yf-xr.com
-        return <Button icon={<EyeOutlined/>} onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(viewerSrc)}`,'_blank')}>查看</Button>;
+        return (
+          <Space>
+            <Button 
+              icon={<EyeOutlined/>} 
+              onClick={()=> window.open(`/resources/viewer/model?src=${encodeURIComponent(viewerSrc)}`,'_blank')}
+            >
+              查看
+            </Button>
+            <Button 
+              size="small" 
+              type="link"
+              onClick={()=> window.open('https://github.khronos.org/glTF-Validator/', '_blank')}
+              title="如果模型无法正常显示，建议使用此工具验证GLB文件"
+            >
+              验证GLB
+            </Button>
+          </Space>
+        );
       })()}
       <Button icon={<DownloadOutlined/>} onClick={()=>authDownload(r.downloadUrl, r.originalName)}>下载</Button>
       <Popconfirm title="确定删除该文件吗？" onConfirm={()=>onDelete(r)}>

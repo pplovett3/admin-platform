@@ -81,7 +81,7 @@ git pull
 
 # 2) 后端更新与重启
 cd C:\admin-platform\server
-nssm set AdminPlatform-API AppEnvironmentExtra "PORT=4000;MONGODB_URI=mongodb://127.0.0.1:27017/admin_platform;JWT_SECRET=dev_secret_change_me;SEED_DEFAULT_ADMIN=false;STORAGE_ROOT=Y:\metaclassroom"
+nssm set AdminPlatform-API AppEnvironmentExtra "PORT=4000;MONGODB_URI=mongodb://127.0.0.1:27017/admin_platform;JWT_SECRET=dev_secret_change_me;SEED_DEFAULT_ADMIN=false;STORAGE_ROOT=X:\metaclassroom"
 npm ci
 npm run build
 nssm start AdminPlatform-API

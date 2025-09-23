@@ -827,12 +827,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
             annotation.label.offset[1], 
             annotation.label.offset[2]
           );
-          // 将局部向量变换到世界（考虑旋转与缩放）
+          // 仅应用旋转，忽略缩放，避免非均匀缩放导致偏移接近 0
           const pos = new THREE.Vector3();
           const quat = new THREE.Quaternion();
           const scl = new THREE.Vector3();
           targetObject.matrixWorld.decompose(pos, quat, scl);
-          const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
+          const offsetWorld = offsetLocal.clone().applyQuaternion(quat);
           labelWorld = anchorWorld.clone().add(offsetWorld);
         } else {
           // 旧数据：世界偏移

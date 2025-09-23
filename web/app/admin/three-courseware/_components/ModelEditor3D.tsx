@@ -2685,12 +2685,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // 根据偏移的坐标系生成世界位置
         if (a.label.offsetSpace === 'local') {
           const offsetLocal = new THREE.Vector3(a.label.offset[0], a.label.offset[1], a.label.offset[2]);
-          // 将局部向量变换到世界（考虑旋转与缩放）
+          // 将局部向量仅应用旋转到世界，忽略缩放，避免被非均匀缩放压扁
           const pos = new THREE.Vector3();
           const quat = new THREE.Quaternion();
           const scl = new THREE.Vector3();
           target.matrixWorld.decompose(pos, quat, scl);
-          const offsetWorld = offsetLocal.clone().multiply(scl).applyQuaternion(quat);
+          const offsetWorld = offsetLocal.clone().applyQuaternion(quat);
           labelPos = world.clone().add(offsetWorld);
         } else {
           // 旧数据：世界偏移
