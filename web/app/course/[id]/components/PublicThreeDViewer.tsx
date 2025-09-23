@@ -339,9 +339,17 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         
         if (!annotationData || !targetKey) return;
         
-        // 找到目标对象
-        const targetObject = nodeMapRef.current.get(targetKey);
-        if (!targetObject) return;
+        // 找到目标对象（使用智能匹配）
+        let targetObject = nodeMapRef.current.get(targetKey);
+        if (!targetObject) {
+          targetObject = findNodeBySmartMatch(targetKey);
+        }
+        if (!targetObject) {
+          console.warn('🔴 标注更新：找不到目标对象', targetKey);
+          return;
+        }
+        
+        console.log('🔄 标注位置更新:', annotationData.id, '目标:', targetObject.name || targetObject.uuid);
         
         try {
           // 重新计算标注点的世界坐标
@@ -994,24 +1002,47 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     // 应用自发光高亮（与编辑器完全一致）
     const applyEmissiveHighlight = (obj: THREE.Object3D) => {
       clearEmissiveHighlight();
+      console.log('🎨 开始应用高亮到对象:', obj.name || obj.uuid);
+      
       obj.traverse((o: THREE.Object3D) => {
         const mesh = o as any;
         if (mesh.material) {
           const materials: any[] = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          console.log('🎨 找到材质数量:', materials.length);
+          
           materials.forEach((mat: any) => {
             try {
+              console.log('🎨 处理材质:', mat.name || mat.uuid, '类型:', mat.type);
+              
               const backup = { 
                 emissive: mat.emissive ? mat.emissive.clone() : undefined, 
                 emissiveIntensity: mat.emissiveIntensity 
               };
               materialBackupRef.current.set(mat, backup);
-              if (mat.emissive) mat.emissive.set(0x22d3ee);
-              if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+              
+              if (mat.emissive) {
+                console.log('🎨 设置自发光颜色: 原始', mat.emissive.getHex().toString(16), '-> 新', '22d3ee');
+                mat.emissive.set(0x22d3ee);
+              }
+              if ('emissiveIntensity' in mat) {
+                const oldIntensity = mat.emissiveIntensity;
+                mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+                console.log('🎨 设置自发光强度:', oldIntensity, '->', mat.emissiveIntensity);
+              }
+              
+              // 强制材质更新
+              mat.needsUpdate = true;
+              
               highlightedMatsRef.current.add(mat);
-            } catch {}
+              console.log('✅ 材质高亮设置完成');
+            } catch (error) {
+              console.error('❌ 材质高亮设置失败:', error);
+            }
           });
         }
       });
+      
+      console.log('🎨 高亮应用完成，总计材质数:', highlightedMatsRef.current.size);
     };
 
     // 高亮节点 - 使用编辑器相同的自发光效果
