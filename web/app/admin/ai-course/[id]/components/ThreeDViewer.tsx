@@ -10,6 +10,14 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { getToken } from '@/app/_lib/api';
 
+// 记录材质/对象的高亮前状态
+type MaterialBackup = {
+  emissive?: THREE.Color;
+  emissiveIntensity?: number;
+  // 当对对象进行高亮时，缓存其原始材质（单个或数组）
+  originalMaterials?: any | any[];
+};
+
 interface ThreeDViewerProps {
   coursewareData?: any;
   width?: number;
@@ -31,7 +39,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const animationsRef = useRef<THREE.AnimationClip[]>([]);
   const nodeMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const annotationsRef = useRef<THREE.Object3D[]>([]);
-  const materialBackupRef = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
+  const materialBackupRef = useRef<WeakMap<any, MaterialBackup>>(new WeakMap());
   const highlightedMatsRef = useRef<Set<any>>(new Set());
   const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
   const autoRotationRef = useRef<boolean>(false);
@@ -786,15 +794,16 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         // 标注位置应该基于目标对象的世界矩阵，不需要额外的根节点偏移
         console.log('标注位置计算 - anchor.offset:', annotation.anchor.offset, '世界位置:', anchorWorld.toArray());
       } else if (annotation.position) {
-        // 兼容格式：直接使用position
-        anchorWorld = new THREE.Vector3(
+        // 兼容格式：应用与三维编辑器相同的变换逻辑
+        const posLocal = new THREE.Vector3(
           annotation.position.x || annotation.position[0], 
           annotation.position.y || annotation.position[1], 
           annotation.position.z || annotation.position[2]
         );
+        targetObject.updateWorldMatrix(true, true);
+        anchorWorld = posLocal.clone().applyMatrix4(targetObject.matrixWorld);
         
-        // 【修复】移除兼容格式的根节点偏移，保持与三维编辑器一致
-        console.log('标注位置计算 - position:', annotation.position, '世界位置:', anchorWorld.toArray());
+        console.log('标注位置计算 - position:', annotation.position, '局部位置:', posLocal.toArray(), '世界位置:', anchorWorld.toArray());
       } else {
         // 默认：使用对象中心
         const box = new THREE.Box3().setFromObject(targetObject);
@@ -1057,39 +1066,63 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   // 清除自发光高亮
   const clearEmissiveHighlight = () => {
-    for (const m of Array.from(highlightedMatsRef.current)) {
-      const backup = materialBackupRef.current.get(m);
-      if (backup) {
-        if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
-        if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
+    // 兼容两种记录方式：
+    // 1) 记录的是对象（obj），需要恢复其 originalMaterials
+    // 2) 旧逻辑记录的是材质（mat），需要恢复发光参数
+    for (const item of Array.from(highlightedMatsRef.current)) {
+      const backup = materialBackupRef.current.get(item as any);
+
+      // 优先：如果备份了原始材质数组，则恢复
+      if (backup && (backup as any).originalMaterials) {
+        try {
+          const originals = (backup as any).originalMaterials;
+          (item as any).material = Array.isArray(originals) && originals.length === 1 ? originals[0] : originals;
+          continue;
+        } catch {}
+      }
+
+      // 兼容：如果记录的是材质，恢复其发光参数
+      const mat = item as any;
+      const matBackup = materialBackupRef.current.get(mat);
+      if (matBackup) {
+        if ('emissive' in mat && matBackup.emissive) mat.emissive.copy(matBackup.emissive);
+        if ('emissiveIntensity' in mat && typeof matBackup.emissiveIntensity === 'number') mat.emissiveIntensity = matBackup.emissiveIntensity;
       }
     }
     highlightedMatsRef.current.clear();
   };
 
-  // 应用自发光高亮 - 只高亮当前对象，不遍历子对象
+  // 应用自发光高亮 - 克隆材质避免影响其他对象
   const applyEmissiveHighlight = (obj: THREE.Object3D) => {
     clearEmissiveHighlight();
     
-    // 【修复】只高亮当前对象，不使用traverse避免子对象也被高亮
+    // 【修复】克隆材质，避免共享材质导致其他对象也被高亮
     if ((obj as any).material) {
       const mats = Array.isArray((obj as any).material) ? (obj as any).material : [(obj as any).material];
-      mats.forEach((mat: any) => {
-        try {
-          if (!materialBackupRef.current.has(mat)) {
-            materialBackupRef.current.set(mat, { 
-              emissive: mat.emissive ? mat.emissive.clone() : undefined, 
-              emissiveIntensity: mat.emissiveIntensity 
-            });
-          }
-          if (mat.emissive) mat.emissive.set(0x22d3ee); // 青色高亮
-          if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
-          highlightedMatsRef.current.add(mat);
-          console.log('高亮材质:', mat.name || mat.uuid);
-        } catch (error) {
-          console.warn('高亮材质失败:', error);
+      
+      // 为当前对象创建材质副本
+      const clonedMats = mats.map((mat: any) => {
+        const clonedMat = mat.clone();
+        // 备份原始材质
+        if (!materialBackupRef.current.has(obj)) {
+          materialBackupRef.current.set(obj, { 
+            originalMaterials: mats,
+            emissive: mat.emissive ? mat.emissive.clone() : undefined, 
+            emissiveIntensity: mat.emissiveIntensity 
+          });
         }
+        
+        // 应用高亮效果到克隆材质
+        if (clonedMat.emissive) clonedMat.emissive.set(0x22d3ee); // 青色高亮
+        if ('emissiveIntensity' in clonedMat) clonedMat.emissiveIntensity = Math.max(clonedMat.emissiveIntensity || 0.2, 0.6);
+        
+        console.log('克隆并高亮材质:', clonedMat.name || clonedMat.uuid);
+        return clonedMat;
       });
+      
+      // 应用克隆的高亮材质
+      (obj as any).material = clonedMats.length === 1 ? clonedMats[0] : clonedMats;
+      highlightedMatsRef.current.add(obj); // 记录对象而不是材质
     } else {
       console.log('选中的对象没有材质，只使用轮廓高亮');
     }
