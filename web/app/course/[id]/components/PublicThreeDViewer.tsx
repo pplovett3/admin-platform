@@ -997,9 +997,10 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           (mesh as any).material = originalMats.length === 1 ? originalMats[0] : originalMats;
           console.log('🧹 恢复原始材质:', (mesh as any).name || (mesh as any).uuid);
         }
+        // 删除WeakMap中的条目
+        materialBackupRef.current.delete(mesh);
       }
       highlightedMatsRef.current.clear();
-      materialBackupRef.current.clear();
     };
 
     // 应用自发光高亮（克隆材质避免影响其他对象）
