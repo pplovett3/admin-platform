@@ -555,7 +555,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         
         if (annotation.label && annotation.label.offset) {
           // 标准格式：使用label.offset
-          if (annotation.label.isLocal) {
+          if (annotation.label.offsetSpace === 'local') {
             // 新数据：局部偏移（相对于标注点的局部坐标）
             const offsetLocal = new THREE.Vector3(
               annotation.label.offset[0],
@@ -878,48 +878,39 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
     };
 
-    // 清除自发光高亮（兼容对象或材质备份）
+    // 清除自发光高亮（与编辑器完全一致）
     const clearEmissiveHighlight = () => {
-      for (const item of Array.from(highlightedMatsRef.current)) {
-        const backup = materialBackupRef.current.get(item as any);
-        if (backup && backup.originalMaterials) {
-          try {
-            const originals = backup.originalMaterials;
-            (item as any).material = Array.isArray(originals) && originals.length === 1 ? originals[0] : originals;
-            continue;
-          } catch {}
-        }
-        const mat = item as any;
-        const matBackup = materialBackupRef.current.get(mat);
-        if (matBackup) {
-          if ('emissive' in mat && matBackup.emissive) mat.emissive.copy(matBackup.emissive);
-          if ('emissiveIntensity' in mat && typeof matBackup.emissiveIntensity === 'number') mat.emissiveIntensity = matBackup.emissiveIntensity;
+      for (const m of Array.from(highlightedMatsRef.current)) {
+        const backup = materialBackupRef.current.get(m);
+        if (backup) {
+          if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
+          if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
         }
       }
       highlightedMatsRef.current.clear();
     };
 
-    // 应用自发光高亮（克隆材质避免串色，只作用于当前对象）
+    // 应用自发光高亮（与编辑器完全一致）
     const applyEmissiveHighlight = (obj: THREE.Object3D) => {
       clearEmissiveHighlight();
-      if ((obj as any).material) {
-        const mats = Array.isArray((obj as any).material) ? (obj as any).material : [(obj as any).material];
-        const clonedMats = mats.map((mat: any) => {
-          const cloned = mat.clone();
-          if (!materialBackupRef.current.has(obj)) {
-            materialBackupRef.current.set(obj, {
-              originalMaterials: mats,
-              emissive: mat.emissive ? mat.emissive.clone() : undefined,
-              emissiveIntensity: mat.emissiveIntensity,
-            });
-          }
-          if (cloned.emissive) cloned.emissive.set(0x22d3ee);
-          if ('emissiveIntensity' in cloned) cloned.emissiveIntensity = Math.max(cloned.emissiveIntensity || 0.2, 0.6);
-          return cloned;
-        });
-        (obj as any).material = clonedMats.length === 1 ? clonedMats[0] : clonedMats;
-        highlightedMatsRef.current.add(obj);
-      }
+      obj.traverse((o: THREE.Object3D) => {
+        const mesh = o as any;
+        if (mesh.material) {
+          const materials: any[] = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach((mat: any) => {
+            try {
+              const backup = { 
+                emissive: mat.emissive ? mat.emissive.clone() : undefined, 
+                emissiveIntensity: mat.emissiveIntensity 
+              };
+              materialBackupRef.current.set(mat, backup);
+              if (mat.emissive) mat.emissive.set(0x22d3ee);
+              if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
+              highlightedMatsRef.current.add(mat);
+            } catch {}
+          });
+        }
+      });
     };
 
     // 高亮节点 - 使用编辑器相同的自发光效果
