@@ -118,6 +118,110 @@
 - 删除授权：DELETE `/api/enrollments/schools/:id`
 - 授权校验（所有角色可用）：GET `/api/enrollments/schools/check?schoolId=&courseId=` → `{ allowed: true|false }`
 
+### 激活码管理（superadmin）
+- 生成激活码
+  - POST `/api/activation-codes`
+  - Body
+    ```json
+    {
+      "courseId": "66b9abc123",
+      "count": 10,
+      "maxUses": 30,
+      "validFrom": "2024-01-01T00:00:00Z",
+      "validUntil": "2025-12-31T23:59:59Z",
+      "description": "2024春季班"
+    }
+    ```
+  - 200
+    ```json
+    {
+      "success": true,
+      "count": 10,
+      "codes": [
+        { "code": "ABCD-EFGH-IJKL", "courseId": "...", "maxUses": 30, ... }
+      ]
+    }
+    ```
+
+- 激活码列表
+  - GET `/api/activation-codes?courseId=&status=&page=&limit=`
+  - 200
+    ```json
+    {
+      "items": [...],
+      "pagination": { "total": 100, "page": 1, "limit": 20, "pages": 5 }
+    }
+    ```
+
+- 激活码详情
+  - GET `/api/activation-codes/:code`
+  - 200：返回激活码信息及使用该码的用户列表
+
+- 更新激活码状态
+  - PATCH `/api/activation-codes/:code`
+  - Body：`{ "status": "disabled" }` 或 `{ "status": "active" }`
+
+- 删除激活码
+  - DELETE `/api/activation-codes/:code`
+  - 注意：已使用的激活码无法删除，只能禁用
+
+### 用户激活接口
+- 激活课程（所有登录用户）
+  - POST `/api/activation/activate`
+  - Body
+    ```json
+    {
+      "code": "ABCD-EFGH-IJKL",
+      "courseId": "66b9abc123"
+    }
+    ```
+  - 200
+    ```json
+    {
+      "success": true,
+      "message": "激活成功",
+      "activation": {
+        "courseId": "...",
+        "courseName": "产线认知",
+        "expiresAt": "2025-12-31T23:59:59Z"
+      }
+    }
+    ```
+
+- 我的激活列表（所有登录用户）
+  - GET `/api/activation/my-activations`
+  - 200
+    ```json
+    {
+      "activations": [
+        {
+          "courseId": "...",
+          "courseName": "产线认知",
+          "activatedAt": "2024-01-01T10:00:00Z",
+          "expiresAt": "2025-12-31T23:59:59Z",
+          "status": "active"
+        }
+      ]
+    }
+    ```
+
+- 验证课程访问权限（所有登录用户，启动器使用）
+  - GET `/api/activation/verify?courseId=xxx`
+  - 200
+    ```json
+    {
+      "allowed": true,
+      "courseId": "...",
+      "expiresAt": "2025-12-31T23:59:59Z"
+    }
+    ```
+
+- 激活记录列表（superadmin/schoolAdmin/teacher）
+  - GET `/api/activation/list?courseId=&userId=&status=&q=&page=&limit=`
+
+- 撤销激活（superadmin）
+  - DELETE `/api/activation/revoke/:userId/:courseId`
+
 ### 成绩（需登录）
 - 说明
   - `courseId` 参数支持传课程 `_id`、`code` 或 `name`，服务端会自动归一化为课程 `_id` 存储/查询

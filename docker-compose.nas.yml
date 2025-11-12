@@ -1,0 +1,141 @@
+# ============================================
+# 绿联NAS Docker Compose 配置
+# ============================================
+# 使用说明：
+# 1. 将此文件上传到NAS（例如：/volume1/docker/admin-platform/）
+# 2. 修改下面标注 [必须修改] 的配置项
+# 3. 在NAS上执行：docker-compose up -d
+# ============================================
+
+version: '3.8'
+
+services:
+  # MongoDB 数据库
+  mongo:
+    image: mongo:7.0
+    container_name: admin-platform-mongo
+    restart: unless-stopped
+    volumes:
+      # MongoDB数据存储路径
+      - /volume1/docker/admin-platform/mongodb:/data/db
+    ports:
+      # 映射到宿主机 27018 端口（避免与 reservation-mongodb 的 27017 冲突）
+      - "27018:27017"
+    networks:
+      - admin-platform-network
+    # 注意：使用无密码模式，仅限内网访问
+
+  # 后端服务
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: admin-platform-server:latest
+    container_name: admin-platform-server
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      # MongoDB连接URI（无密码模式）
+      - MONGODB_URI=mongodb://mongo:27017/courseware
+      # [必须修改] JWT密钥（用于生成用户token，必须修改为随机字符串）
+      - JWT_SECRET=Change_This_JWT_Secret_To_Random_String_In_Production
+      # 文件存储根目录（容器内路径，不要修改）
+      - STORAGE_ROOT=/storage
+      # AI服务API密钥（已配置好，如需修改请更新）
+      - DEEPSEEK_API_KEY=sk-a5cc44206c5d411cbb633cd73a6c8bd0
+      - METASO_API_KEY=mk-53C55DF41C6C448FD0BA54190CDA2A2F
+      - MINIMAX_API_KEY=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJHcm91cE5hbWUiOiLllJDkuIfnvr0iLCJVc2VyTmFtZSI6IuWUkOS4h-e-vSIsIkFjY291bnQiOiIiLCJTdWJqZWN0SUQiOiIxOTY2NzY5NjU4MjcwODUxMTQ3IiwiUGhvbmUiOiIxMzU2NDcxOTc1NSIsIkdyb3VwSUQiOiIxOTY2NzY5NjU4MjYyNDYyNTM5IiwiUGFnZU5hbWUiOiIiLCJNYWlsIjoiIiwiQ3JlYXRlVGltZSI6IjIwMjUtMDktMTMgMjE6NDc6NTYiLCJUb2tlblR5cGUiOjEsImlzcyI6Im1pbmltYXgifQ.IKh6IYYwV3gMaNsSu-kqt6yPOewN8ZdNTqGKUhI7033Rd85_mt6U2VbahTfAG5f4pNrm-ygO7OfagsQN45PLXl5SxPwuRwOqYq7BuUDWDe-2LtvLlkxcX7yUjV5N3xXGHX-MC2Q2Wrz0-P1yl3pfEiSsKOc7QwAukzGnrL6IIBdufAkAZ-0Qs0Zw5R9aZd3S8wNp9z8E8hfea17RXPcJ--hql-jSa4wpOGgWrh-OS-Mwl8gFZEK-VknTb_T70XQ4ADRsUkAtoo6ijrRzE9J1EJRs9ej3Yt612dGt_bRAQ7z8ZfzVgyySt6zsjHaOWFX_qWpBclSei4lvYh_Ut_XoA
+      - MINIMAX_BASE_URL=https://api.minimaxi.com
+      - AZURE_SPEECH_KEY=7d4ffd0999c5467aa2dc8c1b4467ace6
+      - AZURE_SPEECH_REGION=eastasia
+      # 前端端口配置
+      - FRONTEND_PORT=3001
+    volumes:
+      # [可选修改] 文件存储路径（根据NAS实际路径调整）
+      - /volume1/docker/admin-platform/storage:/storage
+    ports:
+      # 后端API端口
+      - "4000:4000"
+    networks:
+      - admin-platform-network
+
+  # 前端服务（内部，不直接暴露端口）
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      # 留空，使用相对路径 /api，通过 Nginx 反向代理
+    image: admin-platform-web:latest
+    container_name: admin-platform-web
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      # 留空，前端使用相对路径 /api/*
+      - NEXT_PUBLIC_API_URL=
+    networks:
+      - admin-platform-network
+    # 不暴露端口，只通过 Nginx 访问
+
+  # Nginx 反向代理（统一入口）
+  nginx:
+    image: nginx:alpine
+    container_name: admin-platform-nginx
+    restart: unless-stopped
+    ports:
+      # 对外暴露 3001 端口
+      - "3001:3001"
+    volumes:
+      # 挂载 Nginx 配置文件
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+      - server
+    networks:
+      - admin-platform-network
+
+networks:
+  admin-platform-network:
+    driver: bridge
+
+# ============================================
+# 部署步骤：
+# ============================================
+# 
+# 1. 在NAS上创建目录：
+#    mkdir -p /volume1/docker/admin-platform/mongodb
+#    mkdir -p /volume1/docker/admin-platform/storage
+#
+# 2. 上传此文件到NAS：
+#    /volume1/docker/admin-platform/docker-compose.yml
+#
+# 3. 登录阿里云镜像仓库（如果是私有镜像）：
+#    docker login --username=唐万羽 crpi-uiz8h842zcgpj6r1.cn-shanghai.personal.cr.aliyuncs.com
+#    密码：Tt19910805
+#
+# 4. 启动服务：
+#    cd /volume1/docker/admin-platform
+#    docker-compose up -d
+#
+# 5. 查看运行状态：
+#    docker-compose ps
+#    docker-compose logs -f
+#
+# 6. 访问系统：
+#    http://NAS_IP:3001
+#    默认账号：admin / admin123
+#
+# ============================================
+# 常用命令：
+# ============================================
+#
+# 停止服务：docker-compose down
+# 重启服务：docker-compose restart
+# 查看日志：docker-compose logs -f [service_name]
+# 更新镜像：docker-compose pull && docker-compose up -d
+#
+# ============================================
+

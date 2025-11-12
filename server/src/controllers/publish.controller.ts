@@ -15,6 +15,12 @@ export async function publishCourse(req: Request, res: Response) {
     const { publishConfig = {}, ttsConfig } = req.body;
     const user = (req as any).user;
 
+    console.log('=== 发布请求参数 ===');
+    console.log('courseId:', courseId);
+    console.log('publishConfig:', JSON.stringify(publishConfig));
+    console.log('ttsConfig:', JSON.stringify(ttsConfig));
+    console.log('==================');
+
     if (!courseId || !Types.ObjectId.isValid(courseId)) {
       return res.status(400).json({ message: 'Valid courseId is required' });
     }
@@ -64,6 +70,12 @@ export async function publishCourse(req: Request, res: Response) {
         }
       });
     }
+
+    console.log('检查TTS生成条件:', {
+      hasTTSConfig: !!ttsConfig,
+      hasOutline: !!aiCourse.outline,
+      outlineLength: aiCourse.outline?.length || 0
+    });
 
     if (ttsConfig && aiCourse.outline && aiCourse.outline.length > 0) {
       console.log('开始批量生成TTS配音...');
@@ -139,7 +151,7 @@ export async function publishCourse(req: Request, res: Response) {
 
     // 构建分享链接 - 指向前端服务端口
     const host = req.get('host') || '';
-    const frontendHost = host.replace(':4000', ':3000'); // 将后端端口替换为前端端口
+    const frontendHost = host.replace(`:${config.port}`, `:${config.frontendPort}`); // 将后端端口替换为前端端口
     const shareUrl = `${req.protocol}://${frontendHost}/course/${publishedCourse.id}`;
 
     res.json({
@@ -189,7 +201,7 @@ export async function getPublishStatus(req: Request, res: Response) {
     }
 
     const host = req.get('host') || '';
-    const frontendHost = host.replace(':4000', ':3000');
+    const frontendHost = host.replace(`:${config.port}`, `:${config.frontendPort}`);
     const shareUrl = `${req.protocol}://${frontendHost}/course/${publishedCourse.id}`;
 
     res.json({
@@ -303,97 +315,82 @@ export async function unpublishCourse(req: Request, res: Response) {
 export async function getPublicCourse(req: Request, res: Response) {
   try {
     const { publishId } = req.params;
+    console.log('=== 公开课程访问 ===');
+    console.log('publishId:', publishId);
 
     if (!publishId || !Types.ObjectId.isValid(publishId)) {
+      console.error('Invalid publishId:', publishId);
       return res.status(400).json({ message: 'Valid publishId is required' });
     }
 
-    const publishedCourse = await PublishedCourseModel.findById(publishId);
+    const publishedCourse = await PublishedCourseModel.findById(publishId).lean();
+    console.log('找到课程:', !!publishedCourse, '状态:', publishedCourse?.status);
+    
     if (!publishedCourse || publishedCourse.status !== 'active') {
+      console.error('Course not found or inactive');
       return res.status(404).json({ message: 'Published course not found or inactive' });
     }
 
-    // 增加访问统计
-    publishedCourse.stats.viewCount += 1;
-    publishedCourse.stats.lastViewedAt = new Date();
-    await publishedCourse.save();
+    // 增加访问统计（使用单独的更新操作，返回更新后的文档）
+    const updatedCourse = await PublishedCourseModel.findByIdAndUpdate(
+      publishId,
+      {
+        $inc: { 'stats.viewCount': 1 },
+        $set: { 'stats.lastViewedAt': new Date() }
+      },
+      { new: true } // 返回更新后的文档
+    ).lean();
 
     // 处理课件数据中的文件路径，转换为公开访问URL
-    const processedCoursewareData = { ...publishedCourse.coursewareData };
-    const processedCourseData = { ...publishedCourse.courseData };
+    // 使用 JSON.parse(JSON.stringify()) 确保深拷贝
+    const processedCoursewareData = JSON.parse(JSON.stringify(publishedCourse.coursewareData));
+    const processedCourseData = JSON.parse(JSON.stringify(publishedCourse.courseData));
     
     console.log('Raw courseware data:', {
       modelUrl: processedCoursewareData.modelUrl,
       modifiedModelUrl: processedCoursewareData.modifiedModelUrl
     });
 
+    // 辅助函数：转换文件URL为公开访问URL
+    const convertToPublicUrl = (url: string): string => {
+      if (!url || url.startsWith('http')) return url;
+      
+      // 转换 /api/files/:id/download → /api/public/files/:id
+      const fileIdMatch = url.match(/\/api\/files\/([a-f0-9]{24})\/download/);
+      if (fileIdMatch) {
+        return `/api/public/files/${fileIdMatch[1]}`;
+      }
+      
+      // 转换 /api/files/courseware-download?path=xxx → /api/public/courseware-file?path=xxx
+      const coursewareMatch = url.match(/\/api\/files\/courseware-download\?path=(.+)/);
+      if (coursewareMatch) {
+        return `/api/public/courseware-file?path=${coursewareMatch[1]}`;
+      }
+      
+      return url;
+    };
+
     // 处理模型URL - 优先使用修改后的模型
     if (processedCoursewareData.modifiedModelUrl) {
-      // 如果有修改后的模型URL且已经是完整URL，直接使用
-      if (processedCoursewareData.modifiedModelUrl.startsWith('http')) {
-        processedCoursewareData.modelUrl = processedCoursewareData.modifiedModelUrl;
-        console.log('Using complete modified model URL:', processedCoursewareData.modelUrl);
-      } else {
-        // 如果是相对路径，拼接基础URL
-        if (config.publicDownloadBase) {
-          const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
-          processedCoursewareData.modelUrl = `${publicBaseUrl}/${processedCoursewareData.modifiedModelUrl}`;
-          console.log('Converted modified model URL:', processedCoursewareData.modelUrl);
-        }
-      }
-    } else if (config.publicDownloadBase) {
-      // 处理原始模型URL
-      const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
-      console.log('Using public download base:', publicBaseUrl);
-      
-      const modelUrl = processedCoursewareData.modelUrl;
-      if (modelUrl && !modelUrl.startsWith('http')) {
-        console.log('Processing original model URL:', modelUrl);
-        // 如果是文件ID，需要查找对应的文件路径
-        const fileIdMatch = modelUrl.match(/([a-f0-9]{24})/);
-        if (fileIdMatch) {
-          const fileId = fileIdMatch[1];
-          try {
-            const { FileModel } = await import('../models/File');
-            const file = await FileModel.findById(fileId);
-            if (file) {
-              processedCoursewareData.modelUrl = `${publicBaseUrl}/${file.storageRelPath}`;
-              console.log('Converted file model URL:', processedCoursewareData.modelUrl);
-            }
-          } catch (error) {
-            console.error('Error finding file for model URL:', error);
-          }
-        } else {
-          processedCoursewareData.modelUrl = `${publicBaseUrl}/${modelUrl}`;
-          console.log('Direct model URL conversion:', processedCoursewareData.modelUrl);
-        }
-      }
+      processedCoursewareData.modelUrl = convertToPublicUrl(processedCoursewareData.modifiedModelUrl);
+      console.log('Converted modified model URL:', processedCoursewareData.modelUrl);
+    } else if (processedCoursewareData.modelUrl) {
+      processedCoursewareData.modelUrl = convertToPublicUrl(processedCoursewareData.modelUrl);
+      console.log('Converted model URL:', processedCoursewareData.modelUrl);
     }
 
-    // 如果配置了公开下载基地址，处理其他资源URL
-    if (config.publicDownloadBase) {
-      const publicBaseUrl = config.publicDownloadBase.replace(/\/$/, '');
-
-      // 处理课程数据中的图片URL
-      if (processedCourseData.outline) {
-        for (const segment of processedCourseData.outline) {
-          if (segment.items) {
-            for (const item of segment.items) {
-              if (item.imageUrl && !item.imageUrl.startsWith('http')) {
-                const fileIdMatch = item.imageUrl.match(/([a-f0-9]{24})/);
-                if (fileIdMatch) {
-                  const fileId = fileIdMatch[1];
-                  try {
-                    const { FileModel } = await import('../models/File');
-                    const file = await FileModel.findById(fileId);
-                    if (file) {
-                      item.imageUrl = `${publicBaseUrl}/${file.storageRelPath}`;
-                    }
-                  } catch (error) {
-                    console.error('Error finding file for image URL:', error);
-                  }
-                }
-              }
+    // 处理课程数据中的音频和图片URL
+    if (processedCourseData.outline) {
+      for (const segment of processedCourseData.outline) {
+        if (segment.items) {
+          for (const item of segment.items) {
+            // 转换音频URL
+            if (item.audioUrl) {
+              item.audioUrl = convertToPublicUrl(item.audioUrl);
+            }
+            // 转换图片URL
+            if (item.imageUrl) {
+              item.imageUrl = convertToPublicUrl(item.imageUrl);
             }
           }
         }
@@ -401,23 +398,31 @@ export async function getPublicCourse(req: Request, res: Response) {
     }
 
     const responseData = {
-      id: publishedCourse.id,
+      id: publishedCourse._id.toString(),
       title: publishedCourse.title,
       description: publishedCourse.description,
       publishConfig: publishedCourse.publishConfig,
       courseData: processedCourseData,
       coursewareData: processedCoursewareData,
-      resourceBaseUrl: config.publicDownloadBase || `${req.protocol}://${req.get('host')}/api/public/files`,
+      resourceBaseUrl: `${req.protocol}://${req.get('host')}/api/public`,
       stats: {
-        viewCount: publishedCourse.stats.viewCount
+        viewCount: updatedCourse?.stats?.viewCount || 0 // 使用更新后的访问次数
       },
-      publishedAt: publishedCourse.publishedAt
+      publishedAt: publishedCourse.publishedAt,
+      lastUpdated: publishedCourse.lastUpdated // 添加最后更新时间，用于缓存控制
     };
 
+    // 设置响应头，禁止缓存以确保每次都获取最新内容
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     res.json(responseData);
 
   } catch (error) {
-    console.error('Get public course error:', error);
+    console.error('=== Get public course error ===');
+    console.error('Error details:', error);
+    console.error('Error stack:', (error as any)?.stack);
     const message = (error as any)?.message || 'Internal server error';
     res.status(500).json({ message });
   }

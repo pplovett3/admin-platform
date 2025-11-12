@@ -1,14 +1,12 @@
 export const API_BASE = ((): string => {
   const env = (process.env.NEXT_PUBLIC_API_URL || '').trim();
-  const isLocalHostEnv = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(env);
-  if (env && !isLocalHostEnv) return env; // explicit non-local override
+  if (env) return env; // 如果有明确配置，使用配置值
   if (typeof window !== 'undefined') {
-    const { protocol, hostname } = window.location;
-    const host = hostname || 'localhost';
-    return `${protocol}//${host}:4000`;
+    // 运行时使用当前域名（通过 Nginx 反向代理）
+    return window.location.origin;
   }
   // SSR fallback during build
-  return env || 'http://localhost:4000';
+  return 'http://localhost:4000';
 })();
 
 export function authHeaders(extra?: Record<string, string>) {
@@ -47,6 +45,15 @@ export async function apiPut<T>(path: string, body: any): Promise<T> {
   catch (e: any) { throw new Error(e?.message || `PUT ${path} 网络异常`); }
   const data = await parseJsonSafe(res);
   if (!res.ok) throw new Error(data?.message || `PUT ${path} failed (${res.status})`);
+  return data as T;
+}
+
+export async function apiPatch<T>(path: string, body: any): Promise<T> {
+  let res: Response;
+  try { res = await fetch(`${API_BASE}${path}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body) }); }
+  catch (e: any) { throw new Error(e?.message || `PATCH ${path} 网络异常`); }
+  const data = await parseJsonSafe(res);
+  if (!res.ok) throw new Error(data?.message || `PATCH ${path} failed (${res.status})`);
   return data as T;
 }
 

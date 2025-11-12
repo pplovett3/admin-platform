@@ -1,5 +1,55 @@
 "use client";
 
+/**
+ * 从文件二进制头部检测文件格式
+ * @param arrayBuffer 文件的 ArrayBuffer
+ * @returns 文件扩展名 (glb, fbx, obj) 或空字符串
+ */
+function detectFileFormat(arrayBuffer: ArrayBuffer): string {
+  if (arrayBuffer.byteLength < 4) {
+    return '';
+  }
+  
+  const bytes = new Uint8Array(arrayBuffer);
+  
+  // 检查 GLB 格式 (magic: 'glTF', version: 2)
+  if (bytes.length >= 12) {
+    const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+    if (magic === 'glTF') {
+      const version = new DataView(arrayBuffer, 4, 4).getUint32(0, true);
+      if (version === 2) {
+        console.log('✅ 检测到 GLB 格式 (glTF 2.0)');
+        return 'glb';
+      }
+    }
+  }
+  
+  // 检查 FBX 格式 (通常以 "Kaydara FBX Binary" 开头)
+  if (bytes.length >= 18) {
+    const header = String.fromCharCode(...bytes.slice(0, 18));
+    if (header.includes('Kaydara FBX')) {
+      console.log('✅ 检测到 FBX 格式');
+      return 'fbx';
+    }
+  }
+  
+  // 检查 OBJ 格式 (文本文件，通常以 # 或 v 开头)
+  if (bytes.length >= 100) {
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(0, 100));
+      if (/^(#|v |vn |vt |f |o |g |mtllib |usemtl )/m.test(text)) {
+        console.log('✅ 检测到 OBJ 格式');
+        return 'obj';
+      }
+    } catch {
+      // 不是有效的 UTF-8 文本
+    }
+  }
+  
+  console.log('❌ 无法识别文件格式');
+  return '';
+}
+
 function TimeRuler({ duration, pxPerSec, current, onScrub }: { duration: number; pxPerSec: number; current: number; onScrub: (t:number)=>void }) {
   const width = Math.max(0, duration * pxPerSec);
   // 动态步长：尽量接近 80px 一格
@@ -257,6 +307,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -427,6 +479,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [mode, setMode] = useState<'annot'|'anim'>('annot');
   // 记录初始姿态（TRS与可见性）
   const initialStateRef = useRef<Map<string, { pos: THREE.Vector3; rot: THREE.Euler; scl: THREE.Vector3; visible: boolean }>>(new Map());
+  
+  // TRS 撤销/重做系统
+  interface TRSSnapshot {
+    objectKey: string;
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale: [number, number, number];
+  }
+  const trsUndoStack = useRef<TRSSnapshot[]>([]);
+  const trsRedoStack = useRef<TRSSnapshot[]>([]);
+  const trsTransformStartState = useRef<TRSSnapshot | null>(null);
+  const [materialIndex, setMaterialIndex] = useState(0);
   const [modelName, setModelName] = useState<string>('未加载模型');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [urlImportOpen, setUrlImportOpen] = useState(false);
@@ -880,7 +944,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const t = tcontrolsRef.current;
     if (!t) return;
     const obj = selectedKey ? keyToObject.current.get(selectedKey) : undefined;
-    if (mode === 'anim' && obj) {
+    // 在两种模式下都显示gizmo（标签模式和动画模式）
+    if (obj) {
       t.attach(obj);
       t.setMode(gizmoMode);
       t.setSpace(gizmoSpace as any);
@@ -1212,8 +1277,26 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     tcontrols.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
       if (e.value) { 
+        // 拖拽开始
         prevPivotWorldRef.current = (multiPivotRef.current||tcontrols.object)?.matrixWorld.clone() || null; 
-        pushHistory(); 
+        pushHistory();
+        
+        // 记录TRS变换开始时的状态
+        const obj = tcontrols.object as THREE.Object3D | null;
+        if (obj && selectedKey) {
+          const snapshot = trsSaveSnapshot(selectedKey);
+          if (snapshot) {
+            trsTransformStartState.current = snapshot;
+          }
+        }
+      } else {
+        // 拖拽结束
+        if (trsTransformStartState.current) {
+          // 保存到TRS撤销栈
+          trsUndoStack.current.push(trsTransformStartState.current);
+          trsRedoStack.current = []; // 清空重做栈
+          trsTransformStartState.current = null;
+        }
       }
     });
     tcontrols.addEventListener('objectChange', () => {
@@ -1532,15 +1615,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       pendingImportRef.current && (pendingImportRef.current = pendingImportRef.current); // 保留缓存
 
       const manager = new THREE.LoadingManager();
-      const ktx2 = new KTX2Loader(manager)
-        .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
-        .detectSupport(rendererRef.current!);
-      const draco = new DRACOLoader(manager)
-        .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
-      const loader = new GLTFLoader(manager)
-        .setKTX2Loader(ktx2)
-        .setDRACOLoader(draco);
-
+      
       // 构建最终的加载URL
       let finalSrc = actualSrc;
       let useProxy = false;
@@ -1558,6 +1633,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
       // 使用fetch来加载模型文件（支持认证和代理）
       let root: THREE.Object3D;
+      let animations: THREE.AnimationClip[] = [];
       if (actualSrc.startsWith('/api/files/') || useProxy) {
         const token = getToken?.();
         const headers: Record<string, string> = {};
@@ -1571,20 +1647,169 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         if (!response.ok) {
           throw new Error(`Failed to load model: ${response.status} ${response.statusText}`);
         }
-        const arrayBuffer = await response.arrayBuffer();
-        const gltf = await loader.parseAsync(arrayBuffer, '');
-        root = gltf.scene || gltf.scenes[0];
         
-        // 🎬 处理GLTF内置动画 - 完整支持读取和保存
-        if (gltf.animations && gltf.animations.length > 0) {
-          console.log('🎬 发现GLTF内置动画:', gltf.animations.length, '个');
+        // 从响应头 Content-Disposition 中提取文件名和扩展名
+        let fileExt = '';
+        const contentDisposition = response.headers.get('Content-Disposition');
+        console.log('📋 Content-Disposition 响应头:', contentDisposition);
+        
+        if (contentDisposition) {
+          // 解析 Content-Disposition: inline; filename="model.glb" 或 filename*=UTF-8''model.glb
+          const filenameMatch = contentDisposition.match(/filename[^;=\n]*=(["']?)([^"'\n]*)\1/i);
+          const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;\n]*)/i);
+          
+          let filename = '';
+          if (filenameStarMatch && filenameStarMatch[1]) {
+            filename = decodeURIComponent(filenameStarMatch[1]);
+          } else if (filenameMatch && filenameMatch[2]) {
+            filename = decodeURIComponent(filenameMatch[2]);
+          }
+          
+          if (filename) {
+            fileExt = filename.toLowerCase().split('.').pop() || '';
+            console.log('✅ 从 Content-Disposition 提取文件扩展名:', fileExt, '文件名:', filename);
+          }
+        }
+        
+        // 如果响应头中没有文件名，则回退到从 URL 中提取
+        if (!fileExt) {
+          const urlPath = actualSrc.split('?')[0];
+          const urlParts = urlPath.split('/');
+          const lastPart = urlParts[urlParts.length - 1];
+          if (lastPart && lastPart.includes('.')) {
+            fileExt = lastPart.toLowerCase().split('.').pop() || '';
+            console.log('⚠️ 从 URL 路径提取文件扩展名:', fileExt);
+          }
+        }
+        
+        // 最后的回退：尝试从文件二进制头部识别格式
+        if (!fileExt) {
+          const arrayBuffer = await response.arrayBuffer();
+          fileExt = detectFileFormat(arrayBuffer);
+          console.log('🔍 从文件头部识别格式:', fileExt || '未识别');
+          
+          if (!fileExt) {
+            throw new Error('无法识别文件格式。请确保文件是有效的 GLB、FBX 或 OBJ 格式。');
+          }
+          
+          // 继续使用这个 arrayBuffer
+          const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
+          const isFBX = fileExt === 'fbx';
+          const isOBJ = fileExt === 'obj';
+          
+          let loadedRoot: THREE.Object3D | null = null;
+          let loadedAnimations: THREE.AnimationClip[] = [];
+          
+          // 根据格式使用不同的加载器
+          if (isGLTF) {
+            const ktx2 = new KTX2Loader(manager)
+              .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
+              .detectSupport(rendererRef.current!);
+            const draco = new DRACOLoader(manager)
+              .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+            const loader = new GLTFLoader(manager)
+              .setKTX2Loader(ktx2)
+              .setDRACOLoader(draco);
+            const gltf = await new Promise<any>((resolve, reject) => {
+              loader.parse(arrayBuffer, '', resolve, reject);
+            });
+            loadedRoot = gltf.scene || gltf.scenes[0];
+            loadedAnimations = gltf.animations || [];
+          } else if (isFBX) {
+            const loader = new FBXLoader(manager);
+            loadedRoot = loader.parse(arrayBuffer, '');
+            loadedAnimations = (loadedRoot as any).animations || [];
+          } else if (isOBJ) {
+            const loader = new OBJLoader(manager);
+            const textDecoder = new TextDecoder();
+            const text = textDecoder.decode(arrayBuffer);
+            loadedRoot = loader.parse(text);
+            loadedAnimations = [];
+          }
+          
+          if (!loadedRoot) {
+            throw new Error('模型加载失败');
+          }
+          
+          // 跳到后续处理（避免重复代码）
+          root = loadedRoot;
+          animations = loadedAnimations;
+          modelRootRef.current = root;
+          scene.add(root);
+          
+          // 设置模型阴影
+          root.traverse((child: THREE.Object3D) => {
+            if (child instanceof THREE.Mesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+          
+          // 构建节点映射
+          rebuildTree();
+          
+          // 自动调整相机视角
+          focusObject(root);
+          
+          // 🎬 处理模型内置动画
+          if (animations && animations.length > 0) {
+            console.log('🎬 发现模型内置动画:', animations.length, '个');
+            
+            // 保存原始动画到ref，用于后续导出
+            originalAnimationsRef.current = [...animations];
+            console.log('📁 已保存原始动画供后续导出使用');
+          }
+          
+          
+          // 模型加载完成后消息提示
+          message.destroy();
+          message.success('模型已加载');
+          return;
+        }
+        
+        const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
+        const isFBX = fileExt === 'fbx';
+        const isOBJ = fileExt === 'obj';
+        
+        const arrayBuffer = await response.arrayBuffer();
+        
+        // 根据格式使用不同的加载器
+        if (isGLTF) {
+          const ktx2 = new KTX2Loader(manager)
+            .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
+            .detectSupport(rendererRef.current!);
+          const draco = new DRACOLoader(manager)
+            .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+          const loader = new GLTFLoader(manager)
+            .setKTX2Loader(ktx2)
+            .setDRACOLoader(draco);
+          const gltf = await loader.parseAsync(arrayBuffer, '');
+          root = gltf.scene || gltf.scenes[0];
+          animations = gltf.animations || [];
+        } else if (isFBX) {
+          const loader = new FBXLoader(manager);
+          root = loader.parse(arrayBuffer, '');
+          animations = (root as any).animations || [];
+        } else if (isOBJ) {
+          const loader = new OBJLoader(manager);
+          const textDecoder = new TextDecoder();
+          const text = textDecoder.decode(arrayBuffer);
+          root = loader.parse(text);
+          animations = [];
+        } else {
+          throw new Error(`不支持的文件格式: .${fileExt}`);
+        }
+        
+        // 🎬 处理模型内置动画 - 完整支持读取和保存
+        if (animations && animations.length > 0) {
+          console.log('🎬 发现模型内置动画:', animations.length, '个');
           
           // 保存原始动画到ref，用于后续导出
-          originalAnimationsRef.current = [...gltf.animations];
+          originalAnimationsRef.current = [...animations];
           console.log('📁 已保存原始动画供后续导出使用');
           
           // 创建对应的编辑器动画条目
-          const gltfClips: Clip[] = gltf.animations.map((clip, index) => ({
+          const gltfClips: Clip[] = animations.map((clip, index) => ({
             id: generateUuid(),
             name: clip.name || `原始动画${index + 1}`,
             description: `模型内置动画`,
@@ -1610,7 +1835,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             console.log('🔄 检测到待处理的动画元数据，进行GLB动画重建...');
             
             // 从GLB和元数据重建动画（传入当前root）
-            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, pendingImportRef.current.animationMetadata, root);
+            const rebuiltClips = loadAnimationsFromGLB(animations, pendingImportRef.current.animationMetadata, root);
             setClips(rebuiltClips);
             
             if (rebuiltClips.length > 0) {
@@ -1652,20 +1877,47 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           console.log(`✅ 已加载${gltfClips.length}个原始动画到编辑器`);
         }
       } else {
-        // 对于其他URL（如外部链接），直接使用loader
-        const gltf = await loader.loadAsync(finalSrc);
-        root = gltf.scene || gltf.scenes[0];
+        // 对于其他URL（如外部链接），从URL提取文件扩展名
+        const fileExt = actualSrc.toLowerCase().split('?')[0].split('.').pop() || '';
+        const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
+        const isFBX = fileExt === 'fbx';
+        const isOBJ = fileExt === 'obj';
         
-        // 🎬 处理GLTF内置动画 - 完整支持读取和保存
-        if (gltf.animations && gltf.animations.length > 0) {
-          console.log('🎬 发现GLTF内置动画:', gltf.animations.length, '个');
+        // 根据格式使用对应的loader
+        if (isGLTF) {
+          const ktx2 = new KTX2Loader(manager)
+            .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
+            .detectSupport(rendererRef.current!);
+          const draco = new DRACOLoader(manager)
+            .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+          const loader = new GLTFLoader(manager)
+            .setKTX2Loader(ktx2)
+            .setDRACOLoader(draco);
+          const gltf = await loader.loadAsync(finalSrc);
+          root = gltf.scene || gltf.scenes[0];
+          animations = gltf.animations || [];
+        } else if (isFBX) {
+          const loader = new FBXLoader(manager);
+          root = await loader.loadAsync(finalSrc);
+          animations = (root as any).animations || [];
+        } else if (isOBJ) {
+          const loader = new OBJLoader(manager);
+          root = await loader.loadAsync(finalSrc);
+          animations = [];
+        } else {
+          throw new Error(`不支持的文件格式: .${fileExt}`);
+        }
+        
+        // 🎬 处理模型内置动画 - 完整支持读取和保存
+        if (animations && animations.length > 0) {
+          console.log('🎬 发现模型内置动画:', animations.length, '个');
           
           // 保存原始动画到ref，用于后续导出
-          originalAnimationsRef.current = [...gltf.animations];
+          originalAnimationsRef.current = [...animations];
           console.log('📁 已保存原始动画供后续导出使用');
           
           // 创建对应的编辑器动画条目
-          const gltfClips: Clip[] = gltf.animations.map((clip, index) => ({
+          const gltfClips: Clip[] = animations.map((clip, index) => ({
             id: generateUuid(),
             name: clip.name || `原始动画${index + 1}`,
             description: `模型内置动画`,
@@ -1691,7 +1943,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             console.log('🔄 检测到待处理的动画元数据，进行GLB动画重建...');
             
             // 从GLB和元数据重建动画（传入当前root）
-            const rebuiltClips = loadAnimationsFromGLB(gltf.animations, pendingImportRef.current.animationMetadata, root);
+            const rebuiltClips = loadAnimationsFromGLB(animations, pendingImportRef.current.animationMetadata, root);
             setClips(rebuiltClips);
             
             if (rebuiltClips.length > 0) {
@@ -4596,6 +4848,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     redoStack.current = [];
   };
   const undo = () => {
+    // 优先检查TRS撤销栈
+    if (trsUndoStack.current.length > 0) {
+      trsUndo();
+      return;
+    }
+    
     console.log('Undo called, stack size:', undoStack.current.length); // Debug
     const last = undoStack.current.pop();
     if (!last) {
@@ -4608,6 +4866,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     console.log('Undo applied'); // Debug
   };
   const redo = () => {
+    // 优先检查TRS重做栈
+    if (trsRedoStack.current.length > 0) {
+      trsRedo();
+      return;
+    }
+    
     console.log('Redo called, stack size:', redoStack.current.length); // Debug
     const last = redoStack.current.pop();
     if (!last) {
@@ -4618,6 +4882,56 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     setTimeline(last.timeline);
     applyTimelineAt(last.timeline.current);
     console.log('Redo applied'); // Debug
+  };
+
+  // TRS 撤销/重做函数
+  const trsSaveSnapshot = (objectKey: string) => {
+    const obj = keyToObject.current.get(objectKey);
+    if (!obj) return null;
+    
+    return {
+      objectKey,
+      position: [obj.position.x, obj.position.y, obj.position.z] as [number, number, number],
+      rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z] as [number, number, number],
+      scale: [obj.scale.x, obj.scale.y, obj.scale.z] as [number, number, number]
+    };
+  };
+
+  const trsApplySnapshot = (snapshot: TRSSnapshot) => {
+    const obj = keyToObject.current.get(snapshot.objectKey);
+    if (!obj) return;
+    
+    obj.position.set(...snapshot.position);
+    obj.rotation.set(...snapshot.rotation);
+    obj.scale.set(...snapshot.scale);
+  };
+
+  const trsUndo = () => {
+    const last = trsUndoStack.current.pop();
+    if (!last) return;
+    
+    // 保存当前状态到重做栈
+    const current = trsSaveSnapshot(last.objectKey);
+    if (current) {
+      trsRedoStack.current.push(current);
+    }
+    
+    // 应用撤销状态
+    trsApplySnapshot(last);
+  };
+
+  const trsRedo = () => {
+    const last = trsRedoStack.current.pop();
+    if (!last) return;
+    
+    // 保存当前状态到撤销栈
+    const current = trsSaveSnapshot(last.objectKey);
+    if (current) {
+      trsUndoStack.current.push(current);
+    }
+    
+    // 应用重做状态
+    trsApplySnapshot(last);
   };
 
   function buildPath(object: THREE.Object3D): string {
@@ -5009,6 +5323,359 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   <Flex vertical gap={8}>
                     <div>已选中：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
                     <Button onClick={onFocusSelected}>相机对焦</Button>
+                    
+                    {/* TRS编辑面板 */}
+                    {(() => {
+                      const obj = keyToObject.current.get(selectedKey);
+                      if (!obj) return null;
+                      return (
+                        <>
+                          <Divider style={{ margin: '8px 0' }} />
+                          <div style={{ fontWeight: 600 }}>变换属性</div>
+                          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', gap: 4, alignItems: 'center' }}>
+                              <span style={{ fontSize: '12px', color: '#666' }}>位置</span>
+                              <InputNumber
+                                size="small"
+                                value={Number(obj.position.x.toFixed(3))}
+                                onChange={(v) => {
+                                  obj.position.x = Number(v) || 0;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={0.1}
+                                placeholder="X"
+                              />
+                              <InputNumber
+                                size="small"
+                                value={Number(obj.position.y.toFixed(3))}
+                                onChange={(v) => {
+                                  obj.position.y = Number(v) || 0;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={0.1}
+                                placeholder="Y"
+                              />
+                              <InputNumber
+                                size="small"
+                                value={Number(obj.position.z.toFixed(3))}
+                                onChange={(v) => {
+                                  obj.position.z = Number(v) || 0;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={0.1}
+                                placeholder="Z"
+                              />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', gap: 4, alignItems: 'center' }}>
+                              <span style={{ fontSize: '12px', color: '#666' }}>旋转</span>
+                              <InputNumber
+                                size="small"
+                                value={Number((obj.rotation.x * 180 / Math.PI).toFixed(1))}
+                                onChange={(v) => {
+                                  obj.rotation.x = (Number(v) || 0) * Math.PI / 180;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={1}
+                                placeholder="X°"
+                              />
+                              <InputNumber
+                                size="small"
+                                value={Number((obj.rotation.y * 180 / Math.PI).toFixed(1))}
+                                onChange={(v) => {
+                                  obj.rotation.y = (Number(v) || 0) * Math.PI / 180;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={1}
+                                placeholder="Y°"
+                              />
+                              <InputNumber
+                                size="small"
+                                value={Number((obj.rotation.z * 180 / Math.PI).toFixed(1))}
+                                onChange={(v) => {
+                                  obj.rotation.z = (Number(v) || 0) * Math.PI / 180;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={1}
+                                placeholder="Z°"
+                              />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', gap: 4, alignItems: 'center' }}>
+                              <span style={{ fontSize: '12px', color: '#666' }}>缩放</span>
+                              <InputNumber
+                                size="small"
+                                value={Number(obj.scale.x.toFixed(3))}
+                                onChange={(v) => {
+                                  obj.scale.x = Number(v) || 1;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={0.1}
+                                min={0.001}
+                                placeholder="X"
+                              />
+                              <InputNumber
+                                size="small"
+                                value={Number(obj.scale.y.toFixed(3))}
+                                onChange={(v) => {
+                                  obj.scale.y = Number(v) || 1;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={0.1}
+                                min={0.001}
+                                placeholder="Y"
+                              />
+                              <InputNumber
+                                size="small"
+                                value={Number(obj.scale.z.toFixed(3))}
+                                onChange={(v) => {
+                                  obj.scale.z = Number(v) || 1;
+                                  setPrsTick(t => t + 1);
+                                }}
+                                style={{ width: '100%' }}
+                                step={0.1}
+                                min={0.001}
+                                placeholder="Z"
+                              />
+                            </div>
+                          </Space>
+                          <Divider style={{ margin: '8px 0' }} />
+                          
+                          {/* 材质属性编辑面板 */}
+                          <div style={{ fontWeight: 600 }}>材质属性</div>
+                          {(() => {
+                            // 查找对象的Mesh及其材质
+                            let meshFound: THREE.Mesh | undefined;
+                            obj.traverse((child) => {
+                              if (child instanceof THREE.Mesh && !meshFound) {
+                                meshFound = child;
+                              }
+                            });
+                            
+                            if (!meshFound || !meshFound.material) {
+                              return <div style={{ fontSize: '12px', color: '#999' }}>该对象没有材质</div>;
+                            }
+                            
+                            const targetMesh = meshFound;
+                            const materials = Array.isArray(targetMesh.material) ? targetMesh.material : [targetMesh.material];
+                            const material = materials[materialIndex] || materials[0];
+                            
+                            // 检测材质类型
+                            const materialType = material.type;
+                            const isMeshBasic = material instanceof THREE.MeshBasicMaterial;
+                            const isMeshLambert = material instanceof THREE.MeshLambertMaterial;
+                            const isMeshPhong = material instanceof THREE.MeshPhongMaterial;
+                            const isMeshStandard = material instanceof THREE.MeshStandardMaterial;
+                            
+                            return (
+                              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                                {materials.length > 1 && (
+                                  <Select
+                                    size="small"
+                                    value={materialIndex}
+                                    onChange={setMaterialIndex}
+                                    style={{ width: '100%' }}
+                                  >
+                                    {materials.map((_, idx) => (
+                                      <Select.Option key={idx} value={idx}>材质 {idx + 1}</Select.Option>
+                                    ))}
+                                  </Select>
+                                )}
+                                
+                                <div style={{ fontSize: '12px', color: '#666' }}>
+                                  类型: {materialType}
+                                </div>
+                                
+                                {/* 所有材质共有属性 */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                  <span style={{ fontSize: '12px' }}>颜色</span>
+                                  <Input
+                                    size="small"
+                                    type="color"
+                                    value={`#${(material as any).color?.getHexString() || 'ffffff'}`}
+                                    onChange={(e) => {
+                                      if ((material as any).color) {
+                                        (material as any).color.setStyle(e.target.value);
+                                        material.needsUpdate = true;
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                  <span style={{ fontSize: '12px' }}>透明</span>
+                                  <Switch
+                                    size="small"
+                                    checked={material.transparent}
+                                    onChange={(checked) => {
+                                      material.transparent = checked;
+                                      material.needsUpdate = true;
+                                    }}
+                                  />
+                                </div>
+                                
+                                {material.transparent && (
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                    <span style={{ fontSize: '12px' }}>透明度</span>
+                                    <Slider
+                                      min={0}
+                                      max={1}
+                                      step={0.01}
+                                      value={material.opacity}
+                                      onChange={(value) => {
+                                        material.opacity = value;
+                                        material.needsUpdate = true;
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                  <span style={{ fontSize: '12px' }}>渲染面</span>
+                                  <Select
+                                    size="small"
+                                    value={material.side}
+                                    onChange={(value) => {
+                                      material.side = value;
+                                      material.needsUpdate = true;
+                                    }}
+                                    style={{ width: '100%' }}
+                                  >
+                                    <Select.Option value={THREE.FrontSide}>正面</Select.Option>
+                                    <Select.Option value={THREE.BackSide}>背面</Select.Option>
+                                    <Select.Option value={THREE.DoubleSide}>双面</Select.Option>
+                                  </Select>
+                                </div>
+                                
+                                {/* MeshStandardMaterial 特有属性 */}
+                                {isMeshStandard && (
+                                  <>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>金属度</span>
+                                      <Slider
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        value={(material as THREE.MeshStandardMaterial).metalness}
+                                        onChange={(value) => {
+                                          (material as THREE.MeshStandardMaterial).metalness = value;
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>粗糙度</span>
+                                      <Slider
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        value={(material as THREE.MeshStandardMaterial).roughness}
+                                        onChange={(value) => {
+                                          (material as THREE.MeshStandardMaterial).roughness = value;
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>自发光</span>
+                                      <Input
+                                        size="small"
+                                        type="color"
+                                        value={`#${(material as THREE.MeshStandardMaterial).emissive?.getHexString() || '000000'}`}
+                                        onChange={(e) => {
+                                          (material as THREE.MeshStandardMaterial).emissive?.setStyle(e.target.value);
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>自发光强度</span>
+                                      <Slider
+                                        min={0}
+                                        max={10}
+                                        step={0.1}
+                                        value={(material as THREE.MeshStandardMaterial).emissiveIntensity}
+                                        onChange={(value) => {
+                                          (material as THREE.MeshStandardMaterial).emissiveIntensity = value;
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                  </>
+                                )}
+                                
+                                {/* MeshPhongMaterial 特有属性 */}
+                                {isMeshPhong && (
+                                  <>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>高光颜色</span>
+                                      <Input
+                                        size="small"
+                                        type="color"
+                                        value={`#${(material as THREE.MeshPhongMaterial).specular?.getHexString() || 'ffffff'}`}
+                                        onChange={(e) => {
+                                          (material as THREE.MeshPhongMaterial).specular?.setStyle(e.target.value);
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>光泽度</span>
+                                      <Slider
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={(material as THREE.MeshPhongMaterial).shininess}
+                                        onChange={(value) => {
+                                          (material as THREE.MeshPhongMaterial).shininess = value;
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px' }}>自发光</span>
+                                      <Input
+                                        size="small"
+                                        type="color"
+                                        value={`#${(material as THREE.MeshPhongMaterial).emissive?.getHexString() || '000000'}`}
+                                        onChange={(e) => {
+                                          (material as THREE.MeshPhongMaterial).emissive?.setStyle(e.target.value);
+                                          material.needsUpdate = true;
+                                        }}
+                                      />
+                                    </div>
+                                  </>
+                                )}
+                                
+                                {/* MeshLambertMaterial 特有属性 */}
+                                {isMeshLambert && (
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                    <span style={{ fontSize: '12px' }}>自发光</span>
+                                    <Input
+                                      size="small"
+                                      type="color"
+                                      value={`#${(material as THREE.MeshLambertMaterial).emissive?.getHexString() || '000000'}`}
+                                      onChange={(e) => {
+                                        (material as THREE.MeshLambertMaterial).emissive?.setStyle(e.target.value);
+                                        material.needsUpdate = true;
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                              </Space>
+                            );
+                          })()}
+                          <Divider style={{ margin: '8px 0' }} />
+                        </>
+                      );
+                    })()}
+                    
                     {isAnnotationPlacing ? (
                       <Flex vertical gap={8}>
                         <div style={{ color: '#1890ff', fontWeight: 'bold' }}>

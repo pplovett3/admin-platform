@@ -1,0 +1,167 @@
+========================================
+NAS 部署命令 - 按顺序执行
+========================================
+
+【第一步】在本地 PowerShell 中执行 SSH 连接：
+------------------------------------------
+ssh Tyrael@192.168.0.239
+
+
+【第二步】连接成功后，在 NAS 终端中执行以下所有命令：
+------------------------------------------
+
+# 1. 创建目录
+mkdir -p /volume1/docker/admin-platform/mongodb
+mkdir -p /volume1/docker/admin-platform/storage
+cd /volume1/docker/admin-platform
+
+# 2. 创建 docker-compose.yml 文件
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: admin-platform-mongo
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=AdminPlatform2024
+    volumes:
+      - /volume1/docker/admin-platform/mongodb:/data/db
+    networks:
+      - admin-platform-network
+
+  server:
+    image: crpi-uiz8h842zcgpj6r1.cn-shanghai.personal.cr.aliyuncs.com/admin-platform/admin-platform-server:v1.0.0
+    container_name: admin-platform-server
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - MONGODB_URI=mongodb://admin:AdminPlatform2024@mongo:27017/admin-platform?authSource=admin
+      - JWT_SECRET=Kj8mP2nQ9vL5xR7wT3AdminPlatform2024Secret
+      - STORAGE_ROOT=/storage
+      - DEEPSEEK_API_KEY=sk-a5cc44206c5d411cbb633cd73a6c8bd0
+      - METASO_API_KEY=mk-53C55DF41C6C448FD0BA54190CDA2A2F
+      - MINIMAX_API_KEY=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJHcm91cE5hbWUiOiLllJDkuIfnvr0iLCJVc2VyTmFtZSI6IuWUkOS4h-e-vSIsIkFjY291bnQiOiIiLCJTdWJqZWN0SUQiOiIxOTY2NzY5NjU4MjcwODUxMTQ3IiwiUGhvbmUiOiIxMzU2NDcxOTc1NSIsIkdyb3VwSUQiOiIxOTY2NzY5NjU4MjYyNDYyNTM5IiwiUGFnZU5hbWUiOiIiLCJNYWlsIjoiIiwiQ3JlYXRlVGltZSI6IjIwMjUtMDktMTMgMjE6NDc6NTYiLCJUb2tlblR5cGUiOjEsImlzcyI6Im1pbmltYXgifQ.IKh6IYYwV3gMaNsSu-kqt6yPOewN8ZdNTqGKUhI7033Rd85_mt6U2VbahTfAG5f4pNrm-ygO7OfagsQN45PLXl5SxPwuRwOqYq7BuUDWDe-2LtvLlkxcX7yUjV5N3xXGHX-MC2Q2Wrz0-P1yl3pfEiSsKOc7QwAukzGnrL6IIBdufAkAZ-0Qs0Zw5R9aZd3S8wNp9z8E8hfea17RXPcJ--hql-jSa4wpOGgWrh-OS-Mwl8gFZEK-VknTb_T70XQ4ADRsUkAtoo6ijrRzE9J1EJRs9ej3Yt612dGt_bRAQ7z8ZfzVgyySt6zsjHaOWFX_qWpBclSei4lvYh_Ut_XoA
+      - MINIMAX_BASE_URL=https://api.minimaxi.com
+      - AZURE_SPEECH_KEY=7d4ffd0999c5467aa2dc8c1b4467ace6
+      - AZURE_SPEECH_REGION=eastasia
+      - FRONTEND_PORT=3001
+    volumes:
+      - /volume1/docker/admin-platform/storage:/storage
+    ports:
+      - "4000:4000"
+    networks:
+      - admin-platform-network
+
+  web:
+    image: crpi-uiz8h842zcgpj6r1.cn-shanghai.personal.cr.aliyuncs.com/admin-platform/admin-platform-web:v1.0.0
+    container_name: admin-platform-web
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      - NEXT_PUBLIC_API_URL=http://192.168.0.239:4000
+    ports:
+      - "3001:3000"
+    networks:
+      - admin-platform-network
+
+networks:
+  admin-platform-network:
+    driver: bridge
+EOF
+
+# 3. 验证文件创建成功
+ls -lh docker-compose.yml
+echo "配置文件创建完成！"
+
+# 4. 清理旧容器（如果有）
+docker-compose down
+
+# 5. 登录阿里云镜像仓库
+docker login --username=唐万羽 crpi-uiz8h842zcgpj6r1.cn-shanghai.personal.cr.aliyuncs.com
+# 输入密码：Tt19910805
+
+# 6. 拉取镜像
+docker-compose pull
+
+# 7. 启动服务
+docker-compose up -d
+
+# 8. 等待5秒后查看状态
+sleep 5
+docker-compose ps
+
+# 9. 查看日志（可选，Ctrl+C 退出）
+docker-compose logs -f
+
+
+========================================
+部署完成后的访问信息
+========================================
+
+访问地址：http://192.168.0.239:3001
+
+默认账号：
+  用户名：admin
+  密码：admin123
+
+
+========================================
+常用管理命令
+========================================
+
+# 查看服务状态
+docker-compose ps
+
+# 查看所有日志
+docker-compose logs -f
+
+# 查看特定服务日志
+docker-compose logs -f server
+docker-compose logs -f web
+docker-compose logs -f mongo
+
+# 重启服务
+docker-compose restart
+
+# 停止服务
+docker-compose stop
+
+# 停止并删除容器
+docker-compose down
+
+# 更新镜像并重启
+docker-compose pull
+docker-compose up -d
+
+
+========================================
+故障排查
+========================================
+
+# 如果服务无法启动，检查端口占用
+netstat -tuln | grep -E '3001|4000|27017'
+
+# 如果需要重置数据库
+docker-compose down
+rm -rf /volume1/docker/admin-platform/mongodb/*
+docker-compose up -d
+
+# 查看容器资源使用
+docker stats
+
+# 进入容器内部调试
+docker exec -it admin-platform-server sh
+docker exec -it admin-platform-web sh
+docker exec -it admin-platform-mongo mongosh
+
+
+========================================
+
+

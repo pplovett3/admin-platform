@@ -18,6 +18,8 @@ import coursewaresRoutes from './routes/coursewares.routes';
 import aiCoursesRoutes from './routes/ai-courses.routes';
 import aiRoutes from './routes/ai.routes';
 import publishRoutes from './routes/publish.routes';
+import activationCodesRoutes from './routes/activation-codes.routes';
+import activationRoutes from './routes/activation.routes';
 
 async function migrateLegacyRoles(): Promise<void> {
   await UserModel.updateMany({ role: 'admin' as any }, { $set: { role: 'superadmin' } }).catch(() => undefined);
@@ -86,7 +88,13 @@ async function bootstrap() {
     origin: [
       'http://106.15.229.165:3000',
       'http://localhost:3000',
-      'http://127.0.0.1:3000'
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001',
+      'http://192.168.0.239:3000',
+      'http://192.168.0.239:3001',
+      'https://platform.yf-xr.com',  // Cloudflare Tunnel 前端域名
+      'https://api.platform.yf-xr.com'  // Cloudflare Tunnel 后端域名
     ],
     credentials: true,
     methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
@@ -114,6 +122,8 @@ async function bootstrap() {
   app.use('/api/ai-courses', aiCoursesRoutes);
   app.use('/api/ai', aiRoutes);
   app.use('/api', publishRoutes);
+  app.use('/api/activation-codes', activationCodesRoutes);
+  app.use('/api/activation', activationRoutes);
 
   app.listen(config.port, () => {
     console.log('Server listening on port ' + config.port);

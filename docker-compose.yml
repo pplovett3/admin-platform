@@ -6,8 +6,9 @@ services:
     restart: unless-stopped
     volumes:
       - mongo-data:/data/db
-    ports:
-      - "27017:27017"
+    # 端口不对外暴露，仅容器内部访问（避免冲突且更安全）
+    # ports:
+    #   - "27017:27017"
 
   server:
     build:
@@ -17,9 +18,22 @@ services:
     restart: unless-stopped
     environment:
       - PORT=4000
+      - FRONTEND_PORT=3001
       - MONGODB_URI=mongodb://mongo:27017/admin_platform
       - JWT_SECRET=${JWT_SECRET:-change_me}
-      - STORAGE_ROOT=Y:\\metaclassroom
+      - STORAGE_ROOT=/storage
+      # AI 服务配置
+      - DEEPSEEK_API_KEY=sk-a5cc44206c5d411cbb633cd73a6c8bd0
+      - DEEPSEEK_BASE_URL=https://api.deepseek.com
+      - METASO_API_KEY=mk-53C55DF41C6C448FD0BA54190CDA2A2F
+      - METASO_BASE_URL=https://metaso.cn
+      - MINIMAX_API_KEY=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJHcm91cE5hbWUiOiLllJDkuIfnvr0iLCJVc2VyTmFtZSI6IuWUkOS4h-e-vSIsIkFjY291bnQiOiIiLCJTdWJqZWN0SUQiOiIxOTY2NzY5NjU4MjcwODUxMTQ3IiwiUGhvbmUiOiIxMzU2NDcxOTc1NSIsIkdyb3VwSUQiOiIxOTY2NzY5NjU4MjYyNDYyNTM5IiwiUGFnZU5hbWUiOiIiLCJNYWlsIjoiIiwiQ3JlYXRlVGltZSI6IjIwMjUtMDktMTMgMjE6NDc6NTYiLCJUb2tlblR5cGUiOjEsImlzcyI6Im1pbmltYXgifQ.IKh6IYYwV3gMaNsSu-kqt6yPOewN8ZdNTqGKUhI7033Rd85_mt6U2VbahTfAG5f4pNrm-ygO7OfagsQN45PLXl5SxPwuRwOqYq7BuUDWDe-2LtvLlkxcX7yUjV5N3xXGHX-MC2Q2Wrz0-P1yl3pfEiSsKOc7QwAukzGnrL6IIBdufAkAZ-0Qs0Zw5R9aZd3S8wNp9z8E8hfea17RXPcJ--hql-jSa4wpOGgWrh-OS-Mwl8gFZEK-VknTb_T70XQ4ADRsUkAtoo6ijrRzE9J1EJRs9ej3Yt612dGt_bRAQ7z8ZfzVgyySt6zsjHaOWFXC_qWpBclSei4lvYh_Ut_XoA
+      - MINIMAX_BASE_URL=https://api.minimaxi.com
+      # Azure TTS 配置
+      - AZURE_SPEECH_KEY=7d4ffd0999c5467aa2dc8c1b4467ace6
+      - AZURE_SPEECH_REGION=eastasia
+    volumes:
+      - D:/docker-storage:/storage
     depends_on:
       - mongo
     ports:
@@ -29,14 +43,16 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:4000
     container_name: admin-platform-web
     restart: unless-stopped
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+      - NEXT_PUBLIC_API_URL=http://localhost:4000
     depends_on:
       - server
     ports:
-      - "3000:3000"
+      - "3001:3000"
 
 volumes:
   mongo-data: 

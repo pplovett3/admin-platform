@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YF课程启动器</title>
+  <script>
+    // Fix for Electron renderer process
+    window.global = window;
+    window.process = window.process || { env: {} };
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>
+

@@ -1,6 +1,17 @@
 "use client";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+// 动态获取 API URL：使用相对路径通过 Nginx 反向代理
+export const API_URL = (() => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  // 运行时使用当前域名（通过 Nginx 代理）
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  // SSR 时使用 localhost
+  return "http://localhost:4000";
+})();
 
 export function getToken(): string {
 	try {

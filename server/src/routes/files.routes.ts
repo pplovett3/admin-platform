@@ -137,7 +137,7 @@ router.get('/mine', authenticate as any, async (req, res) => {
     originalName: r.originalName,
     size: r.size,
     createdAt: r.createdAt,
-    downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`,
+    downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`,
     viewUrl: (r.type==='image'||r.type==='video'||r.type==='model') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined,
     visibility: r.visibility,
   }));
@@ -146,7 +146,11 @@ router.get('/mine', authenticate as any, async (req, res) => {
 
 router.get('/public', authenticate as any, async (_req, res) => {
   const { type, q, page = '1', pageSize = '20' } = _req.query as any;
-  const filter: any = { visibility: 'public' };
+  const filter: any = { 
+    visibility: 'public',
+    // 排除 TTS 自动生成的音频文件
+    storageDir: { $not: /^tts\// }
+  };
   if (type) filter.type = type;
   if (q) filter.originalName = { $regex: String(q), $options: 'i' };
   const p = Math.max(parseInt(String(page), 10) || 1, 1);
@@ -155,25 +159,30 @@ router.get('/public', authenticate as any, async (_req, res) => {
     FileModel.find(filter).sort({ createdAt: -1 }).skip((p - 1) * ps).limit(ps).lean(),
     FileModel.countDocuments(filter),
   ]);
-  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: kindToZh(r.type), originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download`, viewUrl: (r.type==='image'||r.type==='video'||r.type==='model') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined })), total, page: p, pageSize: ps });
+  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: kindToZh(r.type), originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`, viewUrl: (r.type==='image'||r.type==='video'||r.type==='model') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined })), total, page: p, pageSize: ps });
 });
 
 router.get('/client/mine', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string };
   const rows = await FileModel.find({ ownerUserId: new mongoose.Types.ObjectId(current.userId) }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
-  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download` }));
+  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
   res.json({ rows: mapped });
 });
 
 router.get('/client/public', authenticate as any, async (_req, res) => {
-  const rows = await FileModel.find({ visibility: 'public' }).sort({ createdAt: -1 }).lean();
+  // 排除 TTS 自动生成的音频文件
+  const rows = await FileModel.find({ 
+    visibility: 'public',
+    storageDir: { $not: /^tts\// }
+  }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
-  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download` }));
+  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
   res.json({ rows: mapped });
 });
 
-router.get('/:id/download', authenticate as any, async (req, res) => {
+// 支持带文件名和不带文件名的下载URL
+const handleDownload = async (req: any, res: any) => {
   const current = (req as any).user as { userId: string; role: string };
   const id = req.params.id;
   if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
@@ -188,6 +197,11 @@ router.get('/:id/download', authenticate as any, async (req, res) => {
   if (!fs.existsSync(abs)) return res.status(404).json({ message: 'File content missing' });
 
   const stat = fs.statSync(abs);
+  
+  // 设置 Content-Disposition 响应头，让客户端知道文件名和扩展名
+  const filename = (doc as any).originalName || `file.${(doc as any).ext}`;
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
+  
   const range = (req.headers.range || '').toString();
   if (range && /^bytes=/.test(range)) {
     const [startStr, endStr] = range.replace('bytes=', '').split('-');
@@ -203,7 +217,10 @@ router.get('/:id/download', authenticate as any, async (req, res) => {
   }
   res.setHeader('Content-Length', String(stat.size));
   fs.createReadStream(abs).pipe(res);
-});
+};
+
+router.get('/:id/download/:filename', authenticate as any, handleDownload);
+router.get('/:id/download', authenticate as any, handleDownload);
 
 router.post('/upload', authenticate as any, upload.single('file'), async (req, res) => {
   try {
@@ -278,7 +295,7 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     } as any);
 
     const savedId = ((saved as any)._id || '').toString();
-    const downloadUrl = `/api/files/${savedId}/download`;
+    const downloadUrl = `/api/files/${savedId}/download/${encodeURIComponent(decodedName)}`;
     return res.json({ ok: true, file: saved, downloadUrl });
   } catch (e: any) {
     console.error('upload failed:', e);

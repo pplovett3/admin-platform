@@ -13,6 +13,8 @@ import {
 	ExperimentOutlined,
 	FileOutlined,
 	SafetyOutlined,
+	KeyOutlined,
+	UnorderedListOutlined,
 } from '@ant-design/icons';
 import { usePathname } from 'next/navigation';
 
@@ -39,6 +41,9 @@ export default function ClientNav() {
 			list.push({ key: '/analytics', icon: <ExperimentOutlined />, label: <Link href="/analytics">数据总览</Link> });
 		}
 
+		// 激活课程（所有用户都可见）
+		list.push({ key: '/activate', icon: <KeyOutlined />, label: <Link href="/activate">激活课程</Link> });
+
 		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
 			list.push({ key: '/users', icon: <TeamOutlined />, label: <Link href="/users">用户管理</Link> });
 		}
@@ -60,8 +65,9 @@ export default function ClientNav() {
 		if (role === 'superadmin' || metaverseAllowed) {
 			list.push({ key: '/resources', icon: <FileOutlined />, label: <Link href="/resources">资源管理</Link> });
 		}
-		if (role === 'superadmin' || role === 'schoolAdmin') {
-			list.push({ key: '/admin/enrollments', icon: <DeploymentUnitOutlined />, label: <Link href="/admin/enrollments">课程分配</Link> });
+		if (role === 'superadmin') {
+			list.push({ key: '/admin/activation-codes', icon: <KeyOutlined />, label: <Link href="/admin/activation-codes">激活码管理</Link> });
+			list.push({ key: '/admin/activations', icon: <UnorderedListOutlined />, label: <Link href="/admin/activations">激活记录</Link> });
 		}
 		return list;
 	}, [role, metaverseAllowed]);

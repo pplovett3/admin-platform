@@ -83,4 +83,119 @@ router.get('/public/proxy', async (req, res) => {
   }
 });
 
+// 公开文件下载 API（无需认证）- 用于公开课程的文件访问
+router.get('/public/files/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const fs = await import('fs');
+    const path = await import('path');
+    const mongoose = await import('mongoose');
+    const { config } = await import('../config/env');
+    const { FileModel } = await import('../models/File');
+    
+    if (!mongoose.Types.ObjectId.isValid(fileId)) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+    
+    const file = await FileModel.findById(fileId).lean();
+    if (!file) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+    
+    // 公开课程的文件无需检查 visibility，允许访问
+    // （此路由专门用于已发布课程的资源访问）
+    
+    const filePath = path.join(config.storageRoot, file.storageRelPath);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: 'File content not found' });
+    }
+    
+    const stat = fs.statSync(filePath);
+    const range = req.headers.range;
+    
+    // 支持范围请求（用于大文件和流媒体）
+    if (range && /^bytes=/.test(range)) {
+      const [startStr, endStr] = range.replace('bytes=', '').split('-');
+      let start = parseInt(startStr, 10) || 0;
+      let end = endStr ? parseInt(endStr, 10) : stat.size - 1;
+      if (start > end) start = 0;
+      
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', String(end - start + 1));
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+      return;
+    }
+    
+    // 普通请求
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    fs.createReadStream(filePath).pipe(res);
+    
+  } catch (error) {
+    console.error('Public file download error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// 公开课件文件下载 API（无需认证）
+router.get('/public/courseware-file', async (req, res) => {
+  try {
+    const { path: relPath } = req.query;
+    const fs = await import('fs');
+    const path = await import('path');
+    const { config } = await import('../config/env');
+    
+    if (!relPath || typeof relPath !== 'string') {
+      return res.status(400).json({ message: 'Path parameter is required' });
+    }
+    
+    // 安全检查：只允许访问modifiedModels目录下的文件
+    if (!relPath.startsWith('modifiedModels/')) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    const fullPath = path.join(config.storageRoot, relPath);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+    
+    const stat = fs.statSync(fullPath);
+    const range = req.headers.range;
+    
+    // 支持范围请求
+    if (range && /^bytes=/.test(range)) {
+      const [startStr, endStr] = range.replace('bytes=', '').split('-');
+      let start = parseInt(startStr, 10) || 0;
+      let end = endStr ? parseInt(endStr, 10) : stat.size - 1;
+      if (start > end) start = 0;
+      
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', String(end - start + 1));
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      
+      fs.createReadStream(fullPath, { start, end }).pipe(res);
+      return;
+    }
+    
+    // 普通请求
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    fs.createReadStream(fullPath).pipe(res);
+    
+  } catch (error) {
+    console.error('Public courseware file download error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 export default router;

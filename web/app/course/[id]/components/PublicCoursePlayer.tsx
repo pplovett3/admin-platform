@@ -68,29 +68,29 @@ export default function PublicCoursePlayer({
     const isAndroid = /Android/i.test(navigator.userAgent);
     const isMobile = isIOS || isAndroid;
     
-    console.log('🔍 设备检测:', {
-      userAgent: navigator.userAgent,
-      isIOS,
-      isAndroid,
-      isMobile,
-      isPlaying,
-      needsUserInteraction,
-      audioContextState: audioContext?.state || 'none'
-    });
+    // console.log('🔍 设备检测:', {
+    //   userAgent: navigator.userAgent,
+    //   isIOS,
+    //   isAndroid,
+    //   isMobile,
+    //   isPlaying,
+    //   needsUserInteraction,
+    //   audioContextState: audioContext?.state || 'none'
+    // });
     
     if (isMobile) {
-      console.log('📱 检测到移动端设备');
+      // console.log('📱 检测到移动端设备');
       
       // iOS设备需要特殊处理
       if (isIOS) {
         // iOS总是需要用户交互来启用音频
         setShowMobileAudioButton(true);
-        console.log('🍎 iOS设备：立即显示音频按钮');
+        // console.log('🍎 iOS设备：立即显示音频按钮');
       } else if (isAndroid) {
         // Android检查AudioContext状态
         if (!audioContext || audioContext.state === 'suspended') {
           setShowMobileAudioButton(true);
-          console.log('🤖 Android设备：AudioContext未初始化，显示音频按钮');
+          // console.log('🤖 Android设备：AudioContext未初始化，显示音频按钮');
         }
       }
       
@@ -98,7 +98,7 @@ export default function PublicCoursePlayer({
       if (isPlaying && needsUserInteraction) {
         const timer = setTimeout(() => {
           setShowMobileAudioButton(true);
-          console.log('📱 播放中检测到需要用户交互，显示音频按钮');
+          // console.log('📱 播放中检测到需要用户交互，显示音频按钮');
         }, 500); // 减少延迟到500ms
         
         return () => clearTimeout(timer);
@@ -159,7 +159,7 @@ export default function PublicCoursePlayer({
       
       setAudioContext(ctx);
       setNeedsUserInteraction(false);
-      console.log('AudioContext初始化成功:', ctx.state);
+      // console.log('AudioContext初始化成功:', ctx.state);
       return ctx;
     } catch (error) {
       console.error('AudioContext初始化失败:', error);
@@ -194,7 +194,7 @@ export default function PublicCoursePlayer({
       }
       
       await audio.play();
-      console.log('音频播放成功:', audioUrl);
+      // console.log('音频播放成功:', audioUrl);
     } catch (error: any) {
       if (error.name === 'NotAllowedError') {
         console.warn('音频自动播放被阻止，尝试用户交互');
@@ -275,11 +275,11 @@ export default function PublicCoursePlayer({
   const handleManualAudioPlay = async () => {
     try {
       const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-      console.log('🔊 用户手动启动音频播放, iOS:', isIOS);
+      // console.log('🔊 用户手动启动音频播放, iOS:', isIOS);
       
       // iOS需要特殊的音频解锁序列
       if (isIOS) {
-        console.log('🍎 执行iOS音频解锁序列');
+        // console.log('🍎 执行iOS音频解锁序列');
         
         // 1. 创建多个不同格式的测试音频
         const iosTestAudios = [
@@ -300,7 +300,7 @@ export default function PublicCoursePlayer({
             const playPromise = new Promise<void>((resolve, reject) => {
               testAudio.oncanplay = () => {
                 testAudio.play().then(() => {
-                  console.log(`✅ iOS ${audioData.type} 音频测试成功`);
+                  // console.log(`✅ iOS ${audioData.type} 音频测试成功`);
                   testAudio.pause();
                   resolve();
                 }).catch(reject);
@@ -312,7 +312,7 @@ export default function PublicCoursePlayer({
             await playPromise;
             break; // 成功一个就够了
           } catch (e: any) {
-            console.log(`❌ iOS ${audioData.type} 音频测试失败:`, e.name);
+            // console.log(`❌ iOS ${audioData.type} 音频测试失败:`, e.name);
           }
         }
         
@@ -325,21 +325,21 @@ export default function PublicCoursePlayer({
             // iOS需要在用户交互中初始化
             if (ctx.state === 'suspended') {
               await ctx.resume();
-              console.log('🍎 iOS AudioContext 恢复成功');
+              // console.log('🍎 iOS AudioContext 恢复成功');
             }
             
             setAudioContext(ctx);
           } else if (audioContext.state === 'suspended') {
             await audioContext.resume();
-            console.log('🍎 iOS AudioContext 重新恢复');
+            // console.log('🍎 iOS AudioContext 重新恢复');
           }
         } catch (e: any) {
-          console.log('❌ iOS AudioContext 初始化失败:', e.name);
+          console.error('⚠️ iOS AudioContext 初始化失败:', e.name);
         }
         
       } else {
         // Android 和其他设备的处理
-        console.log('🤖 执行标准音频解锁序列');
+        // console.log('🤖 执行标准音频解锁序列');
         
         // 静音音频解锁
         const unlockAudio = new Audio();
@@ -349,9 +349,9 @@ export default function PublicCoursePlayer({
         
         try {
           await unlockAudio.play();
-          console.log('✅ 标准音频权限解锁成功');
+          // console.log('✅ 标准音频权限解锁成功');
         } catch (e) {
-          console.log('❌ 静音音频播放失败:', e);
+          // console.log('❌ 静音音频播放失败:', e);
         }
         
         // 初始化音频上下文
@@ -368,7 +368,7 @@ export default function PublicCoursePlayer({
       }
       
       message.success('🎵 音频已启用，播放将继续进行');
-      console.log('🎉 音频手动启用完成');
+      // console.log('🎉 音频手动启用完成');
     } catch (error) {
       console.error('💥 手动启动音频失败:', error);
       message.error('音频启动失败，请重试');
@@ -376,11 +376,11 @@ export default function PublicCoursePlayer({
   };
 
   const startPlayback = async () => {
-    console.log('🎬 开始播放前检查');
+    // console.log('🎬 开始播放前检查');
     
     // 确保3D模型已加载
     if (courseData?.coursewareData?.modifiedModelUrl && viewerControlsRef.current) {
-      console.log('🎯 确保3D模型加载完成');
+      // console.log('🎯 确保3D模型加载完成');
       // 等待3D视图器准备好
       await new Promise(resolve => setTimeout(resolve, 500));
     }
@@ -393,7 +393,7 @@ export default function PublicCoursePlayer({
     const currentItem = getCurrentItem();
     if (!currentItem) return;
 
-    console.log('🎬 播放步骤:', currentItem);
+    // console.log('🎬 播放步骤:', currentItem);
     
     // 清除之前的定时器
     if (playbackTimerRef.current) {
@@ -448,12 +448,12 @@ export default function PublicCoursePlayer({
   };
 
   const executeTalkItem = async (item: any): Promise<number> => {
-    console.log('执行talk步骤:', {
-      type: item.type,
-      say: item.say?.substring(0, 50) + '...',
-      audioUrl: item.audioUrl,
-      hasAudio: !!item.audioUrl
-    });
+    // console.log('执行talk步骤:', {
+    //   type: item.type,
+    //   say: item.say?.substring(0, 50) + '...',
+    //   audioUrl: item.audioUrl,
+    //   hasAudio: !!item.audioUrl
+    // });
     
     setCurrentSubtitle(item.say || '');
     
@@ -464,14 +464,20 @@ export default function PublicCoursePlayer({
     
     // 播放音频（如果有）
     if (item.audioUrl) {
-      console.log('播放音频:', item.audioUrl);
+      // console.log('播放音频:', item.audioUrl);
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 使用公开代理来解决CORS问题
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
         let audioUrl = item.audioUrl;
-        if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
-          audioUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
+        
+        // 处理相对路径
+        if (audioUrl.startsWith('/')) {
+          audioUrl = `${baseUrl}${audioUrl}`;
+        }
+        // 使用公开代理来解决CORS问题
+        else if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+          audioUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
         }
         
         audio.src = audioUrl;
@@ -505,7 +511,7 @@ export default function PublicCoursePlayer({
           
           // 检查是否是用户交互限制
           if (error.name === 'NotAllowedError') {
-            console.log('需要用户交互才能播放音频，显示文本替代');
+            // console.log('需要用户交互才能播放音频，显示文本替代');
             // 设置音频为预备状态，等待用户交互后播放
             playbackState.currentAudio = audio;
             // 显示提示用户点击播放
@@ -550,15 +556,15 @@ export default function PublicCoursePlayer({
   };
 
   const executeImageExplainItem = async (item: any): Promise<number> => {
-    console.log('执行image.explain步骤:', {
-      type: item.type,
-      say: item.say?.substring(0, 50) + '...',
-      audioUrl: item.audioUrl,
-      imageUrl: item.imageUrl,
-      originalImageUrl: item.originalImageUrl,
-      hasAudio: !!item.audioUrl,
-      allKeys: Object.keys(item)
-    });
+    // console.log('执行image.explain步骤:', {
+    //   type: item.type,
+    //   say: item.say?.substring(0, 50) + '...',
+    //   audioUrl: item.audioUrl,
+    //   imageUrl: item.imageUrl,
+    //   originalImageUrl: item.originalImageUrl,
+    //   hasAudio: !!item.audioUrl,
+    //   allKeys: Object.keys(item)
+    // });
     
     setCurrentSubtitle(item.say || '');
     
@@ -585,11 +591,11 @@ export default function PublicCoursePlayer({
         title: item.imageTitle || item.say || 'Course Image'
       });
       
-      console.log('设置图片显示:', {
-        原始URL: imageUrl,
-        处理后URL: processedImageUrl,
-        来源: item.imageUrl ? 'imageUrl' : item.image?.src ? 'image.src' : 'originalImageUrl'
-      });
+      // console.log('设置图片显示:', {
+      //   原始URL: imageUrl,
+      //   处理后URL: processedImageUrl,
+      //   来源: item.imageUrl ? 'imageUrl' : item.image?.src ? 'image.src' : 'originalImageUrl'
+      // });
     } else {
       console.warn('未找到图片URL:', {
         hasImageUrl: !!item.imageUrl,
@@ -606,14 +612,20 @@ export default function PublicCoursePlayer({
     
     // 播放音频（如果有）
     if (item.audioUrl) {
-      console.log('播放image.explain音频:', item.audioUrl);
+      // console.log('播放image.explain音频:', item.audioUrl);
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 使用公开代理来解决CORS问题
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
         let audioUrl = item.audioUrl;
-        if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
-          audioUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
+        
+        // 处理相对路径
+        if (audioUrl.startsWith('/')) {
+          audioUrl = `${baseUrl}${audioUrl}`;
+        }
+        // 使用公开代理来解决CORS问题
+        else if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+          audioUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
         }
         
         audio.src = audioUrl;
@@ -690,41 +702,68 @@ export default function PublicCoursePlayer({
   };
 
   const executeSceneActionItem = async (item: any): Promise<number> => {
-    console.log('执行scene.action步骤:', {
-      type: item.type,
-      say: item.say?.substring(0, 50) + '...',
-      audioUrl: item.audioUrl,
-      actions: item.actions,
-      hasAudio: !!item.audioUrl
-    });
+    // console.log('执行scene.action步骤:', {
+    //   type: item.type,
+    //   say: item.say?.substring(0, 50) + '...',
+    //   audioUrl: item.audioUrl,
+    //   actions: item.actions,
+    //   hasAudio: !!item.audioUrl
+    // });
     
     setCurrentSubtitle(item.say || '');
     
-    // 执行3D动作
+    // 执行3D动作并获取动画持续时间
+    let animationDuration = 0;
     if (item.actions && viewerControlsRef.current) {
-      executeActionsWithControls(item.actions, viewerControlsRef.current);
+      animationDuration = executeActionsWithControls(item.actions, viewerControlsRef.current);
     }
     
     // 播放音频（如果有）
     if (item.audioUrl) {
-      console.log('播放scene.action音频:', item.audioUrl);
+      // console.log('播放scene.action音频:', item.audioUrl);
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 使用公开代理来解决CORS问题
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
         let audioUrl = item.audioUrl;
-        if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
-          audioUrl = `/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
+        
+        // 处理相对路径
+        if (audioUrl.startsWith('/')) {
+          audioUrl = `${baseUrl}${audioUrl}`;
+        }
+        // 使用公开代理来解决CORS问题
+        else if (audioUrl.startsWith('https://dl.yf-xr.com/')) {
+          audioUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(audioUrl)}`;
         }
         
         audio.src = audioUrl;
         playbackState.currentAudio = audio;
         
-        audio.onended = () => {
-          setCurrentSubtitle('');
-          // 立即解析，不等待额外时间
-          resolve(0); // 返回0表示立即跳转
+        let audioEnded = false;
+        let animationEnded = false;
+        
+        const checkBothEnded = () => {
+          if (audioEnded && animationEnded) {
+            setCurrentSubtitle('');
+            resolve(0); // 音频和动画都完成，立即跳转
+          }
         };
+        
+        audio.onended = () => {
+          audioEnded = true;
+          checkBothEnded();
+        };
+        
+        // 如果有动画，等待动画完成
+        if (animationDuration > 0) {
+          setTimeout(() => {
+            animationEnded = true;
+            checkBothEnded();
+          }, animationDuration * 1000);
+        } else {
+          // 没有动画，直接标记为完成
+          animationEnded = true;
+        }
         
         audio.onerror = (error) => {
           console.error('scene.action音频播放失败:', error);
@@ -761,18 +800,47 @@ export default function PublicCoursePlayer({
         });
       });
     } else {
-      // 没有音频时，模拟播放
+      // 没有音频时，等待动画完成或使用估算时间
       return new Promise((resolve) => {
         const estimatedDuration = Math.max(3, (item.say?.length || 0) * 0.15);
+        const waitDuration = Math.max(animationDuration, estimatedDuration);
+        
         setTimeout(() => {
           setCurrentSubtitle('');
-          resolve(estimatedDuration);
-        }, estimatedDuration * 1000);
+          resolve(0);
+        }, waitDuration * 1000);
       });
     }
   };
 
-  const executeActionsWithControls = (actions: any[], viewerControls: any) => {
+  const executeActionsWithControls = (actions: any[], viewerControls: any): number => {
+    let maxAnimationDuration = 0;
+    let maxActionDelay = 0;
+    
+    // 先同步计算所有动画的持续时间和延迟
+    actions.forEach((action, index) => {
+      const actionDelay = index * 300; // 动作间隔300ms
+      if (actionDelay > maxActionDelay) {
+        maxActionDelay = actionDelay;
+      }
+      
+      if (action.type === 'animation.play') {
+        // 优先使用animationName（更稳定），如果没有则使用animationId
+        const animationIdentifier = action.animationName || action.animationId;
+        if (animationIdentifier) {
+          // 先计算动画持续时间（不实际播放）
+          // 这里我们需要获取动画时长但不播放，稍后再异步播放
+          const duration = viewerControls.playAnimation(animationIdentifier, action.startTime, action.endTime);
+          // 总持续时间 = 延迟时间 + 动画时长
+          const totalDuration = actionDelay / 1000 + duration;
+          if (totalDuration > maxAnimationDuration) {
+            maxAnimationDuration = totalDuration;
+          }
+        }
+      }
+    });
+    
+    // 然后异步执行所有动作
     actions.forEach((action, index) => {
       setTimeout(() => {
         switch (action.type) {
@@ -808,9 +876,8 @@ export default function PublicCoursePlayer({
             }
             break;
           case 'animation.play':
-            if (action.animationId) {
-              viewerControls.playAnimation(action.animationId, action.startTime, action.endTime);
-            }
+            // 动画已经在上面播放过了，这里跳过
+            // （因为playAnimation会停止所有其他动画，所以不能调用两次）
             break;
           case 'visibility.set':
             if (action.items) {
@@ -822,6 +889,8 @@ export default function PublicCoursePlayer({
         }
       }, index * 300); // 动作间隔300ms
     });
+    
+    return maxAnimationDuration;
   };
 
   const nextItem = () => {

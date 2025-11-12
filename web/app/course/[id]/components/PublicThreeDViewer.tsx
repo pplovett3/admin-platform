@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -24,7 +26,8 @@ export interface PublicThreeDViewerControls {
   resetAllStates: () => void;
   startAutoRotation: () => void;
   stopAutoRotation: () => void;
-  playAnimation: (animationId: string) => void;
+  playAnimation: (animationId: string) => number; // 返回动画持续时间（秒）
+  getAnimationDuration: (animationId: string) => number; // 获取动画持续时间但不播放
 }
 
 const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDViewerProps>(
@@ -190,12 +193,12 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         composer.addPass(renderPass);
         
         const outlinePass = new OutlinePass(new THREE.Vector2(width, height), scene, camera);
-        outlinePass.edgeStrength = 3;
-        outlinePass.edgeGlow = 0.5;
-        outlinePass.edgeThickness = 1;
-        outlinePass.pulsePeriod = 2;
-        outlinePass.visibleEdgeColor.set('#ffff00');
-        outlinePass.hiddenEdgeColor.set('#ffff00');
+        outlinePass.edgeStrength = 5;        // 增强边缘强度
+        outlinePass.edgeGlow = 1.0;          // 增强发光效果
+        outlinePass.edgeThickness = 2;       // 增加边缘厚度
+        outlinePass.pulsePeriod = 1.5;       // 加快呼吸频率（更明显）
+        outlinePass.visibleEdgeColor.set('#ff6600');  // 橙色
+        outlinePass.hiddenEdgeColor.set('#ff6600');   // 橙色
         composer.addPass(outlinePass);
         
         composerRef.current = composer;
@@ -220,10 +223,10 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     // 渲染循环
     const startRenderLoop = () => {
       const animate = () => {
-        // 模型自转
-        if (autoRotationRef.current && modelRootRef.current) {
-          modelRootRef.current.rotation.y += rotationSpeedRef.current;
-        }
+        // 模型自转 - 已取消
+        // if (autoRotationRef.current && modelRootRef.current) {
+        //   modelRootRef.current.rotation.y += rotationSpeedRef.current;
+        // }
         
         // 动画混合器更新
         if (mixerRef.current) {
@@ -440,32 +443,58 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       setLoadError(null);
 
       try {
-        const manager = new THREE.LoadingManager();
-        
-        const ktx2 = new KTX2Loader(manager)
-          .setTranscoderPath('https://unpkg.com/three@0.168.0/examples/jsm/libs/basis/');
-        
-        const draco = new DRACOLoader(manager)
-          .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
-        
-        const loader = new GLTFLoader(manager)
-          .setKTX2Loader(ktx2)
-          .setDRACOLoader(draco);
+        // 检测文件格式
+        const fileExt = modelUrl.toLowerCase().split('?')[0].split('.').pop() || '';
+        const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
+        const isFBX = fileExt === 'fbx';
+        const isOBJ = fileExt === 'obj';
 
-        // 对于NAS的文件，使用公开代理来解决CORS问题
+        const manager = new THREE.LoadingManager();
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
         let loadUrl = modelUrl;
-        if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
-          loadUrl = `/api/public/proxy?url=${encodeURIComponent(modelUrl)}`;
+        
+        // 处理相对路径
+        if (modelUrl.startsWith('/')) {
+          loadUrl = `${baseUrl}${modelUrl}`;
+        }
+        // 对于NAS的文件，使用公开代理来解决CORS问题
+        else if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
+          loadUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(modelUrl)}`;
         }
         
-        console.log('Loading model from URL:', modelUrl);
-        console.log('Actual load URL:', loadUrl);
-        
-        const gltf = await new Promise<any>((resolve, reject) => {
-          loader.load(loadUrl, resolve, undefined, reject);
-        });
+        let model: THREE.Object3D;
+        let animations: THREE.AnimationClip[] = [];
 
-        const model = gltf.scene;
+        // 根据格式使用不同的加载器
+        if (isGLTF) {
+          const ktx2 = new KTX2Loader(manager)
+            .setTranscoderPath('https://unpkg.com/three@0.168.0/examples/jsm/libs/basis/');
+          const draco = new DRACOLoader(manager)
+            .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+          const loader = new GLTFLoader(manager)
+            .setKTX2Loader(ktx2)
+            .setDRACOLoader(draco);
+          const gltf = await new Promise<any>((resolve, reject) => {
+            loader.load(loadUrl, resolve, undefined, reject);
+          });
+          model = gltf.scene;
+          animations = gltf.animations || [];
+        } else if (isFBX) {
+          const loader = new FBXLoader(manager);
+          model = await new Promise<THREE.Group>((resolve, reject) => {
+            loader.load(loadUrl, resolve, undefined, reject);
+          });
+          animations = (model as any).animations || [];
+        } else if (isOBJ) {
+          const loader = new OBJLoader(manager);
+          model = await new Promise<THREE.Group>((resolve, reject) => {
+            loader.load(loadUrl, resolve, undefined, reject);
+          });
+          animations = [];
+        } else {
+          throw new Error(`不支持的文件格式: .${fileExt}`);
+        }
+
         modelRootRef.current = model;
         sceneRef.current.add(model);
 
@@ -481,10 +510,10 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         buildNodeMap(model);
 
         // 处理动画
-        if (gltf.animations && gltf.animations.length > 0) {
+        if (animations && animations.length > 0) {
           const mixer = new THREE.AnimationMixer(model);
           mixerRef.current = mixer;
-          animationsRef.current = gltf.animations;
+          animationsRef.current = animations;
         }
 
         // 自动调整阴影平面位置
@@ -865,12 +894,12 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const findNodeBySmartMatch = (nodeKey: string): THREE.Object3D | undefined => {
       const nodeMap = nodeMapRef.current;
       
-      console.log('智能匹配节点:', nodeKey);
-      console.log('可用节点总数:', nodeMap.size);
+      // console.log('智能匹配节点:', nodeKey);
+      // console.log('可用节点总数:', nodeMap.size);
       
       // 1. 精确匹配
       if (nodeMap.has(nodeKey)) {
-        console.log('精确匹配成功:', nodeKey);
+        // console.log('精确匹配成功:', nodeKey);
         return nodeMap.get(nodeKey)!;
       }
       
@@ -878,12 +907,12 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       const targetSegments = nodeKey.split('/');
       const targetName = targetSegments[targetSegments.length - 1]; // 最后一段，如"左后轮"
       
-      console.log('目标名称:', targetName);
+      // console.log('目标名称:', targetName);
       
       // 3. 按名称匹配
       for (const [key, object] of nodeMap.entries()) {
         if (object.name === targetName) {
-          console.log('名称匹配成功:', object.name, '键:', key);
+          // console.log('名称匹配成功:', object.name, '键:', key);
           return object;
         }
       }
@@ -891,7 +920,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       // 4. 路径末尾匹配
       for (const [key, object] of nodeMap.entries()) {
         if (key.endsWith(`/${targetName}`) || key.endsWith(targetName)) {
-          console.log('路径末尾匹配成功:', key);
+          // console.log('路径末尾匹配成功:', key);
           return object;
         }
       }
@@ -899,11 +928,11 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       // 5. 如果是完整路径，尝试匹配路径结构（忽略UUID）
       if (targetSegments.length > 1) {
         const pathPattern = targetSegments.slice(1).join('/'); // 去掉第一个UUID部分
-        console.log('路径模式:', pathPattern);
+        // console.log('路径模式:', pathPattern);
         
         for (const [key, object] of nodeMap.entries()) {
           if (key.includes(pathPattern)) {
-            console.log('路径模式匹配成功:', key);
+            // console.log('路径模式匹配成功:', key);
             return object;
           }
         }
@@ -914,18 +943,18 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       for (const [key, object] of nodeMap.entries()) {
         if (key.toLowerCase().includes(lowerTargetName) || 
             object.name.toLowerCase().includes(lowerTargetName)) {
-          console.log('模糊匹配成功:', key, '目标:', targetName);
+          // console.log('模糊匹配成功:', key, '目标:', targetName);
           return object;
         }
       }
       
-      console.warn('所有匹配方式都失败，节点未找到:', nodeKey);
+      console.warn('⚠️ 节点未找到:', nodeKey);
       return undefined;
     };
 
     // 对焦到节点
     const focusOnNode = (nodeKey: string) => {
-      console.log('正在对焦节点:', nodeKey);
+      // console.log('正在对焦节点:', nodeKey);
       let targetObject = nodeMapRef.current.get(nodeKey);
       
       // 如果直接找不到，尝试智能匹配
@@ -934,8 +963,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
       
       if (!targetObject) {
-        console.warn('未找到节点:', nodeKey);
-        console.log('可用节点:', Array.from(nodeMapRef.current.keys()));
+        // console.warn('未找到节点:', nodeKey);
+        // console.log('可用节点:', Array.from(nodeMapRef.current.keys()));
         return;
       }
 
@@ -1021,9 +1050,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       });
     };
 
-    // 高亮节点 - 使用编辑器相同的自发光效果
+    // 高亮节点 - 只使用橙色边框高亮（带呼吸效果）
     const highlightNode = (nodeKey: string, highlight: boolean) => {
-      console.log('🔆 设置高亮:', nodeKey, highlight);
+      // console.log('🔆 设置高亮:', nodeKey, highlight);
       
       let targetObject = nodeMapRef.current.get(nodeKey);
       if (!targetObject) {
@@ -1031,29 +1060,22 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
       
       if (!targetObject) {
-        console.warn('❌ 未找到要高亮的节点:', nodeKey);
+        // console.warn('❌ 未找到要高亮的节点:', nodeKey);
         return;
       }
 
-      console.log('🎯 找到目标对象:', targetObject.name || targetObject.uuid);
+      // console.log('🎯 找到目标对象:', targetObject.name || targetObject.uuid);
 
       if (highlight) {
-        // 清除之前的高亮
-        clearEmissiveHighlight();
-        
-        // 应用自发光高亮（克隆材质避免共享材质影响）
-        applyEmissiveHighlight(targetObject);
-        
-        // 同时使用轮廓高亮
+        // 只使用橙色边框轮廓高亮（不改变材质颜色）
         if (outlineRef.current) {
           outlineRef.current.selectedObjects = [targetObject];
         }
         
-        console.log('✅ 高亮设置完成');
+        // console.log('✅ 橙色边框高亮设置完成');
       } else {
         // 清除高亮
-        console.log('🧹 清除高亮');
-        clearEmissiveHighlight();
+        // console.log('🧹 清除高亮');
         if (outlineRef.current) {
           outlineRef.current.selectedObjects = [];
         }
@@ -1062,7 +1084,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 显示标注
     const showAnnotations = (ids: string[]) => {
-      console.log('显示标注:', ids);
+      // console.log('显示标注:', ids);
       annotationsRef.current.forEach(annotation => {
         const annotationId = annotation.userData.annotationId;
         if (ids.includes(annotationId)) {
@@ -1073,7 +1095,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 隐藏标注
     const hideAnnotations = (ids: string[]) => {
-      console.log('隐藏标注:', ids);
+      // console.log('隐藏标注:', ids);
       annotationsRef.current.forEach(annotation => {
         const annotationId = annotation.userData.annotationId;
         if (ids.includes(annotationId)) {
@@ -1084,7 +1106,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 重置所有状态
     const resetAllStates = () => {
-      console.log('重置所有状态');
+      // console.log('重置所有状态');
       
       // 清除高亮
       if (outlineRef.current) {
@@ -1105,44 +1127,54 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       autoRotationRef.current = false;
     };
 
-    // 开始自转
+    // 开始自转 - 已禁用（保持接口兼容）
     const startAutoRotation = () => {
-      console.log('开始模型自转');
-      autoRotationRef.current = true;
+      // 自转功能已取消，保持空函数
     };
 
-    // 停止自转
+    // 停止自转 - 已禁用（保持接口兼容）
     const stopAutoRotation = () => {
-      console.log('停止模型自转');
-      autoRotationRef.current = false;
+      // 自转功能已取消，保持空函数
     };
 
-    // 播放动画 - 增强智能匹配
-    const playAnimation = (animationId: string) => {
-      console.log('播放动画:', animationId);
+    // 播放动画 - 增强智能匹配，返回动画持续时间（秒）
+    const playAnimation = (animationId: string): number => {
+      // console.log('播放动画:', animationId);
       
       if (!mixerRef.current || !animationsRef.current.length) {
         console.warn('没有可用的动画');
-        return;
+        return 3; // 默认3秒
       }
 
       // 停止所有当前动画
       mixerRef.current.stopAllAction();
 
-      console.log('可用动画:', animationsRef.current.map(clip => ({ name: clip.name, uuid: clip.uuid })));
+      // console.log('可用动画:', animationsRef.current.map(clip => ({ name: clip.name, uuid: clip.uuid })));
 
+      // 历史UUID到动画名称的映射（修复旧版本保存的UUID问题）
+      const uuidToNameMap: { [key: string]: string } = {
+        'f647ea39-a47a-4dcb-af5e-94e118807950': 'Anim_SimpleArcWeldLayout'  // 焊接产线动画
+      };
+      
+      // 如果是已知的历史UUID，转换为动画名称
+      let searchId = animationId;
+      if (uuidToNameMap[animationId]) {
+        searchId = uuidToNameMap[animationId];
+        // console.log('历史UUID映射:', animationId, '->', searchId);
+      }
+      
       // 1. 精确UUID匹配
-      let targetAnimation = animationsRef.current.find(clip => clip.uuid === animationId);
+      let targetAnimation = animationsRef.current.find(clip => clip.uuid === searchId);
       if (targetAnimation) {
-        console.log('UUID精确匹配成功:', targetAnimation.name);
+        // console.log('UUID精确匹配成功:', targetAnimation.name);
       } else {
         // 2. 精确名称匹配
-        targetAnimation = animationsRef.current.find(clip => clip.name === animationId);
+        targetAnimation = animationsRef.current.find(clip => clip.name === searchId);
         if (targetAnimation) {
-          console.log('名称精确匹配成功:', targetAnimation.name);
+          // console.log('名称精确匹配成功:', targetAnimation.name);
         } else {
           // 3. 模糊名称匹配（根据关键词）
-          const lowerAnimationId = animationId.toLowerCase();
+          const lowerAnimationId = searchId.toLowerCase();
           
           // 根据UUID中的关键词尝试匹配已知动画类型
           if (lowerAnimationId.includes('71361f28') || lowerAnimationId.includes('拆装') || lowerAnimationId.includes('assembly')) {
@@ -1150,9 +1182,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             targetAnimation = animationsRef.current.find(clip => 
               clip.name.includes('拆装') || clip.name.includes('assembly') || clip.name.includes('安装')
             );
-            if (targetAnimation) {
-              console.log('关键词匹配成功（拆装）:', targetAnimation.name);
-            }
+            // if (targetAnimation) {
+            //   console.log('关键词匹配成功（拆装）:', targetAnimation.name);
+            // }
           }
           
           if (!targetAnimation && (lowerAnimationId.includes('旋转') || lowerAnimationId.includes('rotate'))) {
@@ -1160,17 +1192,17 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             targetAnimation = animationsRef.current.find(clip => 
               clip.name.includes('旋转') || clip.name.includes('rotate') || clip.name.includes('转动')
             );
-            if (targetAnimation) {
-              console.log('关键词匹配成功（旋转）:', targetAnimation.name);
-            }
+            // if (targetAnimation) {
+            //   console.log('关键词匹配成功（旋转）:', targetAnimation.name);
+            // }
           }
           
           // 4. 如果还没找到，使用第一个非"All Animations"的动画
           if (!targetAnimation) {
             targetAnimation = animationsRef.current.find(clip => clip.name !== 'All Animations');
-            if (targetAnimation) {
-              console.log('使用第一个可用动画:', targetAnimation.name);
-            }
+            // if (targetAnimation) {
+            //   console.log('使用第一个可用动画:', targetAnimation.name);
+            // }
           }
         }
       }
@@ -1179,18 +1211,72 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         const action = mixerRef.current.clipAction(targetAnimation);
         action.reset();
         action.play();
-        console.log('开始播放动画:', targetAnimation.name, 'UUID:', targetAnimation.uuid);
+        // console.log('开始播放动画:', targetAnimation.name, 'UUID:', targetAnimation.uuid, '持续时间:', targetAnimation.duration);
+        return targetAnimation.duration || 3; // 返回动画持续时间（秒）
       } else {
-        console.warn('未找到动画:', animationId);
-        console.log('尝试播放第一个动画作为回退');
+        console.warn('⚠️ 未找到动画:', animationId);
+        // console.log('尝试播放第一个动画作为回退');
         if (animationsRef.current.length > 0) {
           const fallbackAnimation = animationsRef.current[0];
           const action = mixerRef.current.clipAction(fallbackAnimation);
           action.reset();
           action.play();
-          console.log('回退播放动画:', fallbackAnimation.name);
+          // console.log('回退播放动画:', fallbackAnimation.name);
+          return fallbackAnimation.duration || 3; // 返回动画持续时间（秒）
         }
       }
+      
+      return 3; // 如果没有动画，返回默认3秒
+    };
+
+    // 获取动画持续时间（不播放）
+    const getAnimationDuration = (animationId: string): number => {
+      if (!animationsRef.current.length) {
+        return 3; // 默认3秒
+      }
+
+      // 历史UUID到动画名称的映射（与playAnimation保持一致）
+      const uuidToNameMap: { [key: string]: string } = {
+        'f647ea39-a47a-4dcb-af5e-94e118807950': 'Anim_SimpleArcWeldLayout'
+      };
+      
+      let searchId = animationId;
+      if (uuidToNameMap[animationId]) {
+        searchId = uuidToNameMap[animationId];
+      }
+      
+      // 查找动画（逻辑与playAnimation一致）
+      let targetAnimation = animationsRef.current.find(clip => clip.uuid === searchId);
+      
+      if (!targetAnimation) {
+        targetAnimation = animationsRef.current.find(clip => clip.name === searchId);
+      }
+      
+      if (!targetAnimation) {
+        const lowerAnimationId = searchId.toLowerCase();
+        
+        if (lowerAnimationId.includes('71361f28') || lowerAnimationId.includes('拆装') || lowerAnimationId.includes('assembly')) {
+          targetAnimation = animationsRef.current.find(clip => 
+            clip.name.includes('拆装') || clip.name.includes('assembly') || clip.name.includes('安装')
+          );
+        }
+        
+        if (!targetAnimation && (lowerAnimationId.includes('旋转') || lowerAnimationId.includes('rotate'))) {
+          targetAnimation = animationsRef.current.find(clip => 
+            clip.name.includes('旋转') || clip.name.includes('rotate') || clip.name.includes('转动')
+          );
+        }
+        
+        if (!targetAnimation) {
+          targetAnimation = animationsRef.current.find(clip => clip.name !== 'All Animations');
+        }
+      }
+      
+      if (targetAnimation) {
+        return targetAnimation.duration || 3;
+      }
+      
+      return 3; // 默认3秒
     };
 
     // 暴露控制方法
@@ -1202,7 +1288,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       resetAllStates,
       startAutoRotation,
       stopAutoRotation,
-      playAnimation
+      playAnimation,
+      getAnimationDuration
     }));
 
     // 初始化和清理

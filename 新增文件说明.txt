@@ -1,0 +1,184 @@
+========================================
+Admin Platform Docker 容器化部署
+新增文件说明
+========================================
+
+本次为您的 Admin Platform 添加了完整的 Docker 容器化部署支持。
+以下是所有新增的文件及其用途：
+
+📚 文档文件（5 个）
+========================================
+
+1. DOCKER_README.md
+   - Docker 部署文档的总索引
+   - 包含架构图和部署流程
+   - 推荐从这里开始阅读
+
+2. QUICK_START.md ⭐ 推荐首先阅读
+   - 3 分钟快速上手指南
+   - 包含本地测试、推送阿里云、NAS 部署的快速步骤
+   - 适合快速入门
+
+3. DOCKER_DEPLOY_GUIDE.md
+   - 详细的部署指南（完整版）
+   - 包含所有细节和配置说明
+   - 安全建议、监控维护、故障排查
+   - 约 8000 字的完整文档
+
+4. DEPLOYMENT_CHECKLIST.md
+   - 部署检查清单
+   - 逐步骤验证部署过程
+   - 确保不遗漏任何步骤
+
+5. DOCKER使用指南.md ⭐ 中文详细指南
+   - 完整的中文使用指南
+   - 包含所有常见场景的操作步骤
+   - 问题排查和最佳实践
+
+⚙️ 配置文件（3 个）
+========================================
+
+6. docker-compose.prod.yml
+   - 生产环境的 Docker Compose 配置
+   - 用于 NAS 或服务器部署
+   - 包含健康检查和重启策略
+   - ⚠️ 需要修改镜像地址为您的阿里云仓库
+
+7. env.template
+   - 环境变量配置模板
+   - 包含所有必需的环境变量说明
+   - 复制为 .env（本地）或 .env.prod（生产）
+   - ⚠️ 必须修改 JWT_SECRET 等关键配置
+
+8. .gitignore
+   - Git 忽略规则
+   - 防止敏感文件（.env）被提交
+   - 忽略 Docker 数据目录
+
+🚀 自动化脚本（3 个）
+========================================
+
+9. build-and-push.ps1 ⭐ Windows 用户使用
+   - Windows PowerShell 脚本
+   - 自动构建 Server 和 Web 镜像
+   - 自动推送到阿里云镜像仓库
+   - ⚠️ 需要修改 REGISTRY 和 NAMESPACE
+
+10. build-and-push.sh
+    - Linux/Mac Bash 脚本
+    - 功能同上（PowerShell 版本）
+    - 使用前需要 chmod +x
+
+11. deploy-to-nas.sh
+    - NAS 一键部署脚本
+    - 在 NAS 上运行
+    - 自动拉取镜像并启动服务
+
+📄 说明文件（1 个）
+========================================
+
+12. 新增文件说明.txt
+    - 本文件
+    - 列出所有新增文件的用途
+
+========================================
+使用流程
+========================================
+
+第一步：了解部署方案
+   阅读：DOCKER使用指南.md 或 QUICK_START.md
+
+第二步：本地测试
+   1. 复制 env.template 为 .env
+   2. 修改 .env 中的配置
+   3. 运行：docker compose up -d --build
+   4. 访问 http://localhost:3000
+
+第三步：推送到阿里云
+   1. 在阿里云创建镜像仓库
+   2. 修改 build-and-push.ps1 中的配置
+   3. 运行：.\build-and-push.ps1
+
+第四步：NAS 部署
+   1. 上传 docker-compose.prod.yml 和 env.template 到 NAS
+   2. 复制 env.template 为 .env.prod 并修改
+   3. 修改 docker-compose.prod.yml 中的镜像地址
+   4. 登录阿里云镜像仓库并拉取镜像
+   5. 运行：docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+========================================
+需要修改的关键配置
+========================================
+
+✅ build-and-push.ps1 / build-and-push.sh
+   - REGISTRY：改为您的阿里云镜像仓库地址
+   - NAMESPACE：改为您的命名空间
+
+✅ docker-compose.prod.yml
+   - image 地址：改为您的阿里云镜像地址
+   - volumes 路径：改为 NAS 上的实际路径
+
+✅ .env（本地）和 .env.prod（生产）
+   - JWT_SECRET：必须使用强随机密钥
+   - NEXT_PUBLIC_API_URL：改为实际的后端地址
+   - STORAGE_ROOT：改为实际的存储路径
+
+========================================
+重要提醒
+========================================
+
+⚠️ 安全注意事项：
+   - 生产环境必须修改 JWT_SECRET
+   - 修改默认管理员密码
+   - MongoDB 不要暴露到公网
+   - 使用 HTTPS（配置 Nginx + SSL）
+
+⚠️ 数据备份：
+   - 定期备份 MongoDB 数据
+   - 定期备份文件存储目录
+   - 不要使用 docker compose down -v
+
+⚠️ 环境变量文件：
+   - .env 和 .env.prod 不会被提交到 Git
+   - 请妥善保管这些文件
+   - 不同环境使用不同的密钥
+
+========================================
+获取帮助
+========================================
+
+遇到问题时：
+1. 查看 DOCKER_DEPLOY_GUIDE.md 的"常见问题"章节
+2. 查看 DOCKER使用指南.md 的"常见问题"章节
+3. 检查 Docker 日志：docker compose logs -f
+4. 参考 DEPLOYMENT_CHECKLIST.md 逐步排查
+
+========================================
+文件位置
+========================================
+
+所有文件都在 admin-platform 目录下：
+
+admin-platform/
+├── DOCKER_README.md              ← 从这里开始
+├── QUICK_START.md                ← 或从这里开始
+├── DOCKER_DEPLOY_GUIDE.md
+├── DEPLOYMENT_CHECKLIST.md
+├── DOCKER使用指南.md
+├── docker-compose.yml            ← 已存在（开发环境）
+├── docker-compose.prod.yml       ← 新增（生产环境）
+├── env.template                  ← 新增
+├── .gitignore                    ← 新增
+├── build-and-push.ps1            ← 新增（Windows）
+├── build-and-push.sh             ← 新增（Linux/Mac）
+├── deploy-to-nas.sh              ← 新增（NAS）
+├── 新增文件说明.txt              ← 本文件
+├── server/
+│   └── Dockerfile                ← 已存在
+└── web/
+    └── Dockerfile                ← 已存在
+
+========================================
+祝您部署顺利！
+========================================
+

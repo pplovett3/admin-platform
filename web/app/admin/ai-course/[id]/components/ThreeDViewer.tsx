@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -448,6 +450,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         modelRootRef.current = null;
       }
 
+      // 检测文件格式
+      const fileExt = modelUrl.toLowerCase().split('?')[0].split('.').pop() || '';
+      const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
+      const isFBX = fileExt === 'fbx';
+      const isOBJ = fileExt === 'obj';
+
       // 构建加载URL（处理认证和代理）
       let finalUrl = modelUrl;
       if (modelUrl.startsWith('/api/files/')) {
@@ -460,14 +468,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
       // 配置加载器
       const manager = new THREE.LoadingManager();
-      const ktx2 = new KTX2Loader(manager)
-        .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
-        .detectSupport(rendererRef.current);
-      const draco = new DRACOLoader(manager)
-        .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
-      const loader = new GLTFLoader(manager)
-        .setKTX2Loader(ktx2)
-        .setDRACOLoader(draco);
 
       // 使用fetch加载（支持认证）
       const token = getToken();
@@ -481,12 +481,38 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
       const arrayBuffer = await response.arrayBuffer();
       
-      // 加载GLTF
-      const gltf = await new Promise<any>((resolve, reject) => {
-        loader.parse(arrayBuffer, '', resolve, reject);
-      });
+      let model: THREE.Object3D;
+      let animations: THREE.AnimationClip[] = [];
 
-      const model = gltf.scene;
+      // 根据格式使用不同的加载器
+      if (isGLTF) {
+        const ktx2 = new KTX2Loader(manager)
+          .setTranscoderPath('https://unpkg.com/three@0.164.0/examples/jsm/libs/basis/')
+          .detectSupport(rendererRef.current);
+        const draco = new DRACOLoader(manager)
+          .setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        const loader = new GLTFLoader(manager)
+          .setKTX2Loader(ktx2)
+          .setDRACOLoader(draco);
+        const gltf = await new Promise<any>((resolve, reject) => {
+          loader.parse(arrayBuffer, '', resolve, reject);
+        });
+        model = gltf.scene;
+        animations = gltf.animations || [];
+      } else if (isFBX) {
+        const loader = new FBXLoader(manager);
+        model = loader.parse(arrayBuffer, '');
+        animations = (model as any).animations || [];
+      } else if (isOBJ) {
+        const loader = new OBJLoader(manager);
+        const textDecoder = new TextDecoder();
+        const text = textDecoder.decode(arrayBuffer);
+        model = loader.parse(text);
+        animations = [];
+      } else {
+        throw new Error(`不支持的文件格式: .${fileExt}`);
+      }
+
       modelRootRef.current = model;
       sceneRef.current.add(model);
 
@@ -501,10 +527,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       buildNodeMap(model);
 
       // 设置动画
-      if (gltf.animations && gltf.animations.length > 0) {
+      if (animations && animations.length > 0) {
         const mixer = new THREE.AnimationMixer(model);
         mixerRef.current = mixer;
-        animationsRef.current = gltf.animations;
+        animationsRef.current = animations;
       }
 
       // 自动调整相机视角

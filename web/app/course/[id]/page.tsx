@@ -53,7 +53,8 @@ export default function PublicCoursePage() {
     
     try {
       console.log('Loading course data for publishId:', publishId);
-      const apiUrl = `/api/public/course/${publishId}`;
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+      const apiUrl = `${baseUrl}/api/public/course/${publishId}`;
       console.log('API URL:', apiUrl);
       
       const response = await fetch(apiUrl);
@@ -93,10 +94,16 @@ export default function PublicCoursePage() {
       
       // 预加载3D模型（完整下载）
       if (data.coursewareData?.modifiedModelUrl) {
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
         let modelUrl = data.coursewareData.modifiedModelUrl;
+        
+        // 处理相对路径
+        if (modelUrl.startsWith('/')) {
+          modelUrl = `${baseUrl}${modelUrl}`;
+        }
         // 如果是dl.yf-xr.com的URL，通过代理访问
-        if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
-          modelUrl = `/api/public/proxy?url=${encodeURIComponent(modelUrl)}`;
+        else if (modelUrl.startsWith('https://dl.yf-xr.com/')) {
+          modelUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(modelUrl)}`;
         }
         await preloadModel(modelUrl);
       }
@@ -196,16 +203,20 @@ export default function PublicCoursePage() {
 
   // 预加载音频
   const preloadAudios = async (urls: string[]): Promise<void> => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
     const promises = urls.slice(0, 10).map(url => { // 最多预加载前10个音频
       return new Promise<void>((resolve) => {
         const audio = new Audio();
         audio.preload = 'metadata';
         audio.oncanplaythrough = () => resolve();
         audio.onerror = () => resolve(); // 即使失败也继续
-        // audio.ontimeout = () => resolve(); // HTMLAudioElement没有ontimeout属性
-        const processedUrl = url.startsWith('https://dl.yf-xr.com/') 
-          ? `/api/public/proxy?url=${encodeURIComponent(url)}`
-          : url;
+        
+        let processedUrl = url;
+        if (url.startsWith('/')) {
+          processedUrl = `${baseUrl}${url}`;
+        } else if (url.startsWith('https://dl.yf-xr.com/')) {
+          processedUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(url)}`;
+        }
         audio.src = processedUrl;
         
         // 5秒超时
@@ -218,14 +229,19 @@ export default function PublicCoursePage() {
 
   // 预加载图片
   const preloadImages = async (urls: string[]): Promise<void> => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
     const promises = urls.slice(0, 5).map(url => { // 最多预加载前5张图片
       return new Promise<void>((resolve) => {
         const img = new Image();
         img.onload = () => resolve();
         img.onerror = () => resolve(); // 即使失败也继续
-        const processedUrl = url.startsWith('https://dl.yf-xr.com/') 
-          ? `/api/public/proxy?url=${encodeURIComponent(url)}`
-          : url;
+        
+        let processedUrl = url;
+        if (url.startsWith('/')) {
+          processedUrl = `${baseUrl}${url}`;
+        } else if (url.startsWith('https://dl.yf-xr.com/')) {
+          processedUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(url)}`;
+        }
         img.src = processedUrl;
         
         // 5秒超时

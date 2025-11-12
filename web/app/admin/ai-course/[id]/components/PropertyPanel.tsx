@@ -302,7 +302,14 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                     <Form.Item label="选择动画" style={{ marginBottom: 8 }}>
                       <Select
                         value={action.animationId || ''}
-                        onChange={(value) => updateAction(index, 'animationId', value)}
+                        onChange={(value) => {
+                          // 同时保存animationId和animationName
+                          const selectedAnim = coursewareData?.animations?.find((anim: any) => anim.id === value);
+                          updateAction(index, 'animationId', value);
+                          if (selectedAnim) {
+                            updateAction(index, 'animationName', selectedAnim.name);
+                          }
+                        }}
                         placeholder="选择动画"
                         size="small"
                         showSearch
