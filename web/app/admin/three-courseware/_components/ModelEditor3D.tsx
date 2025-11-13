@@ -309,6 +309,8 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -421,6 +423,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const backgroundTextureRef = useRef<THREE.Texture | null>(null);
+  const pmremGeneratorRef = useRef<THREE.PMREMGenerator | null>(null);
+  const environmentMapRef = useRef<THREE.Texture | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const composerRef = useRef<EffectComposer | null>(null);
   const outlineRef = useRef<OutlinePass | null>(null);
@@ -455,6 +460,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const initialDataLoadedRef = useRef<boolean>(false); // 防止重复加载初始数据
   const [timeline, setTimeline] = useState<TimelineState>({ duration: 10, current: 0, playing: false, cameraKeys: [], visTracks: {}, trsTracks: {}, annotationTracks: {} });
   const lastTickRef = useRef<number>(performance.now());
+  const lastBackgroundSphereCheckRef = useRef<number>(0);
+  const lastCameraDistanceRef = useRef<number>(0);
   const [cameraKeyEasing, setCameraKeyEasing] = useState<'linear'|'easeInOut'>('easeInOut');
   const [highlightMode, setHighlightMode] = useState<'outline'|'emissive'>('outline');
   const [gizmoMode, setGizmoMode] = useState<'translate'|'rotate'|'scale'>('translate');
@@ -462,6 +469,23 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [bgTransparent, setBgTransparent] = useState<boolean>(false);
   const [bgColor, setBgColor] = useState<string>('#919191');
+  const [bgType, setBgType] = useState<'color' | 'panorama'>('panorama');
+  const [bgPanorama, setBgPanorama] = useState<string | null>('/360background_7.hdr');
+  const [bgPanoramaBrightness, setBgPanoramaBrightness] = useState<number>(1.0);
+  const [useHDREnvironment, setUseHDREnvironment] = useState<boolean>(true);
+  
+  // 全景图列表配置 - 添加新图片时只需在此数组中添加新项
+  const panoramaOptions = [
+    { label: '全景图1', value: '/360background_1.jpg' },
+    { label: '全景图2', value: '/360background_2.jpg' },
+    { label: '全景图3', value: '/360background_3.png' },
+    { label: '全景图4', value: '/360background_4.png' },
+    { label: '全景图5', value: '/360background_5.png' },
+    { label: '全景图6 (HDR)', value: '/360background_6.hdr' },
+    { label: '全景图7 (HDR)', value: '/360background_7.hdr' },
+    { label: '全景图8 (HDR)', value: '/360background_8.hdr' },
+    { label: '全景图9 (HDR)', value: '/360background_9.hdr' },
+  ];
   const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } });
   const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
   const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 });
@@ -491,6 +515,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const trsRedoStack = useRef<TRSSnapshot[]>([]);
   const trsTransformStartState = useRef<TRSSnapshot | null>(null);
   const [materialIndex, setMaterialIndex] = useState(0);
+  const [materialPropsKey, setMaterialPropsKey] = useState(0); // 用于强制更新材质属性滑块
   const [modelName, setModelName] = useState<string>('未加载模型');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [urlImportOpen, setUrlImportOpen] = useState(false);
@@ -1175,15 +1200,392 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return () => { clearTimeout(id); clearTimeout(id2); };
   }, [showLeft, showRight, timelineHeight, mode]);
 
+  // 更新场景中所有材质的环境贴图
+  const updateMaterialsEnvMap = useCallback((envMap: THREE.Texture | null, intensity: number = 1.0) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    
+    scene.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        const material = Array.isArray(object.material) ? object.material : [object.material];
+        material.forEach((mat) => {
+          if (mat instanceof THREE.MeshStandardMaterial || 
+              mat instanceof THREE.MeshPhysicalMaterial ||
+              mat instanceof THREE.MeshPhongMaterial) {
+            mat.envMap = envMap;
+            // 设置环境贴图强度
+            if ('envMapIntensity' in mat) {
+              (mat as any).envMapIntensity = intensity;
+            }
+            mat.needsUpdate = true;
+          }
+        });
+      }
+    });
+  }, []);
+
+  // 更新所有材质的环境贴图强度
+  const updateMaterialsEnvMapIntensity = useCallback((intensity: number) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    
+    scene.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        const material = Array.isArray(object.material) ? object.material : [object.material];
+        material.forEach((mat) => {
+          if (mat instanceof THREE.MeshStandardMaterial || 
+              mat instanceof THREE.MeshPhysicalMaterial ||
+              mat instanceof THREE.MeshPhongMaterial) {
+            // 设置环境贴图强度
+            if ('envMapIntensity' in mat) {
+              (mat as any).envMapIntensity = intensity;
+            }
+            mat.needsUpdate = true;
+          }
+        });
+      }
+    });
+    
+    // 强制重新渲染
+    const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+    if (r && s && c) { 
+      const comp = composerRef.current; 
+      if (comp) comp.render(); else r.render(s, c); 
+    }
+  }, []);
+
   // 背景与灯光设置实时应用（不关闭弹窗，不销毁组件）
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    scene.background = bgTransparent ? null : new THREE.Color(bgColor);
+    
+    if (bgTransparent) {
+      scene.background = null;
+    } else if (bgType === 'panorama' && bgPanorama) {
+      // 检测是否为HDR或EXR文件
+      const lowerPath = bgPanorama.toLowerCase();
+      const isHDR = lowerPath.endsWith('.hdr');
+      const isEXR = lowerPath.endsWith('.exr');
+      
+      if (isHDR || isEXR) {
+        // 根据文件类型选择加载器
+        const loader = isHDR ? new RGBELoader() : new EXRLoader();
+        console.log(`🌐 开始加载${isHDR ? 'HDR' : 'EXR'}全景图:`, bgPanorama);
+        loader.load(
+          bgPanorama,
+          (texture) => {
+            console.log(`✅ ${isHDR ? 'HDR' : 'EXR'}全景图加载成功:`, bgPanorama);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            backgroundTextureRef.current = texture;
+            
+            // 生成环境贴图
+            const pmremGenerator = pmremGeneratorRef.current;
+            if (pmremGenerator) {
+              const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+              environmentMapRef.current = envMap;
+              
+              // 如果启用HDR环境光照，应用到场景
+              if (useHDREnvironment) {
+                scene.environment = envMap;
+                updateMaterialsEnvMap(envMap, bgPanoramaBrightness);
+                // 应用亮度到环境光照
+                const renderer = rendererRef.current;
+                if (renderer) {
+                  renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
+                }
+              }
+            }
+            
+            // 创建自定义shader材质来显示HDR/EXR背景
+            const material = new THREE.ShaderMaterial({
+              uniforms: {
+                tBackground: { value: texture },
+                brightness: { value: bgPanoramaBrightness }
+              },
+              vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                  vUv = uv;
+                  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                  gl_Position = projectionMatrix * mvPosition;
+                  // 将深度值设置为最远（1.0），确保背景始终在最后渲染
+                  gl_Position.z = gl_Position.w * 0.999999;
+                }
+              `,
+              fragmentShader: `
+                uniform sampler2D tBackground;
+                uniform float brightness;
+                varying vec2 vUv;
+                void main() {
+                  vec4 texColor = texture2D(tBackground, vUv);
+                  gl_FragColor = vec4(texColor.rgb * brightness, texColor.a);
+                }
+              `,
+              side: THREE.BackSide,
+              toneMapped: false, // HDR/EXR不需要色调映射
+              depthWrite: false, // 不写入深度缓冲区，避免遮挡其他物体
+              depthTest: true // 启用深度测试，但通过shader将深度设置为最远
+            });
+            
+            // 创建球体几何体来显示背景
+            // 背景球体必须足够大，确保：
+            // 1. 相机在任何位置都在球体内部
+            // 2. 球体不会被相机的 far plane 裁剪
+            // 3. 球体足够大，避免被相机 near plane 裁剪
+            const camera = cameraRef.current;
+            if (!camera) return;
+            
+            // 计算相机到原点的距离
+            const cameraDistance = camera.position.length();
+            // 球体半径应该足够大，确保相机在球体内，但要在 far plane 内
+            // 使用 far * 0.95 确保球体在 far plane 内，同时考虑相机距离
+            // 如果相机距离很大，需要确保球体半径 > 相机距离
+            const minRadiusForCamera = cameraDistance * 1.5; // 确保相机在球体内，留50%余量
+            const maxRadiusForFar = camera.far * 0.95; // 确保球体在 far plane 内
+            const sphereRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+            
+            const geometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.name = '__background_sphere__';
+            // 设置渲染顺序为最大值，确保背景球体在最后渲染
+            sphere.renderOrder = Infinity;
+            // 禁用视锥体剔除，确保球体始终被渲染（即使相机在球体内部）
+            sphere.frustumCulled = false;
+            // 确保背景球体在原点，相机在球体内部
+            sphere.position.set(0, 0, 0);
+            
+            console.log(`🌐 创建HDR背景球体: 半径=${sphereRadius.toFixed(2)}, 相机距离=${cameraDistance.toFixed(2)}, 相机Far=${camera.far.toFixed(2)}`);
+            console.log(`   相机在球内: ${sphereRadius > cameraDistance ? '✅' : '❌'}, 球体在Far内: ${sphereRadius < camera.far ? '✅' : '❌'}`);
+            
+            // 移除旧的背景球体
+            const oldSphere = scene.getObjectByName('__background_sphere__');
+            if (oldSphere) {
+              scene.remove(oldSphere);
+              console.log('🗑️ 移除旧的HDR背景球体');
+            }
+            
+            scene.add(sphere);
+            scene.background = null; // 清除默认背景
+            console.log('✅ HDR背景球体已添加到场景');
+            
+            const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+              const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+            }
+          },
+          undefined,
+          (error) => {
+            console.error(`❌ 加载${isHDR ? 'HDR' : 'EXR'}全景图失败:`, error);
+            console.error('图片路径:', bgPanorama);
+            console.error('错误详情:', error);
+            scene.background = new THREE.Color(bgColor);
+            const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+              const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+            }
+          }
+        );
+      } else {
+        // 加载普通全景图
+        const loader = new THREE.TextureLoader();
+        console.log('🖼️ 开始加载普通全景图:', bgPanorama);
+        loader.load(
+          bgPanorama,
+          (texture) => {
+            console.log('✅ 普通全景图加载成功:', bgPanorama);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            backgroundTextureRef.current = texture;
+            
+            // 如果启用HDR环境光照，生成环境贴图
+            if (useHDREnvironment) {
+              const pmremGenerator = pmremGeneratorRef.current;
+              if (pmremGenerator) {
+                const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                environmentMapRef.current = envMap;
+                scene.environment = envMap;
+                updateMaterialsEnvMap(envMap, bgPanoramaBrightness);
+                // 应用亮度到环境光照
+                const renderer = rendererRef.current;
+                if (renderer) {
+                  renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
+                }
+              }
+            } else {
+              scene.environment = null;
+              updateMaterialsEnvMap(null, 1.0);
+            }
+            
+            // 创建自定义shader材质来调整亮度
+            const material = new THREE.ShaderMaterial({
+              uniforms: {
+                tBackground: { value: texture },
+                brightness: { value: bgPanoramaBrightness }
+              },
+              vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                  vUv = uv;
+                  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                  gl_Position = projectionMatrix * mvPosition;
+                  // 将深度值设置为最远（1.0），确保背景始终在最后渲染
+                  gl_Position.z = gl_Position.w * 0.999999;
+                }
+              `,
+              fragmentShader: `
+                uniform sampler2D tBackground;
+                uniform float brightness;
+                varying vec2 vUv;
+                void main() {
+                  vec4 texColor = texture2D(tBackground, vUv);
+                  gl_FragColor = vec4(texColor.rgb * brightness, texColor.a);
+                }
+              `,
+              side: THREE.BackSide,
+              depthWrite: false, // 不写入深度缓冲区，避免遮挡其他物体
+              depthTest: true // 启用深度测试，但通过shader将深度设置为最远
+            });
+            
+            // 创建球体几何体来显示背景
+            // 背景球体必须足够大，确保：
+            // 1. 相机在任何位置都在球体内部
+            // 2. 球体不会被相机的 far plane 裁剪
+            // 3. 球体足够大，避免被相机 near plane 裁剪
+            const camera = cameraRef.current;
+            if (!camera) return;
+            
+            // 计算相机到原点的距离
+            const cameraDistance = camera.position.length();
+            // 球体半径应该足够大，确保相机在球体内，但要在 far plane 内
+            // 使用 far * 0.95 确保球体在 far plane 内，同时考虑相机距离
+            // 如果相机距离很大，需要确保球体半径 > 相机距离
+            const minRadiusForCamera = cameraDistance * 1.5; // 确保相机在球体内，留50%余量
+            const maxRadiusForFar = camera.far * 0.95; // 确保球体在 far plane 内
+            const sphereRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+            
+            const geometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.name = '__background_sphere__';
+            // 设置渲染顺序为最大值，确保背景球体在最后渲染
+            sphere.renderOrder = Infinity;
+            // 禁用视锥体剔除，确保球体始终被渲染（即使相机在球体内部）
+            sphere.frustumCulled = false;
+            // 确保背景球体在原点，相机在球体内部
+            sphere.position.set(0, 0, 0);
+            
+            console.log(`🖼️ 创建普通全景背景球体: 半径=${sphereRadius.toFixed(2)}, 相机距离=${cameraDistance.toFixed(2)}, 相机Far=${camera.far.toFixed(2)}`);
+            console.log(`   相机在球内: ${sphereRadius > cameraDistance ? '✅' : '❌'}, 球体在Far内: ${sphereRadius < camera.far ? '✅' : '❌'}`);
+            
+            // 移除旧的背景球体
+            const oldSphere = scene.getObjectByName('__background_sphere__');
+            if (oldSphere) {
+              scene.remove(oldSphere);
+              console.log('🗑️ 移除旧的普通全景背景球体');
+            }
+            
+            scene.add(sphere);
+            scene.background = null; // 清除默认背景
+            console.log('✅ 普通全景背景球体已添加到场景');
+            
+            const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+              const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+            }
+          },
+          undefined,
+          (error) => {
+            console.error('❌ 加载普通全景图失败:', error);
+            console.error('图片路径:', bgPanorama);
+            console.error('错误详情:', error);
+            scene.background = new THREE.Color(bgColor);
+            const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+              const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+            }
+          }
+        );
+      }
+    } else {
+      // 移除背景球体
+      const oldSphere = scene.getObjectByName('__background_sphere__');
+      if (oldSphere) scene.remove(oldSphere);
+      scene.background = new THREE.Color(bgColor);
+      scene.environment = null;
+      updateMaterialsEnvMap(null, 1.0);
+    }
+    
     const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
       const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
     }
-  }, [bgTransparent, bgColor]);
+  }, [bgTransparent, bgColor, bgType, bgPanorama, useHDREnvironment, updateMaterialsEnvMap]);
+  
+  // HDR环境光照开关
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    if (!scene || bgType !== 'panorama' || !bgPanorama) return;
+    
+    const lowerPath = bgPanorama.toLowerCase();
+    const isHDR = lowerPath.endsWith('.hdr') || lowerPath.endsWith('.exr');
+    
+    if (useHDREnvironment && isHDR && environmentMapRef.current) {
+      scene.environment = environmentMapRef.current;
+      updateMaterialsEnvMap(environmentMapRef.current, bgPanoramaBrightness);
+      // 应用亮度到环境光照
+      if (renderer) {
+        renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
+      }
+    } else {
+      scene.environment = null;
+      updateMaterialsEnvMap(null, 1.0);
+      // 恢复默认曝光值
+      if (renderer) {
+        renderer.toneMappingExposure = 1.2;
+      }
+    }
+    
+    const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+      const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+    }
+  }, [useHDREnvironment, bgType, bgPanorama, bgPanoramaBrightness, updateMaterialsEnvMap, updateMaterialsEnvMapIntensity]);
+  
+  // 全景图亮度调节
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    if (!scene || bgType !== 'panorama') return;
+    
+    // 更新背景球体的亮度
+    const sphere = scene.getObjectByName('__background_sphere__') as THREE.Mesh;
+    if (sphere && sphere.material instanceof THREE.ShaderMaterial) {
+      sphere.material.uniforms.brightness.value = bgPanoramaBrightness;
+    }
+    
+    // 如果是HDR/EXR文件且启用了环境光照，同时调整环境光照强度
+    if (bgPanorama && renderer) {
+      const lowerPath = bgPanorama.toLowerCase();
+      const isHDR = lowerPath.endsWith('.hdr') || lowerPath.endsWith('.exr');
+      
+      if (isHDR && useHDREnvironment) {
+        // 通过调整toneMappingExposure来控制整体曝光
+        // 基础曝光值1.2，乘以亮度系数
+        renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
+        
+        // 通过envMapIntensity控制环境贴图对模型的照明强度
+        // 这是直接影响模型光照的关键参数
+        updateMaterialsEnvMapIntensity(bgPanoramaBrightness);
+        
+        // 确保环境贴图已应用
+        if (environmentMapRef.current) {
+          scene.environment = environmentMapRef.current;
+        }
+      } else if (!useHDREnvironment) {
+        // 如果关闭了HDR环境光照，恢复默认曝光值和强度
+        renderer.toneMappingExposure = 1.2;
+        updateMaterialsEnvMapIntensity(1.0);
+      }
+    }
+    
+    // 强制重新渲染
+    const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+      const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+    }
+  }, [bgPanoramaBrightness, bgType, bgPanorama, useHDREnvironment, updateMaterialsEnvMapIntensity]);
 
   useEffect(() => {
     const l = dirLightRef.current; if (!l) return;
@@ -1231,12 +1633,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     renderer.toneMappingExposure = 1.2;
     mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+    
+    // 初始化PMREMGenerator用于HDR环境贴图
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+    pmremGeneratorRef.current = pmremGenerator;
 
     const scene = new THREE.Scene();
-    scene.background = bgTransparent ? null : new THREE.Color(bgColor);
+    // 初始化背景会在useEffect中处理
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000);
+    const camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 100000);
     camera.position.set(2.6, 1.8, 2.6);
     cameraRef.current = camera;
 
@@ -1416,6 +1823,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           prev.gltfAnimation.action.time = prev.current || 0;
           prev.gltfAnimation.mixer.update(0);
         }
+        // 检查并更新背景球体大小
+        const currentCameraDistance = camera.position.length();
+        const distanceChanged = Math.abs(currentCameraDistance - lastCameraDistanceRef.current) / Math.max(1, lastCameraDistanceRef.current) > 0.1;
+        const timeSinceLastCheck = now - lastBackgroundSphereCheckRef.current;
+        
+        if (distanceChanged || timeSinceLastCheck > 500) {
+          const backgroundSphere = scene.getObjectByName('__background_sphere__') as THREE.Mesh | undefined;
+          if (backgroundSphere && backgroundSphere.geometry instanceof THREE.SphereGeometry) {
+            const oldRadius = backgroundSphere.geometry.parameters.radius;
+            const minRadiusForCamera = currentCameraDistance * 1.5;
+            const maxRadiusForFar = camera.far * 0.95;
+            const newRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+            
+            if (Math.abs(oldRadius - newRadius) > 100) {
+              const newGeometry = new THREE.SphereGeometry(newRadius, 64, 64);
+              backgroundSphere.geometry.dispose();
+              backgroundSphere.geometry = newGeometry;
+              backgroundSphere.position.set(0, 0, 0);
+            }
+          }
+          lastBackgroundSphereCheckRef.current = now;
+          lastCameraDistanceRef.current = currentCameraDistance;
+        }
         return prev; 
       }
       const nextTime = Math.min(prev.duration, prev.current + dt);
@@ -1431,6 +1861,32 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       if (nextTime >= prev.duration) return { ...prev, current: prev.duration, playing: false };
       return { ...prev, current: nextTime };
     });
+    
+    // 动态更新背景球体大小（每500ms检查一次，或相机距离变化超过10%时）
+    const currentCameraDistance = camera.position.length();
+    const distanceChanged = Math.abs(currentCameraDistance - lastCameraDistanceRef.current) / Math.max(1, lastCameraDistanceRef.current) > 0.1;
+    const timeSinceLastCheck = now - lastBackgroundSphereCheckRef.current;
+    
+    if (distanceChanged || timeSinceLastCheck > 500) {
+      const backgroundSphere = scene.getObjectByName('__background_sphere__') as THREE.Mesh | undefined;
+      if (backgroundSphere && backgroundSphere.geometry instanceof THREE.SphereGeometry) {
+        const oldRadius = backgroundSphere.geometry.parameters.radius;
+        const minRadiusForCamera = currentCameraDistance * 1.5;
+        const maxRadiusForFar = camera.far * 0.95;
+        const newRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+        
+        // 如果半径需要更新，重新创建几何体
+        if (Math.abs(oldRadius - newRadius) > 100) {
+          const newGeometry = new THREE.SphereGeometry(newRadius, 64, 64);
+          backgroundSphere.geometry.dispose();
+          backgroundSphere.geometry = newGeometry;
+          backgroundSphere.position.set(0, 0, 0);
+        }
+      }
+      lastBackgroundSphereCheckRef.current = now;
+      lastCameraDistanceRef.current = currentCameraDistance;
+    }
+    
     const composer = composerRef.current;
     if (composer) composer.render(); else renderer.render(scene, camera);
   }
@@ -1719,6 +2175,31 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             const loader = new FBXLoader(manager);
             loadedRoot = loader.parse(arrayBuffer, '');
             loadedAnimations = (loadedRoot as any).animations || [];
+            // 🔧 修复FBX模型位置偏差：重置根对象的变换，使其与GLB模型行为一致
+            if (loadedRoot) {
+              // 如果根对象有变换，先将其烘焙到所有子对象
+              if (loadedRoot.position.lengthSq() > 0.0001 || 
+                  loadedRoot.rotation.x !== 0 || loadedRoot.rotation.y !== 0 || loadedRoot.rotation.z !== 0 ||
+                  loadedRoot.scale.x !== 1 || loadedRoot.scale.y !== 1 || loadedRoot.scale.z !== 1) {
+                console.log('🔧 FBX根对象有变换，正在烘焙到子对象...', {
+                  position: loadedRoot.position,
+                  rotation: loadedRoot.rotation,
+                  scale: loadedRoot.scale
+                });
+                loadedRoot.updateMatrixWorld(true);
+                const rootMatrix = loadedRoot.matrix.clone();
+                loadedRoot.children.forEach((child) => {
+                  child.applyMatrix4(rootMatrix);
+                  child.updateMatrixWorld(true);
+                });
+              }
+              // 重置根对象的变换
+              loadedRoot.position.set(0, 0, 0);
+              loadedRoot.rotation.set(0, 0, 0);
+              loadedRoot.scale.set(1, 1, 1);
+              loadedRoot.updateMatrixWorld(true);
+              console.log('✅ FBX根对象变换已重置');
+            }
           } else if (isOBJ) {
             const loader = new OBJLoader(manager);
             const textDecoder = new TextDecoder();
@@ -1734,6 +2215,122 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           // 跳到后续处理（避免重复代码）
           root = loadedRoot;
           animations = loadedAnimations;
+          
+          // 🔧 统一FBX和GLB的层级结构：确保FBX也有Group包装层
+          // 规整根节点（与后续处理保持一致）
+          if ((root as any).isScene) {
+            let candidate: THREE.Object3D = root;
+            while ((candidate as any).isScene && candidate.children && candidate.children.length === 1) {
+              candidate = candidate.children[0];
+            }
+            if ((candidate as any).isScene) {
+              const container = new THREE.Group();
+              container.name = root.name || '模型';
+              const children = [...candidate.children];
+              children.forEach((child) => container.add(child));
+              root = container;
+            } else {
+              root = candidate;
+            }
+          } else if (fileExt === 'fbx') {
+            // 🔧 FBX特殊处理：统一层级结构，确保FBX也有Group包装层（与GLB保持一致）
+            console.log('🔍 FBX层级结构检查:', {
+              rootType: root.type,
+              rootName: root.name,
+              childrenCount: root.children.length,
+              hasMesh: (root as any).isMesh || (root as any).geometry,
+              rootPosition: root.position,
+              rootRotation: root.rotation,
+              rootScale: root.scale
+            });
+            
+            // 确保根对象的变换矩阵是最新的
+            root.updateMatrixWorld(true);
+            
+            // 强制为所有FBX创建Group包装层，确保层级结构统一
+            const container = new THREE.Group();
+            container.name = root.name || '模型';
+            // 标记这是FBX创建的包装层，不应该被剥离
+            (container as any).userData = { isFBXWrapper: true, ...((container as any).userData || {}) };
+            
+            // 先设置容器的变换，确保位置在原点
+            container.position.set(0, 0, 0);
+            container.rotation.set(0, 0, 0);
+            container.scale.set(1, 1, 1);
+            
+            // 将根对象的所有子节点移动到新容器中
+            // 重要：在移动前，记录每个子对象的世界位置，确保移动后世界位置不变
+            root.updateMatrixWorld(true);
+            const children = [...root.children];
+            const childWorldPositions = new Map<THREE.Object3D, THREE.Vector3>();
+            
+            // 记录每个子对象的世界位置（相对于原root的世界坐标系）
+            children.forEach((child) => {
+              child.updateMatrixWorld(true);
+              const worldPos = new THREE.Vector3();
+              child.getWorldPosition(worldPos);
+              childWorldPositions.set(child, worldPos);
+            });
+            
+            // 移动子对象到新容器
+            children.forEach((child) => {
+              root.remove(child);
+              container.add(child);
+            });
+            
+            // 如果根对象本身有Mesh，也需要保留
+            if ((root as any).isMesh || (root as any).geometry) {
+              console.log('🔧 FBX根对象包含Mesh，保留根对象');
+              container.add(root);
+            }
+            
+            // 将容器设置为新的根对象
+            root = container;
+            
+            // 更新新根对象的变换矩阵（现在容器已经是root了）
+            root.updateMatrixWorld(true);
+            
+            // 重新计算每个子对象的本地位置，使其世界位置保持不变
+            children.forEach((child) => {
+              const worldPos = childWorldPositions.get(child);
+              if (worldPos) {
+                // 计算相对于新容器的本地位置
+                // 由于容器现在在原点，世界位置就是本地位置
+                child.position.copy(worldPos);
+                child.updateMatrixWorld(true);
+              }
+            });
+            
+            console.log('🔧 FBX根对象已用Group替换');
+            
+            // 确保Group名称明确标识
+            if (root.name && root.children.length > 0) {
+              // 如果Group有名称且不是默认名称，保持原名称
+              // 否则使用第一个子对象的名称或默认名称
+              const firstChildName = root.children[0]?.name;
+              if (!root.name || root.name === '模型') {
+                root.name = firstChildName || '模型根节点';
+              }
+            }
+            
+            console.log('✅ FBX已创建Group包装层，统一层级结构', {
+              newRootType: root.type,
+              newRootName: root.name,
+              childrenCount: root.children.length,
+              newRootPosition: root.position,
+              firstChildPosition: root.children[0]?.position,
+              childrenNames: root.children.map(c => c.name || c.type).slice(0, 3)
+            });
+            
+            // 验证Group层确实存在
+            console.log('🔍 验证Group层结构:', {
+              rootIsGroup: root.type === 'Group',
+              rootHasUserData: !!(root as any).userData?.isFBXWrapper,
+              rootChildren: root.children.length,
+              rootName: root.name
+            });
+          }
+          
           modelRootRef.current = root;
           scene.add(root);
           
@@ -1748,8 +2345,41 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           // 构建节点映射
           rebuildTree();
           
+          // 验证树结构是否正确构建（通过keyToObject检查）
+          const rootKey = root.uuid;
+          const rootInMap = keyToObject.current.get(rootKey);
+          console.log('🔍 重建树结构后验证:', {
+            rootType: root.type,
+            rootName: root.name,
+            rootChildrenCount: root.children.length,
+            rootKey: rootKey,
+            rootInMap: !!rootInMap,
+            rootHasWrapperFlag: !!(root as any).userData?.isFBXWrapper,
+            firstChildName: root.children[0]?.name
+          });
+          
           // 自动调整相机视角
           focusObject(root);
+          
+          // 检查背景球体状态（模型加载后）
+          const backgroundSphereAfterLoad = scene.getObjectByName('__background_sphere__') as THREE.Mesh | undefined;
+          if (backgroundSphereAfterLoad) {
+            const camera = cameraRef.current;
+            if (camera) {
+              const sphereRadius = (backgroundSphereAfterLoad.geometry as THREE.SphereGeometry).parameters.radius;
+              const cameraDistance = camera.position.length();
+              console.log(`✅ 模型加载完成，背景球体状态检查:`, {
+                球体存在: true,
+                球体半径: sphereRadius.toFixed(2),
+                相机距离: cameraDistance.toFixed(2),
+                相机Far: camera.far.toFixed(2),
+                相机在球内: sphereRadius > cameraDistance ? '✅' : '❌',
+                球体在Far内: sphereRadius < camera.far ? '✅' : '❌'
+              });
+            }
+          } else {
+            console.warn('⚠️ 模型加载完成，但背景球体不存在！');
+          }
           
           // 🎬 处理模型内置动画
           if (animations && animations.length > 0) {
@@ -1790,6 +2420,31 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           const loader = new FBXLoader(manager);
           root = loader.parse(arrayBuffer, '');
           animations = (root as any).animations || [];
+          // 🔧 修复FBX模型位置偏差：重置根对象的变换，使其与GLB模型行为一致
+          if (root) {
+            // 如果根对象有变换，先将其烘焙到所有子对象
+            if (root.position.lengthSq() > 0.0001 || 
+                root.rotation.x !== 0 || root.rotation.y !== 0 || root.rotation.z !== 0 ||
+                root.scale.x !== 1 || root.scale.y !== 1 || root.scale.z !== 1) {
+              console.log('🔧 FBX根对象有变换，正在烘焙到子对象...', {
+                position: root.position,
+                rotation: root.rotation,
+                scale: root.scale
+              });
+              root.updateMatrixWorld(true);
+              const rootMatrix = root.matrix.clone();
+              root.children.forEach((child) => {
+                child.applyMatrix4(rootMatrix);
+                child.updateMatrixWorld(true);
+              });
+            }
+            // 重置根对象的变换
+            root.position.set(0, 0, 0);
+            root.rotation.set(0, 0, 0);
+            root.scale.set(1, 1, 1);
+            root.updateMatrixWorld(true);
+            console.log('✅ FBX根对象变换已重置');
+          }
         } else if (isOBJ) {
           const loader = new OBJLoader(manager);
           const textDecoder = new TextDecoder();
@@ -1900,6 +2555,31 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           const loader = new FBXLoader(manager);
           root = await loader.loadAsync(finalSrc);
           animations = (root as any).animations || [];
+          // 🔧 修复FBX模型位置偏差：重置根对象的变换，使其与GLB模型行为一致
+          if (root) {
+            // 如果根对象有变换，先将其烘焙到所有子对象
+            if (root.position.lengthSq() > 0.0001 || 
+                root.rotation.x !== 0 || root.rotation.y !== 0 || root.rotation.z !== 0 ||
+                root.scale.x !== 1 || root.scale.y !== 1 || root.scale.z !== 1) {
+              console.log('🔧 FBX根对象有变换，正在烘焙到子对象...', {
+                position: root.position,
+                rotation: root.rotation,
+                scale: root.scale
+              });
+              root.updateMatrixWorld(true);
+              const rootMatrix = root.matrix.clone();
+              root.children.forEach((child) => {
+                child.applyMatrix4(rootMatrix);
+                child.updateMatrixWorld(true);
+              });
+            }
+            // 重置根对象的变换
+            root.position.set(0, 0, 0);
+            root.rotation.set(0, 0, 0);
+            root.scale.set(1, 1, 1);
+            root.updateMatrixWorld(true);
+            console.log('✅ FBX根对象变换已重置');
+          }
         } else if (isOBJ) {
           const loader = new OBJLoader(manager);
           root = await loader.loadAsync(finalSrc);
@@ -1987,8 +2667,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
       
       // 规整根节点：
-      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现“Object3D/Group”套层
+      // 1) 若为 Scene 且仅有一个子节点，则直接下钻到子节点，避免反复保存出现"Object3D/Group"套层
       // 2) 若为 Scene 且有多个子节点，则合并到一个 Group 中作为导入根
+      // 3) 🔧 统一FBX和GLB的层级结构：确保FBX也有Group包装层
       if ((root as any).isScene) {
         let candidate: THREE.Object3D = root;
         while ((candidate as any).isScene && candidate.children && candidate.children.length === 1) {
@@ -2003,10 +2684,127 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         } else {
           root = candidate;
         }
+      } else {
+        // 🔧 检查是否为FBX文件（通过URL判断，或通过根对象特征判断）
+        // 注意：由于URL可能没有扩展名，我们也可以通过检查根对象特征来判断
+        // FBX文件通常加载后根对象不是Scene，且可能有一些特定特征
+        const urlHasFBX = actualSrc.toLowerCase().includes('.fbx') || 
+                          actualSrc.toLowerCase().endsWith('.fbx');
+        // 如果URL没有扩展名，尝试通过根对象特征判断（FBX通常不是Scene）
+        const mightBeFBX = !(root as any).isScene && 
+                           root.type !== 'Scene' && 
+                           (root.children.length > 0 || (root as any).isMesh);
+        
+        if (urlHasFBX || mightBeFBX) {
+          // 🔧 FBX特殊处理：统一层级结构，确保FBX也有Group包装层（与GLB保持一致）
+          console.log('🔍 FBX层级结构检查（统一处理）:', {
+            rootType: root.type,
+            rootName: root.name,
+            childrenCount: root.children.length,
+            hasMesh: (root as any).isMesh || (root as any).geometry,
+            urlHasFBX: urlHasFBX,
+            mightBeFBX: mightBeFBX,
+            actualSrc: actualSrc,
+            rootPosition: root.position,
+            rootRotation: root.rotation,
+            rootScale: root.scale
+          });
+          
+          // 确保根对象的变换矩阵是最新的
+          root.updateMatrixWorld(true);
+          
+          // 强制为所有FBX创建Group包装层，确保层级结构统一
+          const container = new THREE.Group();
+          container.name = root.name || '模型';
+          // 标记这是FBX创建的包装层，不应该被剥离
+          (container as any).userData = { isFBXWrapper: true, ...((container as any).userData || {}) };
+          
+          // 先设置容器的变换，确保位置在原点
+          container.position.set(0, 0, 0);
+          container.rotation.set(0, 0, 0);
+          container.scale.set(1, 1, 1);
+          
+          // 将根对象的所有子节点移动到新容器中
+          // 重要：在移动前，记录每个子对象的世界位置，确保移动后世界位置不变
+          root.updateMatrixWorld(true);
+          const children = [...root.children];
+          const childWorldPositions = new Map<THREE.Object3D, THREE.Vector3>();
+          
+          // 记录每个子对象的世界位置（相对于原root的世界坐标系）
+          children.forEach((child) => {
+            child.updateMatrixWorld(true);
+            const worldPos = new THREE.Vector3();
+            child.getWorldPosition(worldPos);
+            childWorldPositions.set(child, worldPos);
+          });
+          
+          // 移动子对象到新容器
+          children.forEach((child) => {
+            root.remove(child);
+            container.add(child);
+          });
+          
+          // 如果根对象本身有Mesh，也需要保留
+          if ((root as any).isMesh || (root as any).geometry) {
+            console.log('🔧 FBX根对象包含Mesh，保留根对象');
+            container.add(root);
+          }
+          
+          // 将容器设置为新的根对象
+          root = container;
+          
+          // 更新新根对象的变换矩阵（现在容器已经是root了）
+          root.updateMatrixWorld(true);
+          
+          // 重新计算每个子对象的本地位置，使其世界位置保持不变
+          children.forEach((child) => {
+            const worldPos = childWorldPositions.get(child);
+            if (worldPos) {
+              // 计算相对于新容器的本地位置
+              // 由于容器现在在原点，世界位置就是本地位置
+              child.position.copy(worldPos);
+              child.updateMatrixWorld(true);
+            }
+          });
+          
+          console.log('🔧 FBX根对象已用Group替换');
+          
+          // 确保Group名称明确标识
+          if (root.name && root.children.length > 0) {
+            // 如果Group有名称且不是默认名称，保持原名称
+            // 否则使用第一个子对象的名称或默认名称
+            const firstChildName = root.children[0]?.name;
+            if (!root.name || root.name === '模型') {
+              root.name = firstChildName || '模型根节点';
+            }
+          }
+          
+          console.log('✅ FBX已创建Group包装层，统一层级结构', {
+            newRootType: root.type,
+            newRootName: root.name,
+            childrenCount: root.children.length,
+            newRootPosition: root.position,
+            firstChildPosition: root.children[0]?.position,
+            childrenNames: root.children.map(c => c.name || c.type).slice(0, 3)
+          });
+          
+          // 验证Group层确实存在
+          console.log('🔍 验证Group层结构:', {
+            rootIsGroup: root.type === 'Group',
+            rootHasUserData: !!(root as any).userData?.isFBXWrapper,
+            rootChildren: root.children.length,
+            rootName: root.name
+          });
+        }
       }
 
       // 继续剥离仅作为包裹的空容器（Group/Object3D 且仅一个子节点），并将父变换烘焙到子节点
+      // 🔧 但是要保护FBX创建的包装层，不应该被剥离
       const isTrivialContainer = (o: THREE.Object3D) => {
+        // 如果是FBX创建的包装层，不应该被剥离
+        if ((o as any).userData?.isFBXWrapper) {
+          return false;
+        }
         const hasMesh = (o as any).isMesh || (o as any).geometry || (o as any).material;
         return !hasMesh && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
       };
@@ -2068,12 +2866,49 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       function makeNode(obj: THREE.Object3D): TreeNode {
         const key = obj.uuid;
         map.set(key, obj);
-        return { title: obj.name || obj.type || key.slice(0, 8), key, children: obj.children?.map(makeNode) };
+        // 对于Group类型，确保名称明确
+        let title = obj.name || obj.type || key.slice(0, 8);
+        if (obj.type === 'Group' && (obj as any).userData?.isFBXWrapper) {
+          // FBX包装层，确保名称可见
+          if (!obj.name || obj.name === '模型') {
+            title = obj.children[0]?.name ? `Group(${obj.children[0].name})` : 'Group(模型根节点)';
+          }
+        }
+        return { title, key, children: obj.children?.map(makeNode) };
       }
       nodes.push(makeNode(root));
       setTreeData(nodes);
+      
+      // 调试：验证树结构
+      console.log('🔍 树结构已更新:', {
+        rootNodeTitle: nodes[0]?.title,
+        rootNodeType: root.type,
+        rootNodeChildrenCount: nodes[0]?.children?.length,
+        firstChildTitle: nodes[0]?.children?.[0]?.title
+      });
 
       focusObject(root);
+      
+      // 检查背景球体状态（模型加载后）
+      const backgroundSphereAfterLoad = scene.getObjectByName('__background_sphere__') as THREE.Mesh | undefined;
+      if (backgroundSphereAfterLoad) {
+        const camera = cameraRef.current;
+        if (camera) {
+          const sphereRadius = (backgroundSphereAfterLoad.geometry as THREE.SphereGeometry).parameters.radius;
+          const cameraDistance = camera.position.length();
+          console.log(`✅ 模型加载完成，背景球体状态检查:`, {
+            球体存在: true,
+            球体半径: sphereRadius.toFixed(2),
+            相机距离: cameraDistance.toFixed(2),
+            相机Far: camera.far.toFixed(2),
+            相机在球内: sphereRadius > cameraDistance ? '✅' : '❌',
+            球体在Far内: sphereRadius < camera.far ? '✅' : '❌'
+          });
+        }
+      } else {
+        console.warn('⚠️ 模型加载完成，但背景球体不存在！');
+      }
+      
       message.destroy(); // 关闭加载消息
       message.success('模型已加载');
       // 若存在待恢复的标注，模型加载完成后尝试按路径绑定
@@ -2806,6 +3641,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   function focusObject(obj: THREE.Object3D) {
     const camera = cameraRef.current!;
     const controls = controlsRef.current!;
+    const scene = sceneRef.current;
+    
+    // 先检查是否存在背景球体
+    const backgroundSphere = scene?.getObjectByName('__background_sphere__') as THREE.Mesh | undefined;
+    const hasBackgroundSphere = backgroundSphere && backgroundSphere.geometry instanceof THREE.SphereGeometry;
+    
     const box = new THREE.Box3().setFromObject(obj);
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
@@ -2818,10 +3659,54 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const dir = new THREE.Vector3(1, 0.8, 1).normalize();
     camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
     camera.near = Math.max(0.01, dist / 1000);
-    camera.far = dist * 100;
+    
+    // 如果存在背景球体，确保far值足够大以包含背景球体
+    if (hasBackgroundSphere) {
+      const cameraDistance = camera.position.length();
+      // 计算背景球体所需的最小半径
+      const minRadiusForCamera = cameraDistance * 1.5; // 确保相机在球体内，留50%余量
+      const minRequiredFar = (minRadiusForCamera / 0.95) * 1.1; // 确保球体在far内，再留10%余量
+      // 使用模型计算出的far值和背景球体所需far值中的较大者
+      camera.far = Math.max(dist * 100, Math.max(minRequiredFar, 100000)); // 至少100000
+      console.log(`🎯 模型聚焦时调整相机Far值以包含背景球体: ${camera.far.toFixed(2)} (模型所需: ${(dist * 100).toFixed(2)}, 背景球体所需: ${minRequiredFar.toFixed(2)})`);
+    } else {
+      camera.far = dist * 100;
+    }
+    
     camera.updateProjectionMatrix();
     controls.target.copy(center);
     controls.update();
+    
+    // 如果存在背景球体，根据新的相机 far plane 和距离更新其尺寸
+    if (hasBackgroundSphere && scene) {
+      const oldRadius = (backgroundSphere.geometry as THREE.SphereGeometry).parameters.radius;
+      const cameraDistance = camera.position.length();
+      // 使用与创建时相同的计算逻辑
+      const minRadiusForCamera = cameraDistance * 1.5; // 确保相机在球体内，留50%余量
+      const maxRadiusForFar = camera.far * 0.95; // 确保球体在 far plane 内
+      const newRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+      // 只有当尺寸变化较大时才重新创建（避免频繁重建）
+      if (Math.abs(oldRadius - newRadius) > 100) {
+        const newGeometry = new THREE.SphereGeometry(newRadius, 64, 64);
+        backgroundSphere.geometry.dispose();
+        backgroundSphere.geometry = newGeometry;
+        // 确保背景球体在原点
+        backgroundSphere.position.set(0, 0, 0);
+        // 确保渲染设置正确
+        backgroundSphere.renderOrder = Infinity;
+        backgroundSphere.frustumCulled = false;
+        console.log(`🌐 背景球体尺寸已更新: ${oldRadius.toFixed(2)} -> ${newRadius.toFixed(2)} (相机距离: ${cameraDistance.toFixed(2)}, far: ${camera.far.toFixed(2)})`);
+        
+        // 强制重新渲染
+        const r = rendererRef.current; const c = cameraRef.current; 
+        if (r && c) { 
+          const composer = composerRef.current; 
+          if (composer) composer.render(); else r.render(scene, c); 
+        }
+      } else {
+        console.log(`✅ 背景球体尺寸无需更新: ${oldRadius.toFixed(2)} (相机距离: ${cameraDistance.toFixed(2)}, far: ${camera.far.toFixed(2)})`);
+      }
+    }
   }
 
   const onTreeSelect = (keys: React.Key[], info: any) => {
@@ -4526,6 +5411,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             z: controlsRef.current.target.z
           } : undefined,
           background: bgColor,
+          backgroundType: bgType,
+          backgroundPanorama: bgPanorama,
+          backgroundPanoramaBrightness: bgPanoramaBrightness,
+          useHDREnvironment: useHDREnvironment,
           lighting: {
             directional: dirLight,
             ambient: ambLight,
@@ -4752,6 +5641,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         if (settings.background) {
           setBgColor(settings.background);
         }
+        if (settings.backgroundType) {
+          setBgType(settings.backgroundType);
+        }
+        if (settings.backgroundPanorama) {
+          setBgPanorama(settings.backgroundPanorama);
+        }
+        if (settings.backgroundPanoramaBrightness !== undefined) {
+          setBgPanoramaBrightness(settings.backgroundPanoramaBrightness);
+        }
+        if (settings.useHDREnvironment !== undefined) {
+          setUseHDREnvironment(settings.useHDREnvironment);
+        }
         if (settings.lighting) {
           const lighting = settings.lighting;
           if (lighting.directional) {
@@ -4776,12 +5677,79 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   // 设置弹窗
   const SettingsModal = () => (
-    <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} destroyOnClose={false} forceRender getContainer={false} transitionName="" maskTransitionName="">
+    <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} width={600} zIndex={1000}>
       <Flex vertical gap={12}>
         <div style={{ fontWeight: 600 }}>背景</div>
-        <Space>
-          <Switch checkedChildren="透明" unCheckedChildren="不透明" checked={bgTransparent} onChange={(v)=>setBgTransparent(v)} />
-          <Input size="small" type="color" value={bgColor} onChange={(e)=>setBgColor(e.target.value)} disabled={bgTransparent} />
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Space>
+            <Switch checkedChildren="透明" unCheckedChildren="不透明" checked={bgTransparent} onChange={(v)=>setBgTransparent(v)} />
+          </Space>
+          {!bgTransparent && (
+            <>
+              <Space>
+                <span>背景类型：</span>
+                <Select 
+                  size="small" 
+                  value={bgType} 
+                  style={{ width: 120 }} 
+                  onChange={(v)=>{ setBgType(v); if (v === 'panorama' && !bgPanorama) setBgPanorama(panoramaOptions[0]?.value || null); }}
+                  options={[
+                    { label: '纯色', value: 'color' },
+                    { label: '全景图', value: 'panorama' }
+                  ]} 
+                />
+              </Space>
+              {bgType === 'color' ? (
+                <Space>
+                  <span>颜色：</span>
+                  <Input size="small" type="color" value={bgColor} onChange={(e)=>setBgColor(e.target.value)} />
+                </Space>
+              ) : (
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <span>选择全景图：</span>
+                    <Select 
+                      size="small" 
+                      value={bgPanorama || panoramaOptions[0]?.value} 
+                      style={{ width: '100%' }} 
+                      onChange={(v)=>setBgPanorama(v)}
+                      options={panoramaOptions} 
+                    />
+                  </Space>
+                  <Space align="center" style={{ width: '100%' }}>
+                    <span style={{ minWidth: 50 }}>亮度：</span>
+                    <Slider 
+                      style={{ flex: 1, minWidth: 100 }} 
+                      min={0.1} 
+                      max={3.0} 
+                      step={0.1} 
+                      value={bgPanoramaBrightness} 
+                      onChange={(value: number) => {
+                        setBgPanoramaBrightness(value);
+                      }} 
+                    />
+                    <span style={{ minWidth: 40, textAlign: 'right' }}>{bgPanoramaBrightness.toFixed(1)}x</span>
+                  </Space>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Space>
+                      <Switch 
+                        checkedChildren="HDR环境光照" 
+                        unCheckedChildren="普通背景" 
+                        checked={useHDREnvironment} 
+                        onChange={(v) => setUseHDREnvironment(v)}
+                        disabled={bgPanorama ? !(bgPanorama.toLowerCase().endsWith('.hdr') || bgPanorama.toLowerCase().endsWith('.exr')) : true}
+                      />
+                    </Space>
+                    <div style={{ fontSize: '12px', color: '#999', paddingLeft: 8 }}>
+                      {bgPanorama && (bgPanorama.toLowerCase().endsWith('.hdr') || bgPanorama.toLowerCase().endsWith('.exr')) 
+                        ? '✓ HDR文件，启用后模型将使用真实环境光照和反射，让模型看起来更真实' 
+                        : '提示：仅HDR/EXR格式文件支持环境光照功能'}
+                    </div>
+                  </Space>
+                </Space>
+              )}
+            </>
+          )}
         </Space>
         <Divider style={{ margin: '8px 0' }} />
         <div style={{ fontWeight: 600 }}>灯光</div>
@@ -4831,7 +5799,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             max={3.0} 
             step={0.1} 
             value={labelScale} 
-            onChange={(v) => setLabelScale(v)} 
+            onChange={(value: number) => {
+              setLabelScale(value);
+            }} 
           />
           <span>{labelScale.toFixed(1)}x</span>
         </Space>
@@ -5521,19 +6491,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                 </div>
                                 
                                 {material.transparent && (
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
-                                    <span style={{ fontSize: '12px' }}>透明度</span>
-                                    <Slider
-                                      min={0}
-                                      max={1}
-                                      step={0.01}
-                                      value={material.opacity}
-                                      onChange={(value) => {
-                                        material.opacity = value;
-                                        material.needsUpdate = true;
-                                      }}
-                                    />
-                                  </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                      <span style={{ fontSize: '12px', minWidth: 60 }}>透明度</span>
+                                      <Slider
+                                        style={{ minWidth: 100 }}
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        value={material.opacity}
+                                        onChange={(value: number) => {
+                                          material.opacity = value;
+                                          material.needsUpdate = true;
+                                          const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                        }}
+                                      />
+                                    </div>
                                 )}
                                 
                                 <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
@@ -5557,28 +6529,42 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                 {isMeshStandard && (
                                   <>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
-                                      <span style={{ fontSize: '12px' }}>金属度</span>
+                                      <span style={{ fontSize: '12px', minWidth: 60 }}>金属度</span>
                                       <Slider
+                                        key={`metalness-${materialPropsKey}-${materialIndex}`}
+                                        style={{ minWidth: 100 }}
                                         min={0}
                                         max={1}
                                         step={0.01}
-                                        value={(material as THREE.MeshStandardMaterial).metalness}
-                                        onChange={(value) => {
-                                          (material as THREE.MeshStandardMaterial).metalness = value;
-                                          material.needsUpdate = true;
+                                        value={Number((material as THREE.MeshStandardMaterial).metalness) || 0}
+                                        onChange={(val) => {
+                                          const value = typeof val === 'number' ? val : Number(val);
+                                          if (!isNaN(value)) {
+                                            (material as THREE.MeshStandardMaterial).metalness = value;
+                                            material.needsUpdate = true;
+                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                          }
                                         }}
                                       />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
-                                      <span style={{ fontSize: '12px' }}>粗糙度</span>
+                                      <span style={{ fontSize: '12px', minWidth: 60 }}>粗糙度</span>
                                       <Slider
+                                        key={`roughness-${materialPropsKey}-${materialIndex}`}
+                                        style={{ minWidth: 100 }}
                                         min={0}
                                         max={1}
                                         step={0.01}
-                                        value={(material as THREE.MeshStandardMaterial).roughness}
-                                        onChange={(value) => {
-                                          (material as THREE.MeshStandardMaterial).roughness = value;
-                                          material.needsUpdate = true;
+                                        value={Number((material as THREE.MeshStandardMaterial).roughness) || 0}
+                                        onChange={(val) => {
+                                          const value = typeof val === 'number' ? val : Number(val);
+                                          if (!isNaN(value)) {
+                                            (material as THREE.MeshStandardMaterial).roughness = value;
+                                            material.needsUpdate = true;
+                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                          }
                                         }}
                                       />
                                     </div>
@@ -5595,15 +6581,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                       />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
-                                      <span style={{ fontSize: '12px' }}>自发光强度</span>
+                                      <span style={{ fontSize: '12px', minWidth: 60 }}>自发光强度</span>
                                       <Slider
+                                        key={`emissiveIntensity-${materialPropsKey}-${materialIndex}`}
+                                        style={{ minWidth: 100 }}
                                         min={0}
                                         max={10}
                                         step={0.1}
-                                        value={(material as THREE.MeshStandardMaterial).emissiveIntensity}
-                                        onChange={(value) => {
-                                          (material as THREE.MeshStandardMaterial).emissiveIntensity = value;
-                                          material.needsUpdate = true;
+                                        value={Number((material as THREE.MeshStandardMaterial).emissiveIntensity) || 0}
+                                        onChange={(val) => {
+                                          const value = typeof val === 'number' ? val : Number(val);
+                                          if (!isNaN(value)) {
+                                            (material as THREE.MeshStandardMaterial).emissiveIntensity = value;
+                                            material.needsUpdate = true;
+                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                          }
                                         }}
                                       />
                                     </div>
@@ -5626,15 +6619,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                       />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
-                                      <span style={{ fontSize: '12px' }}>光泽度</span>
+                                      <span style={{ fontSize: '12px', minWidth: 60 }}>光泽度</span>
                                       <Slider
+                                        key={`shininess-${materialPropsKey}-${materialIndex}`}
+                                        style={{ minWidth: 100 }}
                                         min={0}
                                         max={100}
                                         step={1}
-                                        value={(material as THREE.MeshPhongMaterial).shininess}
-                                        onChange={(value) => {
-                                          (material as THREE.MeshPhongMaterial).shininess = value;
-                                          material.needsUpdate = true;
+                                        value={Number((material as THREE.MeshPhongMaterial).shininess) || 0}
+                                        onChange={(val) => {
+                                          const value = typeof val === 'number' ? val : Number(val);
+                                          if (!isNaN(value)) {
+                                            (material as THREE.MeshPhongMaterial).shininess = value;
+                                            material.needsUpdate = true;
+                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                          }
                                         }}
                                       />
                                     </div>
