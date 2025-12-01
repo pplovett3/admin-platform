@@ -234,18 +234,12 @@ const CoursewareSchema = new Schema<ICourseware>(
     annotations: [AnnotationSchema],
     animations: [AnimationSchema],
     settings: {
-      cameraPosition: {
-        x: { type: Number, default: 0 },
-        y: { type: Number, default: 0 },
-        z: { type: Number, default: 5 }
-      },
-      cameraTarget: {
-        x: { type: Number, default: 0 },
-        y: { type: Number, default: 0 },
-        z: { type: Number, default: 0 }
-      },
-      background: { type: String, default: '#919191' },
-      lighting: { type: Schema.Types.Mixed }
+      type: Schema.Types.Mixed, // 使用Mixed类型以支持动态字段（全景图设置等）
+      default: {
+        cameraPosition: { x: 0, y: 0, z: 5 },
+        cameraTarget: { x: 0, y: 0, z: 0 },
+        background: '#919191'
+      }
     },
     modelStructure: { type: Schema.Types.Mixed }, // 支持新旧格式
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },

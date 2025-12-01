@@ -94,6 +94,8 @@ async function bootstrap() {
       'http://192.168.0.239:3000',
       'http://192.168.0.239:3001',
       'https://platform.yf-xr.com',  // Cloudflare Tunnel 前端域名
+      'http://platformnew.yf-xr.com',  // Cloudflare Tunnel 前端域名（HTTP）
+      'https://platformnew.yf-xr.com',  // Cloudflare Tunnel 前端域名（HTTPS）
       'https://api.platform.yf-xr.com'  // Cloudflare Tunnel 后端域名
     ],
     credentials: true,

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from 'react';
-import { Card, Form, Input, Select, Button, Space, Upload, Image, Tag, message, Modal, Row, Col, Spin } from 'antd';
+import { Card, Form, Input, Select, Button, Space, Upload, Image, Tag, message, Modal, Row, Col, Spin, Slider } from 'antd';
 import { PlusOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
 
@@ -264,7 +264,10 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                           const picked = await controls.pickNodeKeyOnce();
                           if (picked) {
                             updateAction(index, 'target.nodeKey', picked);
-                            message.success(`已选取节点: ${picked}`);
+                            // 只显示模型名称（路径最后一部分）
+                            const nodeName = coursewareData?.nodeMap?.[picked] || picked;
+                            const displayName = nodeName.split('/').pop() || nodeName;
+                            message.success(`已选取节点: ${displayName}`);
                           } else {
                             message.info('未选中任何对象');
                           }
@@ -278,23 +281,122 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                   </Form.Item>
                 )}
                 
-                {action.type === 'annotation.show' && (
-                  <Form.Item label="显示标注" style={{ marginBottom: 8 }}>
-                    <Select
-                      mode="multiple"
-                      value={action.ids || []}
-                      onChange={(value) => updateAction(index, 'ids', value)}
-                      placeholder="选择要显示的标注"
-                      size="small"
-                      style={{ width: '100%' }}
-                    >
-                      {coursewareData?.annotations?.map((annotation: any) => (
-                        <Select.Option key={annotation.id} value={annotation.id}>
-                          {annotation.title || `标注${annotation.id.slice(-4)}`}
-                        </Select.Option>
-                      )) || []}
-                    </Select>
+                {action.type === 'visibility.set' && (
+                  <Form.Item label="显隐控制" style={{ marginBottom: 8 }}>
+                    <div>
+                      {(action.items || []).map((item: any, itemIndex: number) => (
+                        <div key={itemIndex} style={{ marginBottom: 8, padding: 8, background: item.visible === false ? '#fff2e8' : '#f5f5f5', borderRadius: 4, border: item.visible === false ? '1px solid #ff7a45' : '1px solid #d9d9d9' }}>
+                          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 12, color: item.visible === false ? '#ff7a45' : '#666', marginBottom: 4, fontWeight: item.visible === false ? 500 : 400 }}>
+                                {(() => {
+                                  const nodeName = coursewareData?.nodeMap?.[item.nodeKey] || item.nodeKey || '';
+                                  const displayName = nodeName.split('/').pop() || nodeName || '未选择';
+                                  return displayName;
+                                })()}
+                              </div>
+                              <Select
+                                value={item.visible !== undefined ? (item.visible ? 'show' : 'hide') : 'show'}
+                                onChange={(value) => {
+                                  const newItems = [...(action.items || [])];
+                                  newItems[itemIndex] = { ...newItems[itemIndex], visible: value === 'show' };
+                                  updateAction(index, 'items', newItems);
+                                }}
+                                size="small"
+                                style={{ width: 120 }}
+                              >
+                                <Select.Option value="show">显示</Select.Option>
+                                <Select.Option value="hide">隐藏</Select.Option>
+                              </Select>
+                            </div>
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={() => {
+                                const newItems = (action.items || []).filter((_: any, i: number) => i !== itemIndex);
+                                updateAction(index, 'items', newItems);
+                              }}
+                            />
+                          </Space>
+                        </div>
+                      ))}
+                      <Button
+                        size="small"
+                        icon={<PlusOutlined />}
+                        onClick={async () => {
+                          try {
+                            setPicking(true);
+                            const controls = (window as any).__threeViewerControls;
+                            if (!controls?.pickNodeKeyOnce) {
+                              message.warning('请先在中间三维视窗加载模型');
+                              return;
+                            }
+                            const picked = await controls.pickNodeKeyOnce();
+                            if (picked) {
+                              const currentItems = action.items || [];
+                              // 检查是否已存在
+                              const exists = currentItems.some((item: any) => item.nodeKey === picked);
+                              if (exists) {
+                                message.warning('该节点已添加');
+                                return;
+                              }
+                              // 添加新项
+                              const newItems = [...currentItems, { nodeKey: picked, visible: true }];
+                              updateAction(index, 'items', newItems);
+                              // 只显示模型名称（路径最后一部分）
+                              const nodeName = coursewareData?.nodeMap?.[picked] || picked;
+                              const displayName = nodeName.split('/').pop() || nodeName;
+                              message.success(`已添加节点: ${displayName}`);
+                            } else {
+                              message.info('未选中任何对象');
+                            }
+                          } finally {
+                            setPicking(false);
+                          }
+                        }}
+                        loading={picking}
+                        style={{ width: '100%', marginTop: 8 }}
+                      >
+                        从场景选取对象
+                      </Button>
+                    </div>
                   </Form.Item>
+                )}
+                
+                {action.type === 'annotation.show' && (
+                  <>
+                    <Form.Item label="显示标注" style={{ marginBottom: 8 }}>
+                      <Select
+                        mode="multiple"
+                        value={action.ids || []}
+                        onChange={(value) => updateAction(index, 'ids', value)}
+                        placeholder="选择要显示的标注"
+                        size="small"
+                        style={{ width: '100%' }}
+                      >
+                        {coursewareData?.annotations?.map((annotation: any) => (
+                          <Select.Option key={annotation.id} value={annotation.id}>
+                            {annotation.title || `标注${annotation.id.slice(-4)}`}
+                          </Select.Option>
+                        )) || []}
+                      </Select>
+                    </Form.Item>
+                    <Form.Item label="标签大小" style={{ marginBottom: 8 }}>
+                      <Slider
+                        min={0.1}
+                        max={5}
+                        step={0.1}
+                        value={action.labelScale !== undefined ? action.labelScale : 1}
+                        onChange={(value) => updateAction(index, 'labelScale', value)}
+                        tooltip={{ formatter: (value) => `${value}x` }}
+                      />
+                      <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+                        当前大小: {(action.labelScale !== undefined ? action.labelScale : 1).toFixed(1)}x
+                      </div>
+                    </Form.Item>
+                  </>
                 )}
                 
                 {action.type === 'animation.play' && (

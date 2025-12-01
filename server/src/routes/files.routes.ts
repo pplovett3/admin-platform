@@ -122,9 +122,22 @@ router.get('/proxy', authenticate as any, async (req, res) => {
 router.get('/mine', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string };
   const { type, q, page = '1', pageSize = '20' } = req.query as any;
-  const filter: any = { ownerUserId: new mongoose.Types.ObjectId(current.userId), visibility: 'private' };
+  const filter: any = { 
+    ownerUserId: new mongoose.Types.ObjectId(current.userId), 
+    visibility: 'private',
+    storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件（AI课件配音）
+    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
+  };
   if (type) filter.type = type;
-  if (q) filter.originalName = { $regex: String(q), $options: 'i' };
+  if (q) {
+    // 搜索时使用 $and 确保同时满足搜索条件和排除条件
+    filter.$and = [
+      { originalName: { $regex: String(q), $options: 'i' } },
+      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }
+    ];
+    // 移除单独的 originalName 条件，因为已经在 $and 中处理
+    delete filter.originalName;
+  }
   const p = Math.max(parseInt(String(page), 10) || 1, 1);
   const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 20, 1), 100);
   const [rows, total] = await Promise.all([
@@ -148,11 +161,20 @@ router.get('/public', authenticate as any, async (_req, res) => {
   const { type, q, page = '1', pageSize = '20' } = _req.query as any;
   const filter: any = { 
     visibility: 'public',
-    // 排除 TTS 自动生成的音频文件
-    storageDir: { $not: /^tts\// }
+    // 排除 TTS 自动生成的音频文件（AI课件配音）
+    storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件
+    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
   };
   if (type) filter.type = type;
-  if (q) filter.originalName = { $regex: String(q), $options: 'i' };
+  if (q) {
+    // 搜索时使用 $and 确保同时满足搜索条件和排除条件
+    filter.$and = [
+      { originalName: { $regex: String(q), $options: 'i' } },
+      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }
+    ];
+    // 移除单独的 originalName 条件，因为已经在 $and 中处理
+    delete filter.originalName;
+  }
   const p = Math.max(parseInt(String(page), 10) || 1, 1);
   const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 20, 1), 100);
   const [rows, total] = await Promise.all([
@@ -164,17 +186,25 @@ router.get('/public', authenticate as any, async (_req, res) => {
 
 router.get('/client/mine', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string };
-  const rows = await FileModel.find({ ownerUserId: new mongoose.Types.ObjectId(current.userId) }).sort({ createdAt: -1 }).lean();
+  // 排除 TTS 自动生成的音频文件（AI课件配音）
+  // 排除编辑器自动保存的临时GLB文件
+  const rows = await FileModel.find({ 
+    ownerUserId: new mongoose.Types.ObjectId(current.userId),
+    storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件
+    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
+  }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
   const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
   res.json({ rows: mapped });
 });
 
 router.get('/client/public', authenticate as any, async (_req, res) => {
-  // 排除 TTS 自动生成的音频文件
+  // 排除 TTS 自动生成的音频文件（AI课件配音）
+  // 排除编辑器自动保存的临时GLB文件
   const rows = await FileModel.find({ 
     visibility: 'public',
-    storageDir: { $not: /^tts\// }
+    storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件
+    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
   }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
   const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));

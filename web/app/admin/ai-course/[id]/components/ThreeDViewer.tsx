@@ -6,11 +6,13 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
-import { getToken } from '@/app/_lib/api';
+import { getToken, getAPI_URL } from '@/app/_lib/api';
 
 // 记录材质/对象的高亮前状态
 type MaterialBackup = {
@@ -47,6 +49,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const autoRotationRef = useRef<boolean>(false);
   const rotationSpeedRef = useRef<number>(0.005);
   const cameraAnimationRef = useRef<any>(null);
+  const backgroundTextureRef = useRef<THREE.Texture | null>(null);
+  const environmentMapRef = useRef<THREE.Texture | null>(null);
+  const pmremGeneratorRef = useRef<THREE.PMREMGenerator | null>(null);
+  const hiddenObjectsRef = useRef<Map<string, boolean>>(new Map()); // 记录对象的初始可见性状态
   
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -123,10 +129,16 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         modifiedUrl: coursewareData?.modifiedModelUrl,
         finalUrl: modelUrl
       });
-      loadModel(modelUrl);
-    }
-    if (coursewareData?.settings) {
-      applySettings(coursewareData.settings);
+      // 先应用背景设置（在模型加载前），即使没有settings也使用默认值
+      applySettings(coursewareData?.settings || {});
+      // 然后加载模型（模型加载完成后会再次应用设置以确保正确）
+      loadModel(modelUrl).then(() => {
+        // 模型加载完成后再次应用设置，确保背景正确显示
+        applySettings(coursewareData?.settings || {});
+      });
+    } else {
+      // 如果没有模型URL，直接应用设置（使用默认值）
+      applySettings(coursewareData?.settings || {});
     }
   }, [coursewareData]);
 
@@ -214,14 +226,13 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 创建场景
     const scene = new THREE.Scene();
     
-    // 【新增】创建渐变背景纹理 - 参考图片效果
-    const gradientTexture = createGradientTexture();
-    scene.background = gradientTexture;
+    // 初始背景设置为null，等待applySettings设置（避免默认渐变背景覆盖HDR背景）
+    scene.background = null;
     
     sceneRef.current = scene;
 
     // 创建相机
-    const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(75, width / height, 0.001, 1000);
     camera.position.set(5, 5, 5);
     cameraRef.current = camera;
 
@@ -254,6 +265,11 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       });
       
       rendererRef.current = renderer;
+      
+      // 初始化PMREMGenerator用于HDR环境贴图
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      pmremGenerator.compileEquirectangularShader();
+      pmremGeneratorRef.current = pmremGenerator;
       
       // 创建控制器
       const controls = new OrbitControls(camera, renderer.domElement);
@@ -310,8 +326,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         mixerRef.current.update(0.01);
       }
       
-      // 标注缩放更新
-      updateAnnotationScaling();
+      // 标注缩放更新（已移除自适应缩放，使用固定大小）
       
       // 渲染场景
       if (rendererRef.current && sceneRef.current && cameraRef.current) {
@@ -356,13 +371,269 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     scene.add(hemisphereLight);
   };
 
+  // 更新场景中所有材质的环境贴图
+  const updateMaterialsEnvMap = (envMap: THREE.Texture | null, intensity: number = 1.0) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    
+    scene.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        const material = Array.isArray(object.material) ? object.material : [object.material];
+        material.forEach((mat) => {
+          if (mat instanceof THREE.MeshStandardMaterial || 
+              mat instanceof THREE.MeshPhysicalMaterial ||
+              mat instanceof THREE.MeshPhongMaterial) {
+            mat.envMap = envMap;
+            // 设置环境贴图强度
+            if ('envMapIntensity' in mat) {
+              (mat as any).envMapIntensity = intensity;
+            }
+            mat.needsUpdate = true;
+          }
+        });
+      }
+    });
+  };
+
   const applySettings = (settings: any) => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
 
-    // 【注释】跳过背景色设置，使用渐变背景
-    // if (settings.background) {
-    //   sceneRef.current.background = new THREE.Color(settings.background);
-    // }
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const renderer = rendererRef.current;
+
+    // 如果没有背景设置，使用默认HDR背景
+    const backgroundType = settings?.backgroundType || 'panorama';
+    const backgroundPanorama = settings?.backgroundPanorama || '/360background_7.hdr';
+    const bgPanoramaBrightness = settings?.backgroundPanoramaBrightness || 1.0;
+    const useHDREnvironment = settings?.useHDREnvironment !== undefined ? settings.useHDREnvironment : true;
+
+    // 应用HDR全景背景
+    if (backgroundType === 'panorama' && backgroundPanorama) {
+      let bgPanorama = backgroundPanorama;
+      
+      // 处理相对路径（如 /360background_7.hdr）
+      if (bgPanorama.startsWith('/') && !bgPanorama.startsWith('http')) {
+        // 相对路径，使用public目录
+        bgPanorama = bgPanorama;
+      }
+      
+      // 检测是否为HDR或EXR文件
+      const lowerPath = bgPanorama.toLowerCase();
+      const isHDR = lowerPath.endsWith('.hdr');
+      const isEXR = lowerPath.endsWith('.exr');
+      
+      if (isHDR || isEXR) {
+        // 根据文件类型选择加载器
+        const loader = isHDR ? new RGBELoader() : new EXRLoader();
+        console.log(`🌐 开始加载${isHDR ? 'HDR' : 'EXR'}全景图:`, bgPanorama);
+        loader.load(
+          bgPanorama,
+          (texture) => {
+            console.log(`✅ ${isHDR ? 'HDR' : 'EXR'}全景图加载成功:`, bgPanorama);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            backgroundTextureRef.current = texture;
+            
+            // 生成环境贴图（需要翻转以修正反射方向）
+            const pmremGenerator = pmremGeneratorRef.current;
+            if (pmremGenerator) {
+              // 创建翻转后的纹理用于环境贴图（通过repeat.x = -1实现水平翻转）
+              const flippedTexture = texture.clone();
+              flippedTexture.wrapS = THREE.RepeatWrapping;
+              flippedTexture.repeat.x = -1; // 水平翻转环境贴图
+              const envMap = pmremGenerator.fromEquirectangular(flippedTexture).texture;
+              environmentMapRef.current = envMap;
+              
+              // 如果启用HDR环境光照，应用到场景
+              if (useHDREnvironment) {
+                scene.environment = envMap;
+                updateMaterialsEnvMap(envMap, bgPanoramaBrightness);
+                // 应用亮度到环境光照
+                if (renderer) {
+                  renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
+                }
+              }
+            }
+            
+            // 创建自定义shader材质来显示HDR/EXR背景
+            const material = new THREE.ShaderMaterial({
+              uniforms: {
+                tBackground: { value: texture },
+                brightness: { value: bgPanoramaBrightness }
+              },
+              vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                  vUv = uv;
+                  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                  gl_Position = projectionMatrix * mvPosition;
+                  // 将深度值设置为最远（1.0），确保背景始终在最后渲染
+                  gl_Position.z = gl_Position.w * 0.999999;
+                }
+              `,
+              fragmentShader: `
+                uniform sampler2D tBackground;
+                uniform float brightness;
+                varying vec2 vUv;
+                void main() {
+                  // 翻转水平方向（左右反转）以修正HDR贴图方向
+                  vec2 flippedUv = vec2(1.0 - vUv.x, vUv.y);
+                  vec4 texColor = texture2D(tBackground, flippedUv);
+                  gl_FragColor = vec4(texColor.rgb * brightness, texColor.a);
+                }
+              `,
+              side: THREE.BackSide,
+              toneMapped: false, // HDR/EXR不需要色调映射
+              depthWrite: false, // 不写入深度缓冲区，避免遮挡其他物体
+              depthTest: true // 启用深度测试，但通过shader将深度设置为最远
+            });
+            
+            // 创建球体几何体来显示背景
+            const cameraDistance = camera.position.length();
+            const minRadiusForCamera = cameraDistance * 1.5;
+            const maxRadiusForFar = camera.far * 0.95;
+            const sphereRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+            
+            const geometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.name = '__background_sphere__';
+            sphere.renderOrder = Infinity;
+            sphere.frustumCulled = false;
+            sphere.position.set(0, 0, 0);
+            
+            console.log(`🌐 创建HDR背景球体: 半径=${sphereRadius.toFixed(2)}, 相机距离=${cameraDistance.toFixed(2)}`);
+            
+            // 移除旧的背景球体
+            const oldSphere = scene.getObjectByName('__background_sphere__');
+            if (oldSphere) {
+              scene.remove(oldSphere);
+              console.log('🗑️ 移除旧的HDR背景球体');
+            }
+            
+            scene.add(sphere);
+            scene.background = null; // 清除默认背景
+            console.log('✅ HDR背景球体已添加到场景');
+            
+            // 强制重新渲染
+            if (composerRef.current) {
+              composerRef.current.render();
+            } else if (renderer && scene && camera) {
+              renderer.render(scene, camera);
+            }
+          },
+          undefined,
+          (error) => {
+            console.error(`❌ 加载${isHDR ? 'HDR' : 'EXR'}全景图失败:`, error);
+            // 失败时使用默认背景
+            if (settings.background) {
+              scene.background = new THREE.Color(settings.background);
+            }
+          }
+        );
+      } else {
+        // 加载普通全景图
+        const loader = new THREE.TextureLoader();
+        console.log('🖼️ 开始加载普通全景图:', bgPanorama);
+        loader.load(
+          bgPanorama,
+          (texture) => {
+            console.log('✅ 普通全景图加载成功:', bgPanorama);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            backgroundTextureRef.current = texture;
+            
+            // 如果启用HDR环境光照，生成环境贴图
+            if (useHDREnvironment) {
+              const pmremGenerator = pmremGeneratorRef.current;
+              if (pmremGenerator) {
+                const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                environmentMapRef.current = envMap;
+                scene.environment = envMap;
+                updateMaterialsEnvMap(envMap, bgPanoramaBrightness);
+                if (renderer) {
+                  renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
+                }
+              }
+            } else {
+              scene.environment = null;
+              updateMaterialsEnvMap(null, 1.0);
+            }
+            
+            // 创建自定义shader材质来调整亮度
+            const material = new THREE.ShaderMaterial({
+              uniforms: {
+                tBackground: { value: texture },
+                brightness: { value: bgPanoramaBrightness }
+              },
+              vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                  vUv = uv;
+                  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                  gl_Position = projectionMatrix * mvPosition;
+                  gl_Position.z = gl_Position.w * 0.999999;
+                }
+              `,
+              fragmentShader: `
+                uniform sampler2D tBackground;
+                uniform float brightness;
+                varying vec2 vUv;
+                void main() {
+                  // 翻转水平方向（左右反转）以修正HDR贴图方向
+                  vec2 flippedUv = vec2(1.0 - vUv.x, vUv.y);
+                  vec4 texColor = texture2D(tBackground, flippedUv);
+                  gl_FragColor = vec4(texColor.rgb * brightness, texColor.a);
+                }
+              `,
+              side: THREE.BackSide,
+              depthWrite: false,
+              depthTest: true
+            });
+            
+            const cameraDistance = camera.position.length();
+            const minRadiusForCamera = cameraDistance * 1.5;
+            const maxRadiusForFar = camera.far * 0.95;
+            const sphereRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+            
+            const geometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.name = '__background_sphere__';
+            sphere.renderOrder = Infinity;
+            sphere.frustumCulled = false;
+            sphere.position.set(0, 0, 0);
+            
+            const oldSphere = scene.getObjectByName('__background_sphere__');
+            if (oldSphere) {
+              scene.remove(oldSphere);
+            }
+            
+            scene.add(sphere);
+            scene.background = null;
+          },
+          undefined,
+          (error) => {
+            console.error('❌ 加载普通全景图失败:', error);
+            if (settings.background) {
+              scene.background = new THREE.Color(settings.background);
+            }
+          }
+        );
+      }
+    } else {
+      // 移除背景球体，使用默认背景
+      const oldSphere = scene.getObjectByName('__background_sphere__');
+      if (oldSphere) {
+        scene.remove(oldSphere);
+      }
+      if (settings.background) {
+        scene.background = new THREE.Color(settings.background);
+      } else {
+        // 使用渐变背景
+        const gradientTexture = createGradientTexture();
+        scene.background = gradientTexture;
+      }
+      scene.environment = null;
+      updateMaterialsEnvMap(null, 1.0);
+    }
 
     // 应用相机位置
     if (settings.cameraPosition) {
@@ -384,9 +655,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       cameraRef.current.lookAt(target);
     }
 
-    // 应用灯光设置
+    // 应用灯光设置（严格按照三维课件编辑器的设置）
     if (settings.lighting) {
       applyLightingSettings(settings.lighting);
+    } else {
+      // 如果没有光照设置，使用默认值
+      applyLightingSettings(null);
     }
 
     controlsRef.current.update();
@@ -395,30 +669,43 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const applyLightingSettings = (lighting: any) => {
     if (!sceneRef.current) return;
 
-    // 清除现有灯光（除了环境光）
+    // 清除所有现有灯光（除了阴影平面）
     const lightsToRemove = sceneRef.current.children.filter(child => 
       child instanceof THREE.DirectionalLight || 
       child instanceof THREE.HemisphereLight ||
+      child instanceof THREE.AmbientLight ||
       child instanceof THREE.PointLight
     );
     lightsToRemove.forEach(light => sceneRef.current!.remove(light));
 
-    // 重新设置灯光
+    // 如果没有光照设置，使用默认值（与三维课件编辑器一致）
+    if (!lighting) {
+      lighting = {
+        directional: { color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } },
+        ambient: { color: '#ffffff', intensity: 0.6 },
+        hemisphere: { skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 }
+      };
+    }
+
+    // 重新设置灯光（严格按照三维课件编辑器的设置）
     if (lighting.ambient) {
-      const ambientLight = new THREE.AmbientLight(lighting.ambient.color || 0x404040, lighting.ambient.intensity || 0.4);
+      const ambientLight = new THREE.AmbientLight(
+        new THREE.Color(lighting.ambient.color || '#ffffff'), 
+        lighting.ambient.intensity || 0.6
+      );
       sceneRef.current.add(ambientLight);
     }
 
     if (lighting.directional) {
       const directionalLight = new THREE.DirectionalLight(
-        lighting.directional.color || 0xffffff, 
-        lighting.directional.intensity || 1
+        new THREE.Color(lighting.directional.color || '#ffffff'), 
+        lighting.directional.intensity || 1.2
       );
       if (lighting.directional.position) {
         directionalLight.position.set(
-          lighting.directional.position.x || 10,
-          lighting.directional.position.y || 10,
-          lighting.directional.position.z || 5
+          lighting.directional.position.x || 3,
+          lighting.directional.position.y || 5,
+          lighting.directional.position.z || 2
         );
       }
       directionalLight.castShadow = true;
@@ -429,12 +716,61 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
     if (lighting.hemisphere) {
       const hemisphereLight = new THREE.HemisphereLight(
-        lighting.hemisphere.skyColor || 0xffffff,
-        lighting.hemisphere.groundColor || 0x444444,
-        lighting.hemisphere.intensity || 0.3
+        new THREE.Color(lighting.hemisphere.skyColor || '#ffffff'),
+        new THREE.Color(lighting.hemisphere.groundColor || '#404040'),
+        lighting.hemisphere.intensity || 0.6
       );
+      hemisphereLight.position.set(0, 1, 0);
       sceneRef.current.add(hemisphereLight);
     }
+
+    console.log('✅ 已应用三维课件编辑器的光照设置:', lighting);
+  };
+
+  // 从文件二进制头部检测文件格式
+  const detectFileFormat = (arrayBuffer: ArrayBuffer): string => {
+    if (arrayBuffer.byteLength < 4) {
+      return '';
+    }
+    
+    const bytes = new Uint8Array(arrayBuffer);
+    
+    // 检查 GLB 格式 (magic: 'glTF', version: 2)
+    if (bytes.length >= 12) {
+      const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+      if (magic === 'glTF') {
+        const version = new DataView(arrayBuffer, 4, 4).getUint32(0, true);
+        if (version === 2) {
+          console.log('✅ 检测到 GLB 格式 (glTF 2.0)');
+          return 'glb';
+        }
+      }
+    }
+    
+    // 检查 FBX 格式 (通常以 "Kaydara FBX Binary" 开头)
+    if (bytes.length >= 18) {
+      const header = String.fromCharCode(...bytes.slice(0, 18));
+      if (header.includes('Kaydara FBX')) {
+        console.log('✅ 检测到 FBX 格式');
+        return 'fbx';
+      }
+    }
+    
+    // 检查 OBJ 格式 (文本文件，通常以 # 或 v 开头)
+    if (bytes.length >= 100) {
+      try {
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(0, 100));
+        if (/^(#|v |vn |vt |f |o |g |mtllib |usemtl )/m.test(text)) {
+          console.log('✅ 检测到 OBJ 格式');
+          return 'obj';
+        }
+      } catch {
+        // 不是有效的 UTF-8 文本
+      }
+    }
+    
+    console.log('❌ 无法识别文件格式');
+    return '';
   };
 
   const loadModel = async (modelUrl: string) => {
@@ -450,20 +786,19 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         modelRootRef.current = null;
       }
 
-      // 检测文件格式
-      const fileExt = modelUrl.toLowerCase().split('?')[0].split('.').pop() || '';
-      const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
-      const isFBX = fileExt === 'fbx';
-      const isOBJ = fileExt === 'obj';
-
       // 构建加载URL（处理认证和代理）
       let finalUrl = modelUrl;
+      let useProxy = false;
+      
       if (modelUrl.startsWith('/api/files/')) {
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 使用动态获取的API URL，如果是公网域名则使用相对路径（通过 Next.js rewrites）
+        const baseUrl = getAPI_URL();
         finalUrl = `${baseUrl}${modelUrl}`;
       } else if (modelUrl.startsWith('https://dl.yf-xr.com/') || modelUrl.startsWith('https://video.yf-xr.com/')) {
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 公网URL：使用代理避免CORS问题
+        const baseUrl = getAPI_URL();
         finalUrl = `${baseUrl}/api/files/proxy?url=${encodeURIComponent(modelUrl)}`;
+        useProxy = true;
       }
 
       // 配置加载器
@@ -479,7 +814,55 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      // 从响应头 Content-Disposition 中提取文件名和扩展名
+      let fileExt = '';
+      const contentDisposition = response.headers.get('Content-Disposition');
+      console.log('📋 Content-Disposition 响应头:', contentDisposition);
+      
+      if (contentDisposition) {
+        // 解析 Content-Disposition: inline; filename="model.glb" 或 filename*=UTF-8''model.glb
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=(["']?)([^"'\n]*)\1/i);
+        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;\n]*)/i);
+        
+        let filename = '';
+        if (filenameStarMatch && filenameStarMatch[1]) {
+          filename = decodeURIComponent(filenameStarMatch[1]);
+        } else if (filenameMatch && filenameMatch[2]) {
+          filename = decodeURIComponent(filenameMatch[2]);
+        }
+        
+        if (filename) {
+          fileExt = filename.toLowerCase().split('.').pop() || '';
+          console.log('✅ 从 Content-Disposition 提取文件扩展名:', fileExt, '文件名:', filename);
+        }
+      }
+      
+      // 如果响应头中没有文件名，则回退到从 URL 中提取
+      if (!fileExt) {
+        const urlPath = modelUrl.split('?')[0];
+        const urlParts = urlPath.split('/');
+        const lastPart = urlParts[urlParts.length - 1];
+        if (lastPart && lastPart.includes('.')) {
+          fileExt = lastPart.toLowerCase().split('.').pop() || '';
+          console.log('⚠️ 从 URL 路径提取文件扩展名:', fileExt);
+        }
+      }
+
       const arrayBuffer = await response.arrayBuffer();
+      
+      // 最后的回退：尝试从文件二进制头部识别格式
+      if (!fileExt) {
+        fileExt = detectFileFormat(arrayBuffer);
+        console.log('🔍 从文件头部识别格式:', fileExt || '未识别');
+        
+        if (!fileExt) {
+          throw new Error('无法识别文件格式。请确保文件是有效的 GLB、FBX 或 OBJ 格式。');
+        }
+      }
+      
+      const isGLTF = fileExt === 'glb' || fileExt === 'gltf';
+      const isFBX = fileExt === 'fbx';
+      const isOBJ = fileExt === 'obj';
       
       let model: THREE.Object3D;
       let animations: THREE.AnimationClip[] = [];
@@ -510,7 +893,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         model = loader.parse(text);
         animations = [];
       } else {
-        throw new Error(`不支持的文件格式: .${fileExt}`);
+        throw new Error(`不支持的文件格式: .${fileExt || '未知'}`);
       }
 
       modelRootRef.current = model;
@@ -930,22 +1313,26 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
   };
 
-  const createLabelSprite = (annotation: any): THREE.Sprite | null => {
+  const createLabelSprite = (annotation: any, labelScale: number = 1): THREE.Sprite | null => {
     try {
       const title = annotation.title || annotation.label?.title || 'Annotation';
       
-      // 【自适应1】根据文字长度动态计算画布尺寸
+      // 使用固定画布尺寸（与三维编辑器保持一致）
+      const fontSize = 32;
+      const padding = 20;
+      const minWidth = 120;
+      const textHeight = 64;
+      
+      // 测量文字宽度
       const measureCanvas = document.createElement('canvas');
       const measureContext = measureCanvas.getContext('2d')!;
-      measureContext.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
+      measureContext.font = `bold ${fontSize}px Arial, Microsoft YaHei, sans-serif`;
       const textMetrics = measureContext.measureText(title);
       
-      // 计算合适的画布尺寸
-      const padding = 24;
-      const minWidth = 120;
-      const textWidth = Math.max(textMetrics.width, minWidth);
-      const canvasWidth = Math.ceil(textWidth + padding * 2);
-      const canvasHeight = 64;
+      // 计算画布尺寸（固定高度，宽度根据文字长度）
+      const textWidth = Math.max(minWidth, textMetrics.width + padding * 2);
+      const canvasWidth = textWidth;
+      const canvasHeight = textHeight;
       
       // 创建实际画布
       const canvas = document.createElement('canvas');
@@ -953,57 +1340,59 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       canvas.width = canvasWidth;
       canvas.height = canvasHeight;
 
-      // 清空画布
-      context.clearRect(0, 0, canvas.width, canvas.height);
+      // 重新设置字体（canvas resize后会丢失）
+      context.font = `bold ${fontSize}px Arial, Microsoft YaHei, sans-serif`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
 
       // 绘制背景（圆角矩形）
-      const cornerRadius = 8;
+      const borderRadius = 8;
       context.fillStyle = 'rgba(30, 50, 80, 0.95)';
-      context.beginPath();
-      context.roundRect(4, 4, canvas.width - 8, canvas.height - 8, cornerRadius);
-      context.fill();
-
-      // 绘制边框
       context.strokeStyle = '#1890ff';
       context.lineWidth = 2;
+      
+      const radius = borderRadius;
       context.beginPath();
-      context.roundRect(4, 4, canvas.width - 8, canvas.height - 8, cornerRadius);
+      context.moveTo(radius, 0);
+      context.arcTo(canvasWidth, 0, canvasWidth, canvasHeight, radius);
+      context.arcTo(canvasWidth, canvasHeight, 0, canvasHeight, radius);
+      context.arcTo(0, canvasHeight, 0, 0, radius);
+      context.arcTo(0, 0, canvasWidth, 0, radius);
+      context.closePath();
+      context.fill();
       context.stroke();
 
       // 绘制文字
       context.fillStyle = 'white';
-      context.font = 'bold 32px Arial, Microsoft YaHei, sans-serif';
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-      context.fillText(title, canvas.width / 2, canvas.height / 2);
+      context.fillText(title, canvasWidth / 2, canvasHeight / 2);
 
       // 创建纹理和精灵
       const texture = new THREE.CanvasTexture(canvas);
-      texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
       texture.needsUpdate = true;
       
       const spriteMaterial = new THREE.SpriteMaterial({ 
         map: texture,
-        alphaTest: 0.1,
         transparent: true,
-        depthTest: false, // 设为false确保标签在最前面
-        depthWrite: false
+        alphaTest: 0.1,
+        depthTest: true, // 启用深度测试
+        depthWrite: false,
+        sizeAttenuation: true // 启用尺寸衰减，实现近大远小（与三维编辑器一致）
       });
       
       const sprite = new THREE.Sprite(spriteMaterial);
       
-      // 【自适应2】根据画布尺寸设置合适的世界尺寸（固定像素大小）
-      const baseScale = 0.002; // 基础缩放，控制像素到世界单位的转换
-      const scaledWidth = canvasWidth * baseScale;
-      const scaledHeight = canvasHeight * baseScale;
-      
-      sprite.scale.set(scaledWidth, scaledHeight, 1);
-      sprite.renderOrder = 10000; // 确保在最前面渲染
-      
-      // 【自适应3】添加距离自适应缩放功能
-      sprite.userData.originalScale = { x: scaledWidth, y: scaledHeight };
-      sprite.userData.isDistanceScaling = true;
+      // 使用固定大小，随距离变化（近大远小，与三维编辑器一致）
+      const fixedScale = 0.002; // 基础缩放
+      sprite.scale.set(canvasWidth * fixedScale * labelScale, canvasHeight * fixedScale * labelScale, 1);
+      // 保存标签大小和尺寸信息，以便后续更新
+      sprite.userData.annotationId = annotation.id; // 设置annotationId以便查找
+      sprite.userData.labelScale = labelScale;
+      sprite.userData.baseScale = fixedScale;
+      sprite.userData.canvasWidth = canvasWidth;
+      sprite.userData.canvasHeight = canvasHeight;
+      sprite.renderOrder = 999; // 高渲染顺序，确保最后渲染
       
       return sprite;
     } catch (error) {
@@ -1012,31 +1401,6 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     }
   };
 
-  // 【自适应缩放】更新标注距离自适应缩放
-  const updateAnnotationScaling = () => {
-    if (!cameraRef.current) return;
-    
-    annotationsRef.current.forEach(annotationGroup => {
-      annotationGroup.traverse((child) => {
-        if (child instanceof THREE.Sprite && child.userData.isDistanceScaling) {
-          // 计算到相机的距离
-          const distance = child.position.distanceTo(cameraRef.current!.position);
-          
-          // 基于距离调整缩放（保持固定像素大小）
-          const scaleFactor = Math.max(0.5, Math.min(3.0, distance / 10)); // 限制缩放范围
-          const originalScale = child.userData.originalScale;
-          
-          if (originalScale) {
-            child.scale.set(
-              originalScale.x * scaleFactor,
-              originalScale.y * scaleFactor,
-              1
-            );
-          }
-        }
-      });
-    });
-  };
 
   const animate = () => {
     if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
@@ -1053,8 +1417,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       mixerRef.current.update(0.016); // 假设60fps
     }
 
-    // 【自适应缩放】更新标注距离自适应缩放
-    updateAnnotationScaling();
+    // 标注使用固定大小，无需更新缩放
 
     // 渲染
     if (composerRef.current) {
@@ -1255,13 +1618,32 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       return;
     }
 
+    // 记录初始可见性状态（只在第一次设置时记录）
+    if (!hiddenObjectsRef.current.has(nodeKey)) {
+      hiddenObjectsRef.current.set(nodeKey, targetObject.visible);
+    }
+
     console.log('设置对象显隐:', targetObject.name || targetObject.uuid, visible);
+    // 只设置目标对象本身，不递归设置子对象（避免隐藏所有对象）
     targetObject.visible = visible;
-    
-    // 递归设置子对象
-    targetObject.traverse((child) => {
-      child.visible = visible;
+  };
+
+  // 恢复所有对象的显示状态
+  const restoreAllVisibility = () => {
+    console.log('恢复所有对象的显示状态');
+    hiddenObjectsRef.current.forEach((initialVisible, nodeKey) => {
+      let targetObject = nodeMapRef.current.get(nodeKey);
+      if (!targetObject) {
+        targetObject = findNodeBySmartMatch(nodeKey);
+      }
+      if (targetObject) {
+        targetObject.visible = initialVisible;
+        targetObject.traverse((child) => {
+          child.visible = initialVisible;
+        });
+      }
     });
+    hiddenObjectsRef.current.clear();
   };
 
   const playAnimation = (animationId: string, startTime?: number, endTime?: number) => {
@@ -1296,11 +1678,128 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
     console.log('找到动画:', animation.name, '时长:', animation.duration);
     
+    // 查找三维课件动画数据（包含相机轨道关键帧）
+    // 优先使用 animationId 匹配，如果没有则使用动画名称匹配
+    let coursewareAnimation: any = null;
+    if (coursewareData?.animations) {
+      // 首先尝试通过 animationId 匹配
+      coursewareAnimation = (coursewareData.animations as any[]).find(
+        (anim: any) => anim.id === animationId
+      );
+      // 如果找不到，尝试通过名称匹配
+      if (!coursewareAnimation && animation) {
+        coursewareAnimation = (coursewareData.animations as any[]).find(
+          (anim: any) => anim.name === animation.name || anim.name === animationId
+        );
+      }
+    }
+    
+    console.log('找到课件动画数据:', coursewareAnimation ? {
+      id: coursewareAnimation.id,
+      name: coursewareAnimation.name,
+      hasCameraKeys: !!coursewareAnimation?.timeline?.cameraKeys,
+      cameraKeysCount: coursewareAnimation?.timeline?.cameraKeys?.length || 0
+    } : '未找到');
+    
+    // 读取相机轨道关键帧
+    let cameraKeys: any[] = [];
+    if (coursewareAnimation?.timeline?.cameraKeys) {
+      cameraKeys = [...coursewareAnimation.timeline.cameraKeys].sort((a: any, b: any) => a.time - b.time);
+      console.log('找到相机轨道关键帧:', cameraKeys.length, '个');
+    }
+    
     // 停止所有当前动画
     mixerRef.current.stopAllAction();
     
     const action = mixerRef.current.clipAction(animation);
     action.reset();
+    
+    // 辅助函数：检查是否是有效的三维向量
+    const isVec3 = (v: any): v is [number, number, number] => 
+      Array.isArray(v) && v.length === 3 && v.every((x: any) => typeof x === 'number' && isFinite(x));
+    
+    // 辅助函数：线性插值
+    const lerp = (a: number, b: number, s: number) => a + (b - a) * s;
+    
+    // 更新相机位置的函数
+    const updateCamera = (currentTime: number) => {
+      if (cameraKeys.length === 0 || !cameraRef.current || !controlsRef.current) return;
+      
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
+      
+      // 找到当前时间对应的关键帧
+      let k0 = cameraKeys[0];
+      let k1 = cameraKeys[cameraKeys.length - 1];
+      for (let i = 0; i < cameraKeys.length; i++) {
+        if (cameraKeys[i].time <= currentTime) k0 = cameraKeys[i];
+        if (cameraKeys[i].time >= currentTime) { k1 = cameraKeys[i]; break; }
+      }
+      
+      // 计算插值系数
+      let s = Math.max(0, Math.min(1, (k1.time === k0.time) ? 0 : (currentTime - k0.time) / (k1.time - k0.time)));
+      const ease = k0.easing || 'easeInOut';
+      if (ease === 'easeInOut') {
+        // easeInOutCubic
+        s = s < 0.5 ? 4 * s * s * s : 1 - Math.pow(-2 * s + 2, 3) / 2;
+      }
+      
+      // 插值相机位置
+      const pos0 = isVec3(k0.position) ? k0.position : [camera.position.x, camera.position.y, camera.position.z] as [number, number, number];
+      const pos1 = isVec3(k1.position) ? k1.position : pos0;
+      const tar0 = isVec3(k0.target) ? k0.target : [controls.target.x, controls.target.y, controls.target.z] as [number, number, number];
+      const tar1 = isVec3(k1.target) ? k1.target : tar0;
+      
+      const pos: [number, number, number] = [
+        lerp(pos0[0], pos1[0], s),
+        lerp(pos0[1], pos1[1], s),
+        lerp(pos0[2], pos1[2], s)
+      ];
+      const tar: [number, number, number] = [
+        lerp(tar0[0], tar1[0], s),
+        lerp(tar0[1], tar1[1], s),
+        lerp(tar0[2], tar1[2], s)
+      ];
+      
+      camera.position.set(pos[0], pos[1], pos[2]);
+      controls.target.set(tar[0], tar[1], tar[2]);
+      camera.updateProjectionMatrix();
+      controls.update();
+    };
+    
+    // 动画循环引用
+    let animationFrameId: number | null = null;
+    const startTimeMs = Date.now();
+    const baseTime = startTime !== undefined ? startTime : 0;
+    const duration = endTime !== undefined ? (endTime - startTime!) : animation.duration;
+    
+    // 动画更新循环
+    const animateLoop = () => {
+      if (!mixerRef.current) return;
+      
+      // 更新动画混合器（必须调用，否则动画不会播放）
+      const delta = 0.016; // 假设60fps
+      mixerRef.current.update(delta);
+      
+      if (!action.isRunning()) {
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+        return;
+      }
+      
+      const elapsed = (Date.now() - startTimeMs) / 1000;
+      // 相机轨道关键帧的时间是相对于动画开始时间的，所以使用 elapsed 而不是 baseTime + elapsed
+      const currentTime = elapsed;
+      
+      // 更新相机位置（如果有相机轨道关键帧）
+      if (cameraKeys.length > 0) {
+        updateCamera(currentTime);
+      }
+      
+      animationFrameId = requestAnimationFrame(animateLoop);
+    };
     
     if (startTime !== undefined && endTime !== undefined) {
       // 播放指定时间段
@@ -1309,10 +1808,25 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       action.time = startTime;
       action.play();
       
+      // 初始相机位置
+      if (cameraKeys.length > 0) {
+        updateCamera(startTime);
+      }
+      
+      // 开始动画循环
+      animateLoop();
+      
       // 在指定时间停止
-      const duration = endTime - startTime;
       setTimeout(() => {
         action.stop();
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+        // 设置最终相机位置
+        if (cameraKeys.length > 0) {
+          updateCamera(endTime);
+        }
         console.log('动画播放完成');
       }, duration * 1000);
     } else {
@@ -1321,17 +1835,45 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       action.clampWhenFinished = true;
       action.play();
       
+      // 初始相机位置
+      if (cameraKeys.length > 0) {
+        updateCamera(0);
+      }
+      
+      // 开始动画循环
+      animateLoop();
+      
       console.log('开始播放完整动画，时长:', animation.duration, '秒');
     }
   };
 
   // 标注显示/隐藏控制
-  const showAnnotations = (annotationIds: string[]) => {
-    console.log('显示标注:', annotationIds);
-    annotationsRef.current.forEach(annotation => {
-      const annotationId = annotation.userData.annotationId;
+  const showAnnotations = (annotationIds: string[], labelScale?: number) => {
+    console.log('显示标注:', annotationIds, '标签大小:', labelScale);
+    annotationsRef.current.forEach(annotationGroup => {
+      const annotationId = annotationGroup.userData.annotationId;
       if (annotationId && annotationIds.includes(annotationId)) {
-        annotation.visible = true;
+        annotationGroup.visible = true;
+        // 如果提供了标签大小，只更新标签sprite的缩放（不影响原点和线束）
+        if (labelScale !== undefined) {
+          // 查找annotationGroup中的sprite子对象
+          annotationGroup.traverse((child) => {
+            if (child instanceof THREE.Sprite && child.userData.annotationId === annotationId) {
+              const baseScale = child.userData.baseScale || 0.002;
+              const canvasWidth = child.userData.canvasWidth || 120;
+              const canvasHeight = child.userData.canvasHeight || 64;
+              // 等比例缩放：使用相同的缩放因子
+              const scaleFactor = labelScale;
+              child.scale.set(
+                canvasWidth * baseScale * scaleFactor, 
+                canvasHeight * baseScale * scaleFactor, 
+                1
+              );
+              child.userData.labelScale = labelScale;
+              console.log('更新标签大小:', annotationId, 'scale:', labelScale);
+            }
+          });
+        }
         console.log('显示标注:', annotationId);
       }
     });
@@ -1367,7 +1909,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
   // 【新增】重置所有状态（步骤切换时调用）
   const resetAllStates = () => {
-    console.log('重置所有状态：清除高亮、隐藏标注、停止动画');
+    console.log('重置所有状态：清除高亮、隐藏标注、停止动画、恢复显隐');
     
     // 1. 清除高亮状态
     clearEmissiveHighlight();
@@ -1385,6 +1927,9 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     
     // 4. 停止自转
     stopAutoRotation();
+    
+    // 5. 恢复所有对象的显示状态
+    restoreAllVisibility();
     
     console.log('所有状态已重置');
   };
@@ -1408,7 +1953,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
 
     // 停止之前的动画
     if (cameraAnimationRef.current) {
-      cameraAnimationRef.current.stop();
+      cancelAnimationFrame(cameraAnimationRef.current);
+      cameraAnimationRef.current = null;
     }
 
     const camera = cameraRef.current;
@@ -1501,6 +2047,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       hideAllAnnotations,
       resetAnnotationVisibility,
       resetAllStates,  // 【新增】重置所有状态
+      restoreAllVisibility,  // 【新增】恢复所有对象的显示状态
       startAutoRotation,  // 【新增】开始自转
       stopAutoRotation,   // 【新增】停止自转
       getNodeMap: () => nodeMapRef.current,
@@ -1534,6 +2081,61 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         
         let currentHoverObject: THREE.Object3D | null = null;
         
+        // 辅助函数：检查对象是否是模型对象（排除辅助对象）
+        const isModelObject = (obj: THREE.Object3D): boolean => {
+          const name = obj.name || '';
+          const nameLower = name.toLowerCase();
+          
+          // 排除阴影平面
+          if (name === 'InvisibleShadowPlane' || nameLower.includes('shadowplane')) {
+            return false;
+          }
+          
+          // 排除背景球体
+          if (name === '__background_sphere__' || nameLower.includes('background') || nameLower.includes('sphere')) {
+            return false;
+          }
+          
+          // 排除以 Object_ 开头的辅助对象（如 Object_21f33011）
+          if (name.startsWith('Object_') && /^Object_[a-f0-9]{8}/i.test(name)) {
+            return false;
+          }
+          
+          // 排除 objectk 开头的空对象
+          if (nameLower.startsWith('objectk') || nameLower.startsWith('object_')) {
+            return false;
+          }
+          
+          // 排除灯光、相机等辅助对象
+          if (obj instanceof THREE.Light || obj instanceof THREE.Camera) {
+            return false;
+          }
+          
+          // 排除不可见的对象
+          if (!obj.visible) {
+            return false;
+          }
+          
+          // 确保对象是模型层级下的对象（modelRootRef 的子对象）
+          if (modelRootRef.current) {
+            let current = obj;
+            let isModelChild = false;
+            // 向上遍历，检查是否是模型根节点的子对象
+            while (current && current !== sceneRef.current) {
+              if (current === modelRootRef.current) {
+                isModelChild = true;
+                break;
+              }
+              current = current.parent as THREE.Object3D;
+            }
+            if (!isModelChild) {
+              return false;
+            }
+          }
+          
+          return true;
+        };
+
         // 辅助函数：检查对象是否有实际几何体（非空对象）
         const hasGeometry = (obj: THREE.Object3D): boolean => {
           // 检查对象本身是否是Mesh且有几何体
@@ -1547,17 +2149,18 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
           return false;
         };
 
-        // 查找有效的可选取对象（向上遍历父级，找到有几何体的对象）
+        // 查找有效的可选取对象（向上遍历父级，找到有几何体的模型对象）
         const findSelectableObject = (obj: THREE.Object3D): THREE.Object3D | null => {
           let current = obj;
-          // 向上遍历10层，找到有几何体的对象
+          // 向上遍历10层，找到有几何体的模型对象
           for (let i = 0; i < 10 && current; i++) {
-            if (hasGeometry(current)) {
+            // 首先检查是否是模型对象
+            if (isModelObject(current) && hasGeometry(current)) {
               return current;
             }
             // 检查直接子级是否有几何体
             for (const child of current.children) {
-              if (hasGeometry(child)) {
+              if (isModelObject(child) && hasGeometry(child)) {
                 return child;
               }
             }

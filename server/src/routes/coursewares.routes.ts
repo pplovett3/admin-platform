@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authenticate, requireRole } from '../middlewares/auth';
 import {
   listCoursewares,
+  listCoursewaresForClient,
   getCourseware,
   createCourseware,
   updateCourseware,
@@ -15,6 +16,9 @@ const router = Router();
 
 // 所有路由都需要认证
 router.use(authenticate);
+
+// Unity客户端专用接口（只返回基本信息）
+router.get('/client/list', requireRole(['superadmin', 'schoolAdmin', 'teacher']), listCoursewaresForClient);
 
 // 课件 CRUD 操作
 router.get('/', requireRole(['superadmin', 'schoolAdmin', 'teacher']), listCoursewares);

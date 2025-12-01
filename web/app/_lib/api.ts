@@ -1,17 +1,30 @@
 "use client";
 
-// 动态获取 API URL：使用相对路径通过 Nginx 反向代理
-export const API_URL = (() => {
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
-  }
-  // 运行时使用当前域名（通过 Nginx 代理）
+// 动态获取 API URL：使用相对路径通过 Next.js rewrites 代理
+// 注意：这个函数在每次调用时都会重新计算，确保使用最新的 hostname
+export function getAPI_URL(): string {
   if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // 优先检测公网域名，使用相对路径（通过 Next.js rewrites）
+    if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+      console.log('[API_URL] 检测到公网域名，使用相对路径:', hostname);
+      return ''; // 使用相对路径，Next.js 会自动代理到后端
+    }
+    // 本地开发环境：localhost 或 127.0.0.1，使用 localhost:4000
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      console.log('[API_URL] 检测到本地环境，使用 localhost:4000');
+      return 'http://localhost:4000';
+    }
+    // 其他情况（内网IP等），使用当前域名
+    console.log('[API_URL] 使用当前域名:', window.location.origin);
     return window.location.origin;
   }
-  // SSR 时使用 localhost
-  return "http://localhost:4000";
-})();
+  // SSR 时使用配置的环境变量或 localhost
+  return (process.env.NEXT_PUBLIC_API_URL || '').trim() || "http://localhost:4000";
+}
+
+// 为了兼容性，保留原来的常量形式，但改为函数调用
+export const API_URL = getAPI_URL();
 
 export function getToken(): string {
 	try {
@@ -40,7 +53,11 @@ export function getCurrentRole(): string | undefined {
 
 export async function authFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
 	const token = getToken();
-	const res = await fetch(`${API_URL}${path}`, {
+	// 每次调用时重新获取 API_URL，确保使用最新的 hostname
+	const apiUrl = getAPI_URL();
+	const fullUrl = `${apiUrl}${path}`;
+	console.log('[authFetch] API URL:', apiUrl, 'Full URL:', fullUrl);
+	const res = await fetch(fullUrl, {
 		...init,
 		headers: {
 			"Authorization": token ? `Bearer ${token}` : "",
@@ -68,7 +85,11 @@ export async function authDownload(path: string, filename?: string): Promise<voi
 		return;
 	}
 	const token = getToken();
-	const res = await fetch(`${API_URL}${path}`, {
+	// 每次调用时重新获取 API_URL，确保使用最新的 hostname
+	const apiUrl = getAPI_URL();
+	const fullUrl = `${apiUrl}${path}`;
+	console.log('[authDownload] API URL:', apiUrl, 'Full URL:', fullUrl);
+	const res = await fetch(fullUrl, {
 		headers: { Authorization: token ? `Bearer ${token}` : "" },
 	});
 	if (!res.ok) {

@@ -35,9 +35,19 @@ export default function ThreeCoursewareEditorPage() {
       setLoading(true);
       setError(null);
       try {
+        console.log('📥 [Page/Load] 开始从API加载课件数据, ID:', id);
         const data = await apiGet<CoursewareData>(`/api/coursewares/${id}`);
+        console.log('📥 [Page/Load] API返回的原始数据:', {
+          hasSettings: !!data.settings,
+          settingsType: typeof data.settings,
+          settingsValue: data.settings,
+          settingsKeys: data.settings ? Object.keys(data.settings) : [],
+          fullSettings: JSON.stringify(data.settings, null, 2)
+        });
         setCourseware(data);
+        console.log('✅ [Page/Load] 课件数据已设置到state');
       } catch (e: any) {
+        console.error('❌ [Page/Load] 加载课件失败:', e);
         setError(e.message || '加载课件失败');
         message.error(e.message || '加载课件失败');
       } finally {

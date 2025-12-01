@@ -147,11 +147,11 @@ if (request.result == UnityWebRequest.Result.Success) {
 
 ## 3. 三维课件
 
-### 3.1 获取课件列表
-获取所有可访问的三维课件列表。
+### 3.1 获取课件列表（Unity客户端专用）
+获取所有可访问的三维课件列表，**只返回基本信息**（推荐Unity客户端使用）。
 
 ```http
-GET /api/coursewares?q=&page=1&limit=20
+GET /api/coursewares/client/list?q=&page=1&limit=20
 Authorization: Bearer <token>
 ```
 
@@ -165,18 +165,9 @@ Authorization: Bearer <token>
 {
   "items": [
     {
-      "_id": "68bc53d55f017bd5c72d4013",
+      "id": "68bc53d55f017bd5c72d4013",
       "name": "小米SU7轮胎",
-      "description": "小米SU7车轮拆解课件",
-      "modelUrl": "https://platform.yf-xr.com/api/files/courseware-download?path=models%2F68af267e83f0e85a3dd4d13f.glb",
-      "modifiedModelUrl": "https://platform.yf-xr.com/api/files/courseware-download?path=modifiedModels%2F68bc54af5f017bd5c72d402a.glb",
-      "createdAt": "2025-01-15T10:30:00.000Z",
-      "updatedAt": "2025-01-20T14:22:00.000Z",
-      "createdBy": {
-        "_id": "689c46d6191b483b08e9c560",
-        "name": "Admin"
-      },
-      "version": 3
+      "description": "小米SU7车轮拆解课件"
     }
   ],
   "pagination": {
@@ -188,10 +179,9 @@ Authorization: Bearer <token>
 }
 ```
 
-**字段说明**:
-- `modelUrl`: 原始GLB模型下载URL
-- `modifiedModelUrl`: 编辑后的GLB模型URL（优先使用此模型）
-- `version`: 课件版本号
+**说明**:
+- ✅ **推荐使用此接口**：只返回基本信息，减少数据传输量
+- 获取到课件ID后，再调用详情接口获取完整数据
 
 ### 3.2 获取课件详细信息
 获取课件完整数据，包括标注、动画、模型结构等。
@@ -200,6 +190,10 @@ Authorization: Bearer <token>
 GET /api/coursewares/{coursewareId}
 Authorization: Bearer <token>
 ```
+
+**说明**: 
+- 使用3.1接口获取课件ID后，调用此接口获取完整数据
+- 返回包含所有标注、动画、模型结构等详细信息
 
 **响应** (200):
 ```json
@@ -310,11 +304,11 @@ if (request.result == UnityWebRequest.Result.Success) {
 
 ## 4. AI课程（数字人授课）
 
-### 4.1 获取已发布课程列表
-获取所有已发布的AI课程列表。
+### 4.1 获取已发布课程列表（Unity客户端专用）
+获取所有已发布的AI课程列表，**只返回基本信息**（推荐Unity客户端使用）。
 
 ```http
-GET /api/published-courses?q=&page=1&limit=20
+GET /api/published-courses/client/list?q=&page=1&limit=20
 Authorization: Bearer <token>
 ```
 
@@ -328,15 +322,9 @@ Authorization: Bearer <token>
 {
   "items": [
     {
-      "publishId": "6904275baa0c1d733e9cc722",
+      "id": "6904275baa0c1d733e9cc722",
       "title": "小米SU7车轮介绍",
-      "description": "详细讲解小米SU7车轮结构和工作原理",
-      "publishedBy": "Admin",
-      "publishedAt": "2025-01-20T10:30:00.000Z",
-      "lastUpdated": "2025-01-21T15:45:00.000Z",
-      "isPublic": true,
-      "autoPlay": true,
-      "viewCount": 128
+      "description": "详细讲解小米SU7车轮结构和工作原理"
     }
   ],
   "pagination": {
@@ -348,6 +336,10 @@ Authorization: Bearer <token>
 }
 ```
 
+**说明**:
+- ✅ **推荐使用此接口**：只返回基本信息，减少数据传输量
+- 获取到课程ID后，再调用详情接口获取完整数据
+
 ### 4.2 获取公开课程详细数据（无需认证）
 获取已发布课程的完整数据，包括课程大纲、三维课件、音频、图片等。
 
@@ -355,7 +347,10 @@ Authorization: Bearer <token>
 GET /api/public/course/{publishId}
 ```
 
-**说明**: 此接口**无需认证**，适合公开分享的课程。
+**说明**: 
+- 此接口**无需认证**，适合公开分享的课程
+- 使用4.1接口获取课程ID后，调用此接口获取完整数据
+- 返回包含所有课程大纲、音频、图片、三维课件等详细信息
 
 **响应** (200):
 ```json
@@ -640,14 +635,14 @@ POST /api/auth/login
 
 ### 步骤2: 获取AI课程列表
 ```
-GET /api/published-courses
+GET /api/published-courses/client/list
 Authorization: Bearer <token>
-→ 获得课程列表，选择一个 publishId
+→ 获得课程列表（只包含 id, title, description），选择一个 id
 ```
 
 ### 步骤3: 获取课程详情
 ```
-GET /api/public/course/{publishId}
+GET /api/public/course/{id}
 → 获得完整课程数据
 ```
 

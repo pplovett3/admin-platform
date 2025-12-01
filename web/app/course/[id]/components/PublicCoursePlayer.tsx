@@ -50,6 +50,7 @@ export default function PublicCoursePlayer({
   const playbackTimerRef = useRef<NodeJS.Timeout>();
   const [totalItems, setTotalItems] = useState(0);
   const [currentItemNumber, setCurrentItemNumber] = useState(0);
+  const [modelLoaded, setModelLoaded] = useState(false);
 
   // 计算总步骤数
   useEffect(() => {
@@ -379,10 +380,19 @@ export default function PublicCoursePlayer({
     // console.log('🎬 开始播放前检查');
     
     // 确保3D模型已加载
-    if (courseData?.coursewareData?.modifiedModelUrl && viewerControlsRef.current) {
+    if (courseData?.coursewareData?.modifiedModelUrl) {
       // console.log('🎯 确保3D模型加载完成');
-      // 等待3D视图器准备好
-      await new Promise(resolve => setTimeout(resolve, 500));
+      if (!modelLoaded) {
+        // 等待模型加载完成，最多等待10秒
+        let waited = 0;
+        while (!modelLoaded && waited < 10000) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          waited += 100;
+        }
+        if (!modelLoaded) {
+          console.warn('模型加载超时，但继续播放');
+        }
+      }
     }
     
     // 首次播放时初始化音频上下文
@@ -468,7 +478,18 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 检测是否为公网域名，如果是则使用相对路径
+        let baseUrl = '';
+        if (typeof window !== 'undefined') {
+          const hostname = window.location.hostname;
+          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+            baseUrl = '';
+          } else {
+            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+          }
+        } else {
+          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        }
         let audioUrl = item.audioUrl;
         
         // 处理相对路径
@@ -616,7 +637,18 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 检测是否为公网域名，如果是则使用相对路径
+        let baseUrl = '';
+        if (typeof window !== 'undefined') {
+          const hostname = window.location.hostname;
+          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+            baseUrl = '';
+          } else {
+            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+          }
+        } else {
+          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        }
         let audioUrl = item.audioUrl;
         
         // 处理相对路径
@@ -724,7 +756,18 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 检测是否为公网域名，如果是则使用相对路径
+        let baseUrl = '';
+        if (typeof window !== 'undefined') {
+          const hostname = window.location.hostname;
+          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+            baseUrl = '';
+          } else {
+            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+          }
+        } else {
+          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        }
         let audioUrl = item.audioUrl;
         
         // 处理相对路径
@@ -817,7 +860,7 @@ export default function PublicCoursePlayer({
     let maxAnimationDuration = 0;
     let maxActionDelay = 0;
     
-    // 先同步计算所有动画的持续时间和延迟
+    // 先同步计算所有动画的持续时间和延迟（不实际播放）
     actions.forEach((action, index) => {
       const actionDelay = index * 300; // 动作间隔300ms
       if (actionDelay > maxActionDelay) {
@@ -827,10 +870,9 @@ export default function PublicCoursePlayer({
       if (action.type === 'animation.play') {
         // 优先使用animationName（更稳定），如果没有则使用animationId
         const animationIdentifier = action.animationName || action.animationId;
-        if (animationIdentifier) {
-          // 先计算动画持续时间（不实际播放）
-          // 这里我们需要获取动画时长但不播放，稍后再异步播放
-          const duration = viewerControls.playAnimation(animationIdentifier, action.startTime, action.endTime);
+        if (animationIdentifier && viewerControls.getAnimationDuration) {
+          // 只获取动画持续时间，不实际播放
+          const duration = viewerControls.getAnimationDuration(animationIdentifier);
           // 总持续时间 = 延迟时间 + 动画时长
           const totalDuration = actionDelay / 1000 + duration;
           if (totalDuration > maxAnimationDuration) {
@@ -861,7 +903,7 @@ export default function PublicCoursePlayer({
             break;
           case 'annotation.show':
             if (action.ids) {
-              viewerControls.showAnnotations(action.ids);
+              viewerControls.showAnnotations(action.ids, action.labelScale);
             }
             break;
           case 'annotation.hide':
@@ -876,8 +918,11 @@ export default function PublicCoursePlayer({
             }
             break;
           case 'animation.play':
-            // 动画已经在上面播放过了，这里跳过
-            // （因为playAnimation会停止所有其他动画，所以不能调用两次）
+            // 实际播放动画
+            const animationIdentifier = action.animationName || action.animationId;
+            if (animationIdentifier) {
+              viewerControls.playAnimation(animationIdentifier, action.startTime, action.endTime);
+            }
             break;
           case 'visibility.set':
             if (action.items) {
@@ -1085,6 +1130,10 @@ export default function PublicCoursePlayer({
             coursewareData={courseData?.coursewareData}
             width={typeof window !== 'undefined' ? window.innerWidth : 1920}
             height={typeof window !== 'undefined' ? window.innerHeight - 60 : 1020}
+            onModelLoaded={() => {
+              console.log('✅ 3D模型加载完成');
+              setModelLoaded(true);
+            }}
           />
         </div>
 

@@ -7,13 +7,17 @@ import {
   unpublishCourse,
   getPublicCourse,
   getPublicCourseStats,
-  listPublishedCourses
+  listPublishedCourses,
+  listPublishedCoursesForClient
 } from '../controllers/publish.controller';
 
 const router = Router();
 
 // 需要认证的发布管理路由
 router.use('/ai-courses/:courseId/publish', authenticate);
+
+// Unity客户端专用接口（只返回基本信息）
+router.get('/published-courses/client/list', authenticate, requireRole(['superadmin', 'schoolAdmin', 'teacher']), listPublishedCoursesForClient);
 
 // 发布课程列表 API（需要认证）
 router.get('/published-courses', authenticate, requireRole(['superadmin', 'schoolAdmin', 'teacher']), listPublishedCourses);

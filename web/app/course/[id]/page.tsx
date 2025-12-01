@@ -53,9 +53,24 @@ export default function PublicCoursePage() {
     
     try {
       console.log('Loading course data for publishId:', publishId);
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+      // 检测是否为公网域名，如果是则使用相对路径（通过 Next.js rewrites）
+      let baseUrl = '';
+      if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        console.log('[loadCourseData] Current hostname:', hostname);
+        if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+          baseUrl = ''; // 使用相对路径，Next.js 会自动代理到后端
+          console.log('[loadCourseData] 检测到公网域名，使用相对路径');
+        } else {
+          // 优先使用当前域名，避免使用构建时固定的内网地址
+          baseUrl = window.location.origin;
+          console.log('[loadCourseData] 使用当前域名:', baseUrl);
+        }
+      } else {
+        baseUrl = (process.env.NEXT_PUBLIC_API_URL || '').trim() || 'http://localhost:4000';
+      }
       const apiUrl = `${baseUrl}/api/public/course/${publishId}`;
-      console.log('API URL:', apiUrl);
+      console.log('[loadCourseData] Final API URL:', apiUrl);
       
       const response = await fetch(apiUrl);
       console.log('Response status:', response.status);
@@ -94,7 +109,18 @@ export default function PublicCoursePage() {
       
       // 预加载3D模型（完整下载）
       if (data.coursewareData?.modifiedModelUrl) {
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 检测是否为公网域名，如果是则使用相对路径
+        let baseUrl = '';
+        if (typeof window !== 'undefined') {
+          const hostname = window.location.hostname;
+          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+            baseUrl = '';
+          } else {
+            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+          }
+        } else {
+          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        }
         let modelUrl = data.coursewareData.modifiedModelUrl;
         
         // 处理相对路径
@@ -203,7 +229,18 @@ export default function PublicCoursePage() {
 
   // 预加载音频
   const preloadAudios = async (urls: string[]): Promise<void> => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+    // 检测是否为公网域名，如果是则使用相对路径
+    let baseUrl = '';
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname;
+      if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+        baseUrl = '';
+      } else {
+        baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+      }
+    } else {
+      baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    }
     const promises = urls.slice(0, 10).map(url => { // 最多预加载前10个音频
       return new Promise<void>((resolve) => {
         const audio = new Audio();
@@ -229,7 +266,18 @@ export default function PublicCoursePage() {
 
   // 预加载图片
   const preloadImages = async (urls: string[]): Promise<void> => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+    // 检测是否为公网域名，如果是则使用相对路径
+    let baseUrl = '';
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname;
+      if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
+        baseUrl = '';
+      } else {
+        baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+      }
+    } else {
+      baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    }
     const promises = urls.slice(0, 5).map(url => { // 最多预加载前5张图片
       return new Promise<void>((resolve) => {
         const img = new Image();

@@ -46,3 +46,8 @@ dev-web.log
 tmp/
 temp/
 
+# 压缩包文件（文件太大，不应提交到 Git）
+*.tar.gz
+server.tar.gz
+web.tar.gz
+

@@ -4,7 +4,7 @@ import { Button, Card, Divider, Flex, Input, message, Popconfirm, Select, Space,
 import type { UploadProps } from "antd";
 import { EyeOutlined, DownloadOutlined, DeleteOutlined, UploadOutlined } from "@ant-design/icons";
 import { authDownload, authFetch } from "../_lib/api";
-import { API_URL, getCurrentRole } from "../_lib/api";
+import { getAPI_URL, getCurrentRole } from "../_lib/api";
 
 interface FileRow { id: string; type: string; originalName: string; size: number; createdAt: string; downloadUrl: string; viewUrl?: string; visibility?: string; storageRelPath?: string }
 
@@ -100,7 +100,8 @@ export default function ResourcesPage() {
         if (role === 'superadmin' && isPublicUpload) fd.append('visibility','public');
         const token = (typeof localStorage !== 'undefined' && (localStorage.getItem('token')||localStorage.getItem('authToken'))) || '';
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_URL}/api/files/upload`);
+        const apiUrl = getAPI_URL(); // 每次调用时动态获取
+        xhr.open('POST', `${apiUrl}/api/files/upload`);
         if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.upload.onprogress = (evt) => {
           if (evt.total) {

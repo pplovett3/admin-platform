@@ -318,8 +318,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch, Dropdown, Segmented, Tooltip, Divider } from 'antd';
 import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined, SaveOutlined, ClockCircleOutlined } from '@ant-design/icons';
-import { getToken } from '@/app/_lib/api';
-import { apiPut } from '@/app/_utils/api';
+import { getToken, getAPI_URL } from '@/app/_lib/api';
+import { apiPut, apiGet } from '@/app/_utils/api';
 import type { UploadProps } from 'antd';
 
 type TreeNode = {
@@ -462,6 +462,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const lastTickRef = useRef<number>(performance.now());
   const lastBackgroundSphereCheckRef = useRef<number>(0);
   const lastCameraDistanceRef = useRef<number>(0);
+  const materialModifiedRef = useRef<boolean>(false); // 跟踪材质是否被用户修改
   const [cameraKeyEasing, setCameraKeyEasing] = useState<'linear'|'easeInOut'>('easeInOut');
   const [highlightMode, setHighlightMode] = useState<'outline'|'emissive'>('outline');
   const [gizmoMode, setGizmoMode] = useState<'translate'|'rotate'|'scale'>('translate');
@@ -485,6 +486,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     { label: '全景图7 (HDR)', value: '/360background_7.hdr' },
     { label: '全景图8 (HDR)', value: '/360background_8.hdr' },
     { label: '全景图9 (HDR)', value: '/360background_9.hdr' },
+    { label: '全景图10 (HDR)', value: '/360background_10.hdr' },
+    { label: '全景图11 (HDR)', value: '/360background_11.hdr' },
+    { label: '全景图12 (HDR)', value: '/360background_12.hdr' },
+    { label: '全景图13 (HDR)', value: '/360background_13.hdr' },
+    { label: '全景图13 (HDR)', value: '/360background_14.hdr' },
   ];
   const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } });
   const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
@@ -1259,6 +1265,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const scene = sceneRef.current;
     if (!scene) return;
     
+    // 如果初始数据还未加载完成，跳过背景设置（避免使用默认值覆盖）
+    if (!initialDataLoadedRef.current) {
+      console.log('⏸️ [Background/Effect] 初始数据未加载完成，跳过背景设置', {
+        bgType,
+        bgPanorama,
+        bgPanoramaBrightness
+      });
+      return;
+    }
+    
+    console.log('🔄 [Background/Effect] 背景设置effect触发', {
+      bgTransparent,
+      bgType,
+      bgPanorama,
+      bgPanoramaBrightness,
+      useHDREnvironment
+    });
+    
     if (bgTransparent) {
       scene.background = null;
     } else if (bgType === 'panorama' && bgPanorama) {
@@ -1270,7 +1294,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       if (isHDR || isEXR) {
         // 根据文件类型选择加载器
         const loader = isHDR ? new RGBELoader() : new EXRLoader();
-        console.log(`🌐 开始加载${isHDR ? 'HDR' : 'EXR'}全景图:`, bgPanorama);
+        console.log(`🌐 [Background/Effect] 开始加载${isHDR ? 'HDR' : 'EXR'}全景图:`, bgPanorama);
         loader.load(
           bgPanorama,
           (texture) => {
@@ -1278,10 +1302,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             texture.mapping = THREE.EquirectangularReflectionMapping;
             backgroundTextureRef.current = texture;
             
-            // 生成环境贴图
+            // 生成环境贴图（需要翻转以修正反射方向）
             const pmremGenerator = pmremGeneratorRef.current;
             if (pmremGenerator) {
-              const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+              // 创建翻转后的纹理用于环境贴图（通过repeat.x = -1实现水平翻转）
+              const flippedTexture = texture.clone();
+              flippedTexture.wrapS = THREE.RepeatWrapping;
+              flippedTexture.repeat.x = -1; // 水平翻转环境贴图
+              const envMap = pmremGenerator.fromEquirectangular(flippedTexture).texture;
               environmentMapRef.current = envMap;
               
               // 如果启用HDR环境光照，应用到场景
@@ -1317,7 +1345,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 uniform float brightness;
                 varying vec2 vUv;
                 void main() {
-                  vec4 texColor = texture2D(tBackground, vUv);
+                  // 翻转水平方向（左右反转）以修正HDR贴图方向
+                  vec2 flippedUv = vec2(1.0 - vUv.x, vUv.y);
+                  vec4 texColor = texture2D(tBackground, flippedUv);
                   gl_FragColor = vec4(texColor.rgb * brightness, texColor.a);
                 }
               `,
@@ -1434,7 +1464,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 uniform float brightness;
                 varying vec2 vUv;
                 void main() {
-                  vec4 texColor = texture2D(tBackground, vUv);
+                  // 翻转水平方向（左右反转）以修正HDR贴图方向
+                  vec2 flippedUv = vec2(1.0 - vUv.x, vUv.y);
+                  vec4 texColor = texture2D(tBackground, flippedUv);
                   gl_FragColor = vec4(texColor.rgb * brightness, texColor.a);
                 }
               `,
@@ -2024,6 +2056,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const scene = sceneRef.current!;
     setLoading(true);
     
+    // 重置材质修改标记（加载新模型时）
+    materialModifiedRef.current = false;
+    
     // 如果有修改后的模型且优先使用修改版本，则使用修改后的URL
     let actualSrc = src;
     if (preferModified && coursewareData?.modifiedModelUrl) {
@@ -2077,12 +2112,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       let useProxy = false;
       
       if (actualSrc.startsWith('/api/files/')) {
-        // 内部API文件：构建完整URL
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        // 内部API文件：使用动态获取的API URL，如果是公网域名则使用相对路径（通过 Next.js rewrites）
+        const baseUrl = getAPI_URL();
         finalSrc = `${baseUrl}${actualSrc}`;
       } else if (actualSrc.startsWith('https://dl.yf-xr.com/') || actualSrc.startsWith('https://video.yf-xr.com/')) {
         // 公网URL：使用代理避免CORS问题
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        const baseUrl = getAPI_URL();
         finalSrc = `${baseUrl}/api/files/proxy?url=${encodeURIComponent(actualSrc)}`;
         useProxy = true;
       }
@@ -2488,22 +2523,64 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           // 检查是否有待加载的动画元数据
           if (pendingImportRef.current?.animationMetadata) {
             console.log('🔄 检测到待处理的动画元数据，进行GLB动画重建...');
+            console.log('📊 动画元数据数量:', pendingImportRef.current.animationMetadata.length);
+            console.log('📊 GLB动画数量:', animations.length);
             
             // 从GLB和元数据重建动画（传入当前root）
             const rebuiltClips = loadAnimationsFromGLB(animations, pendingImportRef.current.animationMetadata, root);
-            setClips(rebuiltClips);
+            console.log('✅ 重建后的动画数量:', rebuiltClips.length);
             
-            if (rebuiltClips.length > 0) {
-              setActiveClipId(rebuiltClips[0].id);
+            // 找出没有匹配元数据的GLB内置动画
+            const matchedAnimationNames = new Set(rebuiltClips.map(c => c.name));
+            const unmatchedGltfClips = gltfClips.filter(clip => !matchedAnimationNames.has(clip.name));
+            console.log('📊 未匹配的内置动画数量:', unmatchedGltfClips.length);
+            
+            // 合并重建的动画和未匹配的内置动画
+            const allClips = [...rebuiltClips, ...unmatchedGltfClips];
+            console.log('📊 合并后的总动画数量:', allClips.length);
+            
+            if (allClips.length > 0) {
+              setClips(allClips);
+              setActiveClipId(allClips[0].id);
               setTimeline({
-                duration: rebuiltClips[0].timeline.duration || 10,
+                duration: allClips[0].timeline.duration || 10,
                 current: 0,
                 playing: false,
-                cameraKeys: [],
-                visTracks: {},
-                trsTracks: {},
-                annotationTracks: {}
+                cameraKeys: allClips[0].timeline.cameraKeys || [],
+                visTracks: allClips[0].timeline.visTracks || {},
+                trsTracks: allClips[0].timeline.trsTracks || {},
+                annotationTracks: allClips[0].timeline.annotationTracks || {}
               });
+              console.log('✅ 动画数据已加载，当前活动动画:', allClips[0].name);
+            } else {
+              console.warn('⚠️ 重建后的动画列表为空，尝试使用传统方式加载...');
+              // 如果重建失败，尝试使用传统方式加载
+              const loadedClips: Clip[] = pendingImportRef.current.animationMetadata.map((anim: any) => {
+                let timeline = anim.timeline || { 
+                  duration: anim.duration || 10, 
+                  current: 0, 
+                  playing: false, 
+                  cameraKeys: [], 
+                  visTracks: {}, 
+                  trsTracks: {}, 
+                  annotationTracks: {} 
+                };
+                return {
+                  id: anim.id || generateUuid(),
+                  name: anim.name || '未命名动画',
+                  description: anim.description || '',
+                  timeline,
+                  steps: anim.steps || []
+                };
+              });
+              // 合并传统加载的动画和内置动画
+              const finalClips = [...loadedClips, ...gltfClips];
+              if (finalClips.length > 0) {
+                setClips(finalClips);
+                setActiveClipId(finalClips[0].id);
+                setTimeline(finalClips[0].timeline);
+                console.log('✅ 使用传统方式加载动画成功，数量:', finalClips.length);
+              }
             }
             
             // 清除pending数据，防止被传统恢复逻辑覆盖
@@ -2621,22 +2698,64 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           // 检查是否有待加载的动画元数据
           if (pendingImportRef.current?.animationMetadata) {
             console.log('🔄 检测到待处理的动画元数据，进行GLB动画重建...');
+            console.log('📊 动画元数据数量:', pendingImportRef.current.animationMetadata.length);
+            console.log('📊 GLB动画数量:', animations.length);
             
             // 从GLB和元数据重建动画（传入当前root）
             const rebuiltClips = loadAnimationsFromGLB(animations, pendingImportRef.current.animationMetadata, root);
-            setClips(rebuiltClips);
+            console.log('✅ 重建后的动画数量:', rebuiltClips.length);
             
-            if (rebuiltClips.length > 0) {
-              setActiveClipId(rebuiltClips[0].id);
+            // 找出没有匹配元数据的GLB内置动画
+            const matchedAnimationNames = new Set(rebuiltClips.map(c => c.name));
+            const unmatchedGltfClips = gltfClips.filter(clip => !matchedAnimationNames.has(clip.name));
+            console.log('📊 未匹配的内置动画数量:', unmatchedGltfClips.length);
+            
+            // 合并重建的动画和未匹配的内置动画
+            const allClips = [...rebuiltClips, ...unmatchedGltfClips];
+            console.log('📊 合并后的总动画数量:', allClips.length);
+            
+            if (allClips.length > 0) {
+              setClips(allClips);
+              setActiveClipId(allClips[0].id);
               setTimeline({
-                duration: rebuiltClips[0].timeline.duration || 10,
+                duration: allClips[0].timeline.duration || 10,
                 current: 0,
                 playing: false,
-                cameraKeys: [],
-                visTracks: {},
-                trsTracks: {},
-                annotationTracks: {}
+                cameraKeys: allClips[0].timeline.cameraKeys || [],
+                visTracks: allClips[0].timeline.visTracks || {},
+                trsTracks: allClips[0].timeline.trsTracks || {},
+                annotationTracks: allClips[0].timeline.annotationTracks || {}
               });
+              console.log('✅ 动画数据已加载，当前活动动画:', allClips[0].name);
+            } else {
+              console.warn('⚠️ 重建后的动画列表为空，尝试使用传统方式加载...');
+              // 如果重建失败，尝试使用传统方式加载
+              const loadedClips: Clip[] = pendingImportRef.current.animationMetadata.map((anim: any) => {
+                let timeline = anim.timeline || { 
+                  duration: anim.duration || 10, 
+                  current: 0, 
+                  playing: false, 
+                  cameraKeys: [], 
+                  visTracks: {}, 
+                  trsTracks: {}, 
+                  annotationTracks: {} 
+                };
+                return {
+                  id: anim.id || generateUuid(),
+                  name: anim.name || '未命名动画',
+                  description: anim.description || '',
+                  timeline,
+                  steps: anim.steps || []
+                };
+              });
+              // 合并传统加载的动画和内置动画
+              const finalClips = [...loadedClips, ...gltfClips];
+              if (finalClips.length > 0) {
+                setClips(finalClips);
+                setActiveClipId(finalClips[0].id);
+                setTimeline(finalClips[0].timeline);
+                console.log('✅ 使用传统方式加载动画成功，数量:', finalClips.length);
+              }
             }
             
             // 清除pending数据，防止被传统恢复逻辑覆盖
@@ -5087,9 +5206,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return customAnimations.length > 0;
   };
 
+  // 🎨 检测是否有材质变化需要重新导出GLB
+  const hasMaterialChanges = (): boolean => {
+    // 使用ref跟踪材质是否被用户修改
+    return materialModifiedRef.current;
+  };
+
   // 📦 检测是否需要重新导出完整GLB文件
   const needsGLBExport = (): boolean => {
-    return hasStructureChanges() || hasAnimationChanges();
+    return hasStructureChanges() || hasAnimationChanges() || hasMaterialChanges();
   };
   
   // 构建模型结构信息（包含删除记录）
@@ -5148,6 +5273,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         console.log('🚀 检测到变化，导出完整GLB文件...');
         console.log('   📁 结构变化:', hasStructureChanges());
         console.log('   🎬 动画变化:', hasAnimationChanges());
+        console.log('   🎨 材质变化:', hasMaterialChanges());
         const glbBlob = await exportCurrentModelAsGLB();
         
         if (glbBlob) {
@@ -5156,7 +5282,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           formData.append('file', glbBlob, `courseware-${coursewareId}-modified.glb`);
           
           console.log('⬆️ 上传修改后的模型文件...');
-          const baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+          // 使用 getAPI_URL() 确保在公网环境下使用相对路径（避免混合内容错误）
+          const baseUrl = getAPI_URL();
           const token = (typeof getToken === 'function' ? getToken() : localStorage.getItem('token')) as string | null;
 
           // 若存在旧文件，先删除，确保资源中只有一个当前版本
@@ -5206,6 +5333,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             // 兼容后端返回的字段名（downloadUrl 或 url）
             modifiedModelUrl = uploadResult.downloadUrl || uploadResult.url;
             console.log('✅ 模型文件上传成功:', modifiedModelUrl);
+            // 重置材质修改标记（导出成功后）
+            materialModifiedRef.current = false;
             
             // 保存文件路径信息（用于删除）
             lastUploadedFilePathRef.current = modifiedModelUrl;
@@ -5412,8 +5541,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           } : undefined,
           background: bgColor,
           backgroundType: bgType,
-          backgroundPanorama: bgPanorama,
+          // 保存实际的全景图值（如果bgType是panorama）
+          backgroundPanorama: bgType === 'panorama' ? (bgPanorama || '/360background_7.hdr') : null,
+          // 保存实际的亮度值
           backgroundPanoramaBrightness: bgPanoramaBrightness,
+          // 保存实际的HDR环境设置
           useHDREnvironment: useHDREnvironment,
           lighting: {
             directional: dirLight,
@@ -5452,6 +5584,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         });
       }
       console.log('[Courseware/Save-Payload]', payload);
+      console.log('[Courseware/Save-Settings]', {
+        backgroundType: payload.settings.backgroundType,
+        backgroundPanorama: payload.settings.backgroundPanorama,
+        backgroundPanoramaBrightness: payload.settings.backgroundPanoramaBrightness,
+        useHDREnvironment: payload.settings.useHDREnvironment,
+        currentState: {
+          bgType,
+          bgPanorama,
+          bgPanoramaBrightness,
+          useHDREnvironment
+        }
+      });
       await apiPut(`/api/coursewares/${coursewareId}`, payload);
       // 成功保存后，更新本地上一次上传记录
       try {
@@ -5465,6 +5609,101 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     } catch (error: any) {
       console.error('Save courseware error:', error);
       message.error(error.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 保存设置到后端
+  const saveSettings = async () => {
+    if (!coursewareId) {
+      message.warning('没有课件ID，无法保存设置');
+      return;
+    }
+
+    console.log('💾 [Settings/Save-Start] 开始保存设置');
+    console.log('💾 [Settings/Save-Start] 当前状态:', {
+      bgType,
+      bgPanorama,
+      bgPanoramaBrightness,
+      useHDREnvironment,
+      dirLight,
+      ambLight,
+      hemiLight
+    });
+
+    setSaving(true);
+    try {
+      // 先获取当前的课件数据
+      console.log('💾 [Settings/Save] 获取当前课件数据...');
+      const currentCourseware = await apiGet<any>(`/api/coursewares/${coursewareId}`);
+      console.log('💾 [Settings/Save] 当前课件数据获取成功:', {
+        hasSettings: !!currentCourseware.settings,
+        settingsKeys: currentCourseware.settings ? Object.keys(currentCourseware.settings) : []
+      });
+      
+      // 构建只包含设置更新的payload
+      const newSettings = {
+        ...(currentCourseware.settings || {}),
+        cameraPosition: cameraRef.current ? {
+          x: cameraRef.current.position.x,
+          y: cameraRef.current.position.y,
+          z: cameraRef.current.position.z
+        } : currentCourseware.settings?.cameraPosition,
+        cameraTarget: controlsRef.current ? {
+          x: controlsRef.current.target.x,
+          y: controlsRef.current.target.y,
+          z: controlsRef.current.target.z
+        } : currentCourseware.settings?.cameraTarget,
+        background: bgColor,
+        backgroundType: bgType,
+        // 保存实际的全景图值（如果bgType是panorama）
+        backgroundPanorama: bgType === 'panorama' ? (bgPanorama || '/360background_7.hdr') : null,
+        // 保存实际的亮度值
+        backgroundPanoramaBrightness: bgPanoramaBrightness,
+        // 保存实际的HDR环境设置
+        useHDREnvironment: useHDREnvironment,
+        lighting: {
+          directional: dirLight,
+          ambient: ambLight,
+          hemisphere: hemiLight
+        }
+      };
+      
+      console.log('💾 [Settings/Save] 构建的新设置对象:', {
+        backgroundType: newSettings.backgroundType,
+        backgroundPanorama: newSettings.backgroundPanorama,
+        backgroundPanoramaBrightness: newSettings.backgroundPanoramaBrightness,
+        useHDREnvironment: newSettings.useHDREnvironment,
+        hasLighting: !!newSettings.lighting
+      });
+      
+      const payload = {
+        ...currentCourseware,
+        settings: newSettings
+      };
+
+      console.log('💾 [Settings/Save] 准备发送的payload设置部分:', JSON.stringify(newSettings, null, 2));
+
+      await apiPut(`/api/coursewares/${coursewareId}`, payload);
+      
+      console.log('✅ [Settings/Save-Success] 设置保存成功');
+      console.log('✅ [Settings/Save-Success] 保存的设置:', {
+        backgroundType: newSettings.backgroundType,
+        backgroundPanorama: newSettings.backgroundPanorama,
+        backgroundPanoramaBrightness: newSettings.backgroundPanoramaBrightness,
+        useHDREnvironment: newSettings.useHDREnvironment
+      });
+      
+      setLastSaved(new Date());
+      message.success('设置已保存');
+    } catch (error: any) {
+      console.error('❌ [Settings/Save-Error] 保存设置失败:', error);
+      console.error('❌ [Settings/Save-Error] 错误详情:', {
+        message: error.message,
+        stack: error.stack
+      });
+      message.error(error.message || '保存设置失败');
     } finally {
       setSaving(false);
     }
@@ -5494,6 +5733,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (!coursewareData || initialDataLoadedRef.current) return;
 
     try {
+      console.log('📥 [Settings/Load-Start] 开始加载课件数据');
+      console.log('📥 [Settings/Load-Raw] 原始课件数据:', {
+        hasSettings: !!coursewareData.settings,
+        settingsType: typeof coursewareData.settings,
+        settingsValue: coursewareData.settings,
+        settingsKeys: coursewareData.settings ? Object.keys(coursewareData.settings) : [],
+        fullSettings: JSON.stringify(coursewareData.settings, null, 2)
+      });
+      
       // 初始化课件名称
       setCoursewareName(coursewareData.name || '三维课件');
       
@@ -5636,36 +5884,122 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       }
 
       // 初始化设置
+      console.log('🔧 [Settings/Load-Process] 开始处理设置数据');
+      console.log('🔧 [Settings/Load-Process] coursewareData.settings 存在:', !!coursewareData.settings);
+      console.log('🔧 [Settings/Load-Process] coursewareData.settings 值:', coursewareData.settings);
+      console.log('🔧 [Settings/Load-Process] coursewareData.settings 完整JSON:', JSON.stringify(coursewareData.settings, null, 2));
+      
       if (coursewareData.settings) {
         const settings = coursewareData.settings;
+        console.log('🔧 [Settings/Load-Process] 解析settings对象:', {
+          background: settings.background,
+          backgroundType: settings.backgroundType,
+          backgroundPanorama: settings.backgroundPanorama,
+          backgroundPanoramaBrightness: settings.backgroundPanoramaBrightness,
+          useHDREnvironment: settings.useHDREnvironment,
+          lighting: settings.lighting ? '存在' : '不存在'
+        });
+        
+        // 检查全景图相关字段是否存在
+        const hasPanoramaSettings = settings.backgroundType !== undefined || 
+                                     settings.backgroundPanorama !== undefined ||
+                                     settings.backgroundPanoramaBrightness !== undefined ||
+                                     settings.useHDREnvironment !== undefined;
+        
+        if (!hasPanoramaSettings) {
+          console.warn('⚠️ [Settings/Load-Process] 检测到全景图设置字段缺失！这些字段可能从未被保存过。');
+          console.warn('⚠️ [Settings/Load-Process] 请点击"保存并应用设置"按钮来保存当前的全景图设置。');
+        }
+        
+        // 设置背景颜色
         if (settings.background) {
+          console.log('✅ [Settings/Load] 设置背景颜色:', settings.background);
           setBgColor(settings.background);
+        } else {
+          console.log('⚠️ [Settings/Load] 未找到背景颜色，使用默认值');
         }
-        if (settings.backgroundType) {
-          setBgType(settings.backgroundType);
+        
+        // 确保backgroundType被正确读取（如果没有则使用默认值'panorama'）
+        const bgTypeValue = settings.backgroundType || 'panorama';
+        console.log('✅ [Settings/Load] 设置背景类型:', bgTypeValue, '(原始值:', settings.backgroundType, ')');
+        setBgType(bgTypeValue);
+        
+        // 确保backgroundPanorama被正确读取
+        // 如果backgroundType是panorama，读取backgroundPanorama；否则使用默认值
+        if (bgTypeValue === 'panorama') {
+          const panoramaValue = settings.backgroundPanorama && settings.backgroundPanorama.trim() !== '' 
+            ? settings.backgroundPanorama 
+            : '/360background_7.hdr';
+          console.log('✅ [Settings/Load] 设置全景图:', panoramaValue, '(原始值:', settings.backgroundPanorama, ')');
+          setBgPanorama(panoramaValue);
+        } else {
+          console.log('✅ [Settings/Load] 背景类型不是panorama，设置默认全景图');
+          setBgPanorama('/360background_7.hdr'); // 即使不是panorama类型，也保持默认值以便切换时使用
         }
-        if (settings.backgroundPanorama) {
-          setBgPanorama(settings.backgroundPanorama);
-        }
-        if (settings.backgroundPanoramaBrightness !== undefined) {
-          setBgPanoramaBrightness(settings.backgroundPanoramaBrightness);
-        }
-        if (settings.useHDREnvironment !== undefined) {
-          setUseHDREnvironment(settings.useHDREnvironment);
-        }
+        
+        // 确保backgroundPanoramaBrightness被正确读取（如果没有则使用默认值1.0）
+        const brightnessValue = settings.backgroundPanoramaBrightness !== undefined && settings.backgroundPanoramaBrightness !== null 
+          ? settings.backgroundPanoramaBrightness 
+          : 1.0;
+        console.log('✅ [Settings/Load] 设置全景图亮度:', brightnessValue, '(原始值:', settings.backgroundPanoramaBrightness, ')');
+        setBgPanoramaBrightness(brightnessValue);
+        
+        // 确保useHDREnvironment被正确读取（如果没有则使用默认值true）
+        const hdrEnvValue = settings.useHDREnvironment !== undefined && settings.useHDREnvironment !== null 
+          ? settings.useHDREnvironment 
+          : true;
+        console.log('✅ [Settings/Load] 设置HDR环境光照:', hdrEnvValue, '(原始值:', settings.useHDREnvironment, ')');
+        setUseHDREnvironment(hdrEnvValue);
+        
+        // 调试日志 - 汇总加载的设置
+        console.log('📋 [Settings/Load-Summary] 设置加载汇总:', {
+          backgroundType: bgTypeValue,
+          backgroundPanorama: bgTypeValue === 'panorama' ? (settings.backgroundPanorama && settings.backgroundPanorama.trim() !== '' ? settings.backgroundPanorama : '/360background_7.hdr') : null,
+          backgroundPanoramaBrightness: brightnessValue,
+          useHDREnvironment: hdrEnvValue,
+          lighting: settings.lighting ? '已加载' : '未找到'
+        });
+        
+        // 加载灯光设置
         if (settings.lighting) {
           const lighting = settings.lighting;
+          console.log('💡 [Settings/Load] 开始加载灯光设置:', {
+            hasDirectional: !!lighting.directional,
+            hasAmbient: !!lighting.ambient,
+            hasHemisphere: !!lighting.hemisphere
+          });
+          
           if (lighting.directional) {
+            console.log('✅ [Settings/Load] 设置平行光:', lighting.directional);
             setDirLight(lighting.directional);
           }
           if (lighting.ambient) {
+            console.log('✅ [Settings/Load] 设置环境光:', lighting.ambient);
             setAmbLight(lighting.ambient);
           }
           if (lighting.hemisphere) {
+            console.log('✅ [Settings/Load] 设置半球光:', lighting.hemisphere);
             setHemiLight(lighting.hemisphere);
           }
+        } else {
+          console.log('⚠️ [Settings/Load] 未找到灯光设置，使用默认值');
         }
+      } else {
+        // 如果没有settings，使用默认值
+        console.log('⚠️ [Settings/Load] 课件数据中没有settings对象，使用默认值');
+        console.log('⚠️ [Settings/Load] 默认设置:', {
+          bgType: 'panorama',
+          bgPanorama: '/360background_7.hdr',
+          bgPanoramaBrightness: 1.0,
+          useHDREnvironment: true
+        });
+        setBgType('panorama');
+        setBgPanorama('/360background_7.hdr');
+        setBgPanoramaBrightness(1.0);
+        setUseHDREnvironment(true);
       }
+      
+      console.log('✅ [Settings/Load-Complete] 设置加载完成');
 
       initialDataLoadedRef.current = true;
       console.log('课件数据已初始化');
@@ -5805,6 +6139,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           />
           <span>{labelScale.toFixed(1)}x</span>
         </Space>
+        <Divider style={{ margin: '16px 0' }} />
+        <Flex justify="flex-end" gap={8}>
+          <Button onClick={() => setSettingsOpen(false)}>取消</Button>
+          <Button 
+            type="primary" 
+            icon={<SaveOutlined />}
+            loading={saving}
+            onClick={saveSettings}
+          >
+            保存并应用设置
+          </Button>
+        </Flex>
       </Flex>
     </Modal>
   );
@@ -6473,6 +6819,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                       if ((material as any).color) {
                                         (material as any).color.setStyle(e.target.value);
                                         material.needsUpdate = true;
+                                        materialModifiedRef.current = true; // 标记材质已修改
+                                        // 立即渲染更新
+                                        const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                        if (r && s && c) { 
+                                          const comp = composerRef.current; 
+                                          if (comp) comp.render(); 
+                                          else r.render(s, c); 
+                                        }
                                       }
                                     }}
                                   />
@@ -6486,6 +6840,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     onChange={(checked) => {
                                       material.transparent = checked;
                                       material.needsUpdate = true;
+                                      materialModifiedRef.current = true; // 标记材质已修改
+                                      // 立即渲染更新
+                                      const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                      if (r && s && c) { 
+                                        const comp = composerRef.current; 
+                                        if (comp) comp.render(); 
+                                        else r.render(s, c); 
+                                      }
                                     }}
                                   />
                                 </div>
@@ -6502,7 +6864,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                         onChange={(value: number) => {
                                           material.opacity = value;
                                           material.needsUpdate = true;
-                                          const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                          materialModifiedRef.current = true; // 标记材质已修改
+                                          // 立即渲染更新
+                                          const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                          if (r && s && c) { 
+                                            const comp = composerRef.current; 
+                                            if (comp) comp.render(); 
+                                            else r.render(s, c); 
+                                          }
                                         }}
                                       />
                                     </div>
@@ -6542,6 +6911,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).metalness = value;
                                             material.needsUpdate = true;
+                                            materialModifiedRef.current = true; // 标记材质已修改
                                             setMaterialPropsKey(k => k + 1); // 强制更新
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
@@ -6562,6 +6932,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).roughness = value;
                                             material.needsUpdate = true;
+                                            materialModifiedRef.current = true; // 标记材质已修改
                                             setMaterialPropsKey(k => k + 1); // 强制更新
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
@@ -6577,6 +6948,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                         onChange={(e) => {
                                           (material as THREE.MeshStandardMaterial).emissive?.setStyle(e.target.value);
                                           material.needsUpdate = true;
+                                          materialModifiedRef.current = true; // 标记材质已修改
+                                          // 立即渲染更新
+                                          const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                          if (r && s && c) { 
+                                            const comp = composerRef.current; 
+                                            if (comp) comp.render(); 
+                                            else r.render(s, c); 
+                                          }
                                         }}
                                       />
                                     </div>
@@ -6594,6 +6973,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).emissiveIntensity = value;
                                             material.needsUpdate = true;
+                                            materialModifiedRef.current = true; // 标记材质已修改
                                             setMaterialPropsKey(k => k + 1); // 强制更新
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
@@ -6647,6 +7027,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                         onChange={(e) => {
                                           (material as THREE.MeshPhongMaterial).emissive?.setStyle(e.target.value);
                                           material.needsUpdate = true;
+                                          materialModifiedRef.current = true; // 标记材质已修改
+                                          // 立即渲染更新
+                                          const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                          if (r && s && c) { 
+                                            const comp = composerRef.current; 
+                                            if (comp) comp.render(); 
+                                            else r.render(s, c); 
+                                          }
                                         }}
                                       />
                                     </div>
@@ -6664,6 +7052,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                       onChange={(e) => {
                                         (material as THREE.MeshLambertMaterial).emissive?.setStyle(e.target.value);
                                         material.needsUpdate = true;
+                                        materialModifiedRef.current = true; // 标记材质已修改
+                                        // 立即渲染更新
+                                        const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                        if (r && s && c) { 
+                                          const comp = composerRef.current; 
+                                          if (comp) comp.render(); 
+                                          else r.render(s, c); 
+                                        }
                                       }}
                                     />
                                   </div>

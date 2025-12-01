@@ -454,6 +454,68 @@ export async function getPublicCourseStats(req: Request, res: Response) {
   }
 }
 
+// 获取所有发布的课程列表（Unity客户端专用 - 只返回基本信息）
+export async function listPublishedCoursesForClient(req: Request, res: Response) {
+  try {
+    const q = (req.query.q as string) || '';
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const skip = (page - 1) * limit;
+    const user = (req as any).user;
+
+    const filter: any = { status: 'active' }; // 只返回激活的发布课程
+    
+    // 搜索过滤
+    if (q) {
+      filter.$or = [
+        { title: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } }
+      ];
+    }
+
+    // 权限过滤：非超级管理员只能看到自己发布的课程
+    if (user.role !== 'superadmin') {
+      if (!user?.userId || !Types.ObjectId.isValid(user.userId)) {
+        return res.status(401).json({ message: 'Invalid user' });
+      }
+      filter.publishedBy = new Types.ObjectId(user.userId);
+    }
+
+    const [items, total] = await Promise.all([
+      PublishedCourseModel
+        .find(filter)
+        .select('_id title description') // 只选择需要的字段
+        .sort({ publishedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      PublishedCourseModel.countDocuments(filter)
+    ]);
+
+    // 格式化返回数据，只返回 id, title, description
+    const formattedItems = items.map((item: any) => ({
+      id: item._id.toString(),
+      title: item.title,
+      description: item.description || ''
+    }));
+
+    res.json({
+      items: formattedItems,
+      pagination: { 
+        page, 
+        limit, 
+        total, 
+        pages: Math.ceil(total / limit) 
+      }
+    });
+
+  } catch (error) {
+    console.error('List published courses for client error:', error);
+    const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}
+
 // 获取所有发布的课程列表（需要认证）
 export async function listPublishedCourses(req: Request, res: Response) {
   try {

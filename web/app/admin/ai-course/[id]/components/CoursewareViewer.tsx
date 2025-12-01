@@ -79,7 +79,7 @@ export default function CoursewareViewer({ coursewareId, selectedItem }: Coursew
           case 'annotation.show':
             console.log(`显示标注: ${action.ids?.join(', ')}`);
             if (action.ids) {
-              viewerControls.showAnnotations(action.ids);
+              viewerControls.showAnnotations(action.ids, action.labelScale);
             }
             break;
           case 'annotation.hide':

@@ -53,6 +53,63 @@ async function convertCoursewareUrls(courseware: any) {
   return converted;
 }
 
+// 获取课件列表（Unity客户端专用 - 只返回基本信息）
+export async function listCoursewaresForClient(req: Request, res: Response) {
+  try {
+    const q = (req.query.q as string) || '';
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const skip = (page - 1) * limit;
+
+    const filter: any = {};
+    
+    // 文本搜索
+    if (q) {
+      filter.$or = [
+        { name: new RegExp(q, 'i') },
+        { description: new RegExp(q, 'i') }
+      ];
+    }
+
+    // 权限过滤：超管可以看所有，其他用户只能看自己创建的
+    const user = (req as any).user;
+    if (user.role !== 'superadmin') {
+      filter.createdBy = new Types.ObjectId(user.userId);
+    }
+
+    const [items, total] = await Promise.all([
+      CoursewareModel
+        .find(filter)
+        .select('_id name description') // 只选择需要的字段
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      CoursewareModel.countDocuments(filter)
+    ]);
+
+    // 格式化返回数据，只返回 id, name, description
+    const formattedItems = items.map((item: any) => ({
+      id: item._id.toString(),
+      name: item.name,
+      description: item.description || ''
+    }));
+
+    res.json({
+      items: formattedItems,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('List coursewares for client error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+}
+
 // 获取课件列表
 export async function listCoursewares(req: Request, res: Response) {
   try {
@@ -207,6 +264,9 @@ export async function updateCourseware(req: Request, res: Response) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
+    // 记录接收到的原始请求数据
+    console.log('[Backend/Update] 接收到的原始req.body.settings:', JSON.stringify(req.body.settings, null, 2));
+    
     const updateData = { ...req.body };
     updateData.updatedBy = new Types.ObjectId(user.userId);
     updateData.version = courseware.version + 1;
@@ -217,10 +277,44 @@ export async function updateCourseware(req: Request, res: Response) {
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
+    // 记录处理后的设置数据
+    console.log('[Backend/Update] 处理后的updateData.settings:', JSON.stringify(updateData.settings, null, 2));
+    console.log('[Backend/Update] updateData.settings的所有键:', updateData.settings ? Object.keys(updateData.settings) : 'null');
+
+    // 使用 $set 操作符确保嵌套对象正确更新
+    // 特别注意：对于嵌套对象，Mongoose需要明确使用点号路径或直接替换整个对象
+    // 这里我们直接替换整个settings对象，确保所有字段都被保存
+    const updateQuery: any = {
+      $set: {
+        updatedBy: updateData.updatedBy,
+        version: updateData.version
+      }
+    };
+    
+    // 复制所有字段到$set中，但settings单独处理
+    Object.keys(updateData).forEach(key => {
+      if (key !== 'settings' && key !== 'updatedBy' && key !== 'version') {
+        updateQuery.$set[key] = updateData[key];
+      }
+    });
+    
+    // 如果 settings 存在，确保整个 settings 对象被替换（而不是合并）
+    if (updateData.settings) {
+      // 直接替换整个settings对象
+      updateQuery.$set.settings = updateData.settings;
+    }
+
+    console.log('[Backend/Update] 准备执行的更新查询:', JSON.stringify(updateQuery, null, 2));
+
     const updated = await CoursewareModel
-      .findByIdAndUpdate(id, updateData, { new: true })
+      .findByIdAndUpdate(id, updateQuery, { new: true, runValidators: false })
       .populate('createdBy', 'name')
       .populate('updatedBy', 'name');
+
+    // 记录更新后的设置数据
+    if (updated && updated.settings) {
+      console.log('[Backend/Update] 更新后的设置数据:', JSON.stringify(updated.settings, null, 2));
+    }
 
     // 转换URL为公网地址
     const convertedCourseware = await convertCoursewareUrls(updated!.toObject());
