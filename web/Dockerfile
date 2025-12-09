@@ -10,6 +10,10 @@ RUN npm ci --legacy-peer-deps
 # 验证 TypeScript 已安装
 RUN ls -la node_modules/typescript 2>/dev/null && echo "✓ TypeScript installed" || (echo "✗ TypeScript NOT installed, installing..." && npm install --legacy-peer-deps --save-dev typescript@^5 @types/react@^18 @types/node@^20 @types/react-dom@^18 @types/three@^0.179.0)
 
+# 🔥 强制破坏缓存：传入构建时间戳，确保每次都重新复制代码
+ARG CACHEBUST=1
+RUN echo "Cache bust: $CACHEBUST"
+
 COPY . .
 
 # 现在设置生产环境变量
@@ -35,6 +39,9 @@ RUN chmod -R +x node_modules/.bin 2>/dev/null || true
 
 # 确保 app 目录下的文件有正确的权限
 RUN chmod -R 644 app/**/*.ts app/**/*.tsx 2>/dev/null || true
+
+# 清理可能存在的旧构建缓存，确保使用最新代码
+RUN rm -rf .next 2>/dev/null || true
 
 # 运行构建
 RUN npm run build

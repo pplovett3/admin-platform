@@ -20,6 +20,7 @@ import aiRoutes from './routes/ai.routes';
 import publishRoutes from './routes/publish.routes';
 import activationCodesRoutes from './routes/activation-codes.routes';
 import activationRoutes from './routes/activation.routes';
+import quizRoutes from './routes/quiz.routes';
 
 async function migrateLegacyRoles(): Promise<void> {
   await UserModel.updateMany({ role: 'admin' as any }, { $set: { role: 'superadmin' } }).catch(() => undefined);
@@ -126,6 +127,7 @@ async function bootstrap() {
   app.use('/api', publishRoutes);
   app.use('/api/activation-codes', activationCodesRoutes);
   app.use('/api/activation', activationRoutes);
+  app.use('/api/quiz', quizRoutes);
 
   app.listen(config.port, () => {
     console.log('Server listening on port ' + config.port);

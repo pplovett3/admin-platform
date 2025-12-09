@@ -49,6 +49,27 @@ export interface CourseGenerationParams {
   language?: string;
 }
 
+// 考题生成参数
+export interface QuestionGenerationParams {
+  coursewareData: CoursewareData;
+  outline: any[];           // 课程大纲
+  questionCount: number;    // 题目数量
+  theoryRatio: number;      // 理论题比例 (0-1)
+  language?: string;
+}
+
+// 生成的考题结果
+export interface GeneratedQuestion {
+  id: string;
+  type: 'theory' | 'interactive';
+  question: string;
+  options: { key: string; text: string }[];
+  answer: string;
+  explanation?: string;
+  highlightNodeKey?: string;
+  relatedOutlineItemId?: string;
+}
+
 // DeepSeek 课程生成
 export async function generateCourseWithDeepSeek(params: CourseGenerationParams): Promise<any> {
   const systemPrompt = `你是一个专业的工业/机械设备教学课程设计师。基于提供的三维课件数据，设计一门结构化的教学课程。
@@ -206,6 +227,169 @@ scene.action段落中的actions数组只能使用以下动作类型：
     }
   } catch (error) {
     console.error('DeepSeek API error:', error);
+    throw error;
+  }
+}
+
+// DeepSeek 考题生成
+export async function generateQuestionsWithDeepSeek(params: QuestionGenerationParams): Promise<GeneratedQuestion[]> {
+  const theoryCount = Math.round(params.questionCount * params.theoryRatio);
+  const interactiveCount = params.questionCount - theoryCount;
+
+  const systemPrompt = `你是一个专业的工业/机械设备教学考试出题专家。基于提供的三维课件和课程大纲，设计选择题。
+
+## 输入信息：
+- 课件名称：${params.coursewareData.name}
+- 课件描述：${params.coursewareData.description}
+- 模型标注列表：${JSON.stringify(params.coursewareData.annotations, null, 2)}
+- 课程大纲：${JSON.stringify(params.outline, null, 2)}
+
+## 出题要求：
+请生成 ${params.questionCount} 道选择题，包含：
+1. **理论知识题** ${theoryCount} 道：考察学员对课程内容的理解，包括概念、原理、功能、作用等
+2. **互动识别题** ${interactiveCount} 道：通过高亮模型中的某个部件，让学员识别该部件的名称或作用
+
+## 题目设计原则：
+- 每道题4个选项（A/B/C/D），只有一个正确答案
+- 选项设计要有迷惑性但不能太离谱
+- 理论题要紧扣课程大纲内容
+- 互动题的 highlightNodeKey 必须来自标注列表中的 nodeKey
+- 每道题提供简短解析
+
+## 输出格式：
+返回纯JSON数组，不要包含markdown代码块标记：
+[
+  {
+    "id": "q-1",
+    "type": "theory",
+    "question": "关于XXX的描述，以下哪项是正确的？",
+    "options": [
+      {"key": "A", "text": "选项A内容"},
+      {"key": "B", "text": "选项B内容"},
+      {"key": "C", "text": "选项C内容"},
+      {"key": "D", "text": "选项D内容"}
+    ],
+    "answer": "A",
+    "explanation": "解析：...",
+    "relatedOutlineItemId": "item-1"
+  },
+  {
+    "id": "q-2",
+    "type": "interactive",
+    "question": "请观察模型中高亮显示的部件，这是什么？",
+    "options": [
+      {"key": "A", "text": "XXX"},
+      {"key": "B", "text": "YYY"},
+      {"key": "C", "text": "ZZZ"},
+      {"key": "D", "text": "WWW"}
+    ],
+    "answer": "B",
+    "explanation": "解析：该部件是YYY，主要功能是...",
+    "highlightNodeKey": "标注列表中存在的nodeKey"
+  }
+]
+
+注意：
+- 互动题的 highlightNodeKey 必须是标注列表中真实存在的 nodeKey
+- 题目难度适中，符合课程目标受众水平
+- 题目内容要准确，不能有知识性错误`;
+
+  const messages: DeepSeekMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: '请基于上述信息生成考题JSON数组。' }
+  ];
+
+  try {
+    // 如果没有配置 API Key，返回模拟数据
+    if (!config.deepseekApiKey || config.deepseekApiKey === '') {
+      console.warn('DeepSeek API Key not configured, returning mock questions');
+      const mockQuestions: GeneratedQuestion[] = [];
+      
+      // 生成模拟理论题
+      for (let i = 0; i < theoryCount; i++) {
+        mockQuestions.push({
+          id: `q-theory-${i + 1}`,
+          type: 'theory',
+          question: `关于${params.coursewareData.name}的以下描述，哪项是正确的？`,
+          options: [
+            { key: 'A', text: '这是一个正确的描述' },
+            { key: 'B', text: '这是一个错误的描述' },
+            { key: 'C', text: '这也是一个错误的描述' },
+            { key: 'D', text: '这还是一个错误的描述' }
+          ],
+          answer: 'A',
+          explanation: '正确答案是A，因为...',
+          relatedOutlineItemId: params.outline[0]?.items?.[0]?.id
+        });
+      }
+      
+      // 生成模拟互动题
+      for (let i = 0; i < interactiveCount; i++) {
+        const annotation = params.coursewareData.annotations[i % params.coursewareData.annotations.length];
+        mockQuestions.push({
+          id: `q-interactive-${i + 1}`,
+          type: 'interactive',
+          question: '请观察模型中高亮显示的部件，这是什么？',
+          options: [
+            { key: 'A', text: annotation?.title || '部件A' },
+            { key: 'B', text: '其他部件B' },
+            { key: 'C', text: '其他部件C' },
+            { key: 'D', text: '其他部件D' }
+          ],
+          answer: 'A',
+          explanation: `这是${annotation?.title || '该部件'}，${annotation?.description || '具有重要功能'}`,
+          highlightNodeKey: annotation?.nodeKey || ''
+        });
+      }
+      
+      return mockQuestions;
+    }
+
+    const response = await fetch(`${config.deepseekBaseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.deepseekApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages,
+        temperature: 0.7,
+        max_tokens: 4000
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data: DeepSeekResponse = await response.json();
+    const content = data.choices[0]?.message?.content;
+    
+    if (!content) {
+      throw new Error('No content in DeepSeek response');
+    }
+
+    // 尝试解析JSON
+    try {
+      const parsed = JSON.parse(content);
+      // 确保返回的是数组
+      if (Array.isArray(parsed)) {
+        return parsed;
+      } else if (parsed.questions && Array.isArray(parsed.questions)) {
+        return parsed.questions;
+      }
+      throw new Error('Invalid response format');
+    } catch (parseError) {
+      // 如果直接解析失败，尝试提取JSON部分
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      throw new Error('Failed to parse JSON from DeepSeek response');
+    }
+  } catch (error) {
+    console.error('DeepSeek Questions API error:', error);
     throw error;
   }
 }

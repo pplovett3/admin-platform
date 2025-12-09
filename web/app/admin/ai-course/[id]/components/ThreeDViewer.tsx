@@ -14,13 +14,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { getToken, getAPI_URL } from '@/app/_lib/api';
 
-// 记录材质/对象的高亮前状态
-type MaterialBackup = {
-  emissive?: THREE.Color;
-  emissiveIntensity?: number;
-  // 当对对象进行高亮时，缓存其原始材质（单个或数组）
-  originalMaterials?: any | any[];
-};
+// 【已删除】MaterialBackup 类型（自发光高亮已废弃，使用边界框高亮）
 
 interface ThreeDViewerProps {
   coursewareData?: any;
@@ -43,8 +37,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const animationsRef = useRef<THREE.AnimationClip[]>([]);
   const nodeMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const annotationsRef = useRef<THREE.Object3D[]>([]);
-  const materialBackupRef = useRef<WeakMap<any, MaterialBackup>>(new WeakMap());
-  const highlightedMatsRef = useRef<Set<any>>(new Set());
+  // 【已删除】materialBackupRef 和 highlightedMatsRef（自发光高亮已废弃，使用边界框高亮）
+  const boxHelperRef = useRef<THREE.BoxHelper | null>(null); // 轻量级边界框高亮
   const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
   const autoRotationRef = useRef<boolean>(false);
   const rotationSpeedRef = useRef<number>(0.005);
@@ -53,8 +47,10 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const environmentMapRef = useRef<THREE.Texture | null>(null);
   const pmremGeneratorRef = useRef<THREE.PMREMGenerator | null>(null);
   const hiddenObjectsRef = useRef<Map<string, boolean>>(new Map()); // 记录对象的初始可见性状态
+  const splatViewerRef = useRef<any>(null); // 高斯泼溅查看器
   
   const [loading, setLoading] = useState(false);
+  const [splatLoading, setSplatLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [webglSupported, setWebglSupported] = useState<boolean | null>(null);
 
@@ -405,11 +401,134 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     // 如果没有背景设置，使用默认HDR背景
     const backgroundType = settings?.backgroundType || 'panorama';
     const backgroundPanorama = settings?.backgroundPanorama || '/360background_7.hdr';
+    const backgroundSplat = settings?.backgroundSplat || '/garden.splat';
     const bgPanoramaBrightness = settings?.backgroundPanoramaBrightness || 1.0;
     const useHDREnvironment = settings?.useHDREnvironment !== undefined ? settings.useHDREnvironment : true;
 
-    // 应用HDR全景背景
-    if (backgroundType === 'panorama' && backgroundPanorama) {
+    // 在高斯泼溅模式下隐藏阴影平面（性能优化）
+    if (shadowPlaneRef.current) {
+      shadowPlaneRef.current.visible = backgroundType !== 'splat';
+    }
+
+    // 清理函数：移除旧的高斯泼溅查看器
+    const cleanupSplatViewer = () => {
+      if (splatViewerRef.current) {
+        try {
+          scene.remove(splatViewerRef.current);
+          if (splatViewerRef.current.dispose) {
+            splatViewerRef.current.dispose();
+          }
+        } catch (e) {
+          console.warn('清理高斯泼溅查看器时出错:', e);
+        }
+        splatViewerRef.current = null;
+      }
+    };
+
+    // 应用高斯泼溅背景
+    if (backgroundType === 'splat' && backgroundSplat) {
+      // 【修复】处理 world 场景路径：/world/world_1 -> /world/world_1/world_1.spz
+      const isWorldScene = backgroundSplat.startsWith('/world/') && !backgroundSplat.endsWith('.spz') && !backgroundSplat.endsWith('.splat');
+      const splatPath = isWorldScene 
+        ? `${backgroundSplat}/${backgroundSplat.split('/').pop()}.spz`
+        : backgroundSplat;
+      const hdrPath = isWorldScene 
+        ? `${backgroundSplat}/${backgroundSplat.split('/').pop()}.hdr`
+        : backgroundPanorama;
+      
+      console.log('🌌 [ThreeDViewer/Splat] 开始加载高斯泼溅模型:', { originalPath: backgroundSplat, splatPath, hdrPath, isWorldScene });
+      setSplatLoading(true);
+      
+      // 移除背景球体
+      const oldSphere = scene.getObjectByName('__background_sphere__');
+      if (oldSphere) scene.remove(oldSphere);
+      scene.background = null;
+      
+      // 【优化】在高斯泼溅模式下，仍然加载HDR作为环境光照（提升材质反射效果）
+      // 使用设置中的全景图或默认HDR作为环境光照源
+      const envHDR = hdrPath || '/360background_7.hdr';
+      if (envHDR.toLowerCase().endsWith('.hdr') || envHDR.toLowerCase().endsWith('.exr')) {
+        const envLoader = envHDR.toLowerCase().endsWith('.hdr') ? new RGBELoader() : new EXRLoader();
+        envLoader.load(envHDR, (texture) => {
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+          const pmremGenerator = pmremGeneratorRef.current;
+          if (pmremGenerator) {
+            const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+            environmentMapRef.current = envMap;
+            scene.environment = envMap; // 只设置环境光照，不设置背景
+            updateMaterialsEnvMap(envMap, useHDREnvironment ? bgPanoramaBrightness : 0.5);
+            console.log('✅ [ThreeDViewer/Splat] HDR环境光照已应用（用于材质反射）:', envHDR);
+          }
+        }, undefined, (error) => {
+          console.warn('⚠️ [ThreeDViewer/Splat] 加载HDR环境光照失败:', error);
+        });
+      }
+      
+      // 动态导入高斯泼溅库
+      import('@mkkellogg/gaussian-splats-3d').then((GaussianSplats3D) => {
+        // 清理旧的查看器
+        cleanupSplatViewer();
+        
+        try {
+          // 创建DropInViewer
+          const viewer = new GaussianSplats3D.DropInViewer({
+            sharedMemoryForWorkers: false,
+            dynamicScene: true,
+            selfDrivenMode: false
+          });
+          
+          splatViewerRef.current = viewer;
+          scene.add(viewer);
+          
+          // 获取变换参数
+          const splatTransform = settings?.splatTransform || {};
+          const splatPos = splatTransform.position || { x: 0, y: 0, z: 0 };
+          const splatRot = splatTransform.rotation || { x: 0, y: 0, z: 0 };
+          const splatScl = splatTransform.scale !== undefined ? splatTransform.scale : 1.0;
+          
+          // 将角度转换为四元数
+          const euler = new THREE.Euler(
+            splatRot.x * Math.PI / 180,
+            splatRot.y * Math.PI / 180,
+            splatRot.z * Math.PI / 180,
+            'XYZ'
+          );
+          const quaternion = new THREE.Quaternion().setFromEuler(euler);
+          
+          // 加载splat文件（使用转换后的路径）
+          viewer.addSplatScene(splatPath, {
+            showLoadingUI: false,
+            splatAlphaRemovalThreshold: 5,
+            position: [splatPos.x, splatPos.y, splatPos.z],
+            rotation: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+            scale: [splatScl, splatScl, splatScl]
+          }).then(() => {
+            console.log('✅ [ThreeDViewer/Splat] 高斯泼溅模型加载成功', { splatPath, position: splatPos, rotation: splatRot, scale: splatScl });
+            setSplatLoading(false);
+          }).catch((error: any) => {
+            console.error('❌ [ThreeDViewer/Splat] 加载高斯泼溅模型失败:', error);
+            setSplatLoading(false);
+            if (settings.background) {
+              scene.background = new THREE.Color(settings.background);
+            }
+          });
+        } catch (error) {
+          console.error('❌ [ThreeDViewer/Splat] 创建高斯泼溅查看器失败:', error);
+          setSplatLoading(false);
+          if (settings.background) {
+            scene.background = new THREE.Color(settings.background);
+          }
+        }
+      }).catch((error) => {
+        console.error('❌ [ThreeDViewer/Splat] 导入高斯泼溅库失败:', error);
+        setSplatLoading(false);
+        if (settings.background) {
+          scene.background = new THREE.Color(settings.background);
+        }
+      });
+    } else if (backgroundType === 'panorama' && backgroundPanorama) {
+      // 清理高斯泼溅查看器
+      cleanupSplatViewer();
       let bgPanorama = backgroundPanorama;
       
       // 处理相对路径（如 /360background_7.hdr）
@@ -619,10 +738,23 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         );
       }
     } else {
+      // 纯色背景
       // 移除背景球体，使用默认背景
       const oldSphere = scene.getObjectByName('__background_sphere__');
       if (oldSphere) {
         scene.remove(oldSphere);
+      }
+      // 清理高斯泼溅查看器
+      if (splatViewerRef.current) {
+        try {
+          scene.remove(splatViewerRef.current);
+          if (splatViewerRef.current.dispose) {
+            splatViewerRef.current.dispose();
+          }
+        } catch (e) {
+          console.warn('清理高斯泼溅查看器时出错:', e);
+        }
+        splatViewerRef.current = null;
       }
       if (settings.background) {
         scene.background = new THREE.Color(settings.background);
@@ -1417,10 +1549,23 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       mixerRef.current.update(0.016); // 假设60fps
     }
 
+    // 更新高斯泼溅查看器
+    if (splatViewerRef.current && splatViewerRef.current.update) {
+      try {
+        splatViewerRef.current.update();
+      } catch (e) {
+        // 静默处理更新错误
+      }
+    }
+
     // 标注使用固定大小，无需更新缩放
 
     // 渲染
-    if (composerRef.current) {
+    // 在高斯泼溅模式下跳过后处理（EffectComposer），直接渲染以提升性能
+    // OutlinePass等后处理效果会严重影响高斯泼溅的渲染性能
+    if (splatViewerRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    } else if (composerRef.current) {
       composerRef.current.render();
     } else {
       rendererRef.current.render(sceneRef.current, cameraRef.current);
@@ -1428,6 +1573,21 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   };
 
   const cleanup = () => {
+    // 清理高斯泼溅查看器
+    if (splatViewerRef.current) {
+      try {
+        if (sceneRef.current) {
+          sceneRef.current.remove(splatViewerRef.current);
+        }
+        if (splatViewerRef.current.dispose) {
+          splatViewerRef.current.dispose();
+        }
+      } catch (e) {
+        console.warn('清理高斯泼溅查看器时出错:', e);
+      }
+      splatViewerRef.current = null;
+    }
+    
     if (containerRef.current && rendererRef.current) {
       containerRef.current.removeChild(rendererRef.current.domElement);
     }
@@ -1453,69 +1613,7 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     });
   };
 
-  // 清除自发光高亮
-  const clearEmissiveHighlight = () => {
-    // 兼容两种记录方式：
-    // 1) 记录的是对象（obj），需要恢复其 originalMaterials
-    // 2) 旧逻辑记录的是材质（mat），需要恢复发光参数
-    for (const item of Array.from(highlightedMatsRef.current)) {
-      const backup = materialBackupRef.current.get(item as any);
-
-      // 优先：如果备份了原始材质数组，则恢复
-      if (backup && (backup as any).originalMaterials) {
-        try {
-          const originals = (backup as any).originalMaterials;
-          (item as any).material = Array.isArray(originals) && originals.length === 1 ? originals[0] : originals;
-          continue;
-        } catch {}
-      }
-
-      // 兼容：如果记录的是材质，恢复其发光参数
-      const mat = item as any;
-      const matBackup = materialBackupRef.current.get(mat);
-      if (matBackup) {
-        if ('emissive' in mat && matBackup.emissive) mat.emissive.copy(matBackup.emissive);
-        if ('emissiveIntensity' in mat && typeof matBackup.emissiveIntensity === 'number') mat.emissiveIntensity = matBackup.emissiveIntensity;
-      }
-    }
-    highlightedMatsRef.current.clear();
-  };
-
-  // 应用自发光高亮 - 克隆材质避免影响其他对象
-  const applyEmissiveHighlight = (obj: THREE.Object3D) => {
-    clearEmissiveHighlight();
-    
-    // 【修复】克隆材质，避免共享材质导致其他对象也被高亮
-    if ((obj as any).material) {
-      const mats = Array.isArray((obj as any).material) ? (obj as any).material : [(obj as any).material];
-      
-      // 为当前对象创建材质副本
-      const clonedMats = mats.map((mat: any) => {
-        const clonedMat = mat.clone();
-        // 备份原始材质
-        if (!materialBackupRef.current.has(obj)) {
-          materialBackupRef.current.set(obj, { 
-            originalMaterials: mats,
-            emissive: mat.emissive ? mat.emissive.clone() : undefined, 
-            emissiveIntensity: mat.emissiveIntensity 
-          });
-        }
-        
-        // 应用高亮效果到克隆材质
-        if (clonedMat.emissive) clonedMat.emissive.set(0x22d3ee); // 青色高亮
-        if ('emissiveIntensity' in clonedMat) clonedMat.emissiveIntensity = Math.max(clonedMat.emissiveIntensity || 0.2, 0.6);
-        
-        console.log('克隆并高亮材质:', clonedMat.name || clonedMat.uuid);
-        return clonedMat;
-      });
-      
-      // 应用克隆的高亮材质
-      (obj as any).material = clonedMats.length === 1 ? clonedMats[0] : clonedMats;
-      highlightedMatsRef.current.add(obj); // 记录对象而不是材质
-    } else {
-      console.log('选中的对象没有材质，只使用轮廓高亮');
-    }
-  };
+  // 【已废弃】自发光高亮相关代码已删除，现在统一使用边界框高亮（高斯泼溅模式）或轮廓高亮（普通模式）
 
   // 公开的控制方法
   const focusOnNode = (nodeKey: string) => {
@@ -1581,26 +1679,36 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
       return;
     }
 
-    if (outlineRef.current) {
-      console.log('找到目标对象进行高亮:', targetObject.name || targetObject.uuid);
-      
-      if (highlight) {
-        // 清除之前的高亮
-        clearEmissiveHighlight();
-        
-        // 应用自发光高亮（使用三维课件编辑器的算法）
-        applyEmissiveHighlight(targetObject);
-        
-        // 同时使用轮廓高亮
-        outlineRef.current.selectedObjects = [targetObject];
-        
-        console.log('已高亮节点:', targetObject.name || targetObject.uuid);
+    console.log('找到目标对象进行高亮:', targetObject.name || targetObject.uuid);
+    
+    // 清除之前的边界框高亮
+    if (boxHelperRef.current && sceneRef.current) {
+      sceneRef.current.remove(boxHelperRef.current);
+      boxHelperRef.current.dispose();
+      boxHelperRef.current = null;
+    }
+    
+    if (highlight) {
+      // 在高斯泼溅模式下使用轻量级边界框高亮（不修改材质，零性能开销）
+      if (splatViewerRef.current) {
+        const boxHelper = new THREE.BoxHelper(targetObject, 0xff6600); // 橙色边界框
+        boxHelper.name = '__highlight_box__';
+        sceneRef.current?.add(boxHelper);
+        boxHelperRef.current = boxHelper;
       } else {
-        // 清除高亮
-        clearEmissiveHighlight();
-        outlineRef.current.selectedObjects = [];
-        console.log('已取消高亮');
+        // 非高斯泼溅模式使用OutlinePass
+        if (outlineRef.current) {
+          outlineRef.current.selectedObjects = [targetObject];
+        }
       }
+      
+      console.log('已高亮节点:', targetObject.name || targetObject.uuid);
+    } else {
+      // 清除高亮
+      if (outlineRef.current) {
+        outlineRef.current.selectedObjects = [];
+      }
+      console.log('已取消高亮');
     }
   };
 
@@ -1911,8 +2019,12 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
   const resetAllStates = () => {
     console.log('重置所有状态：清除高亮、隐藏标注、停止动画、恢复显隐');
     
-    // 1. 清除高亮状态
-    clearEmissiveHighlight();
+    // 1. 清除高亮状态（使用边界框或轮廓）
+    if (boxHelperRef.current && sceneRef.current) {
+      sceneRef.current.remove(boxHelperRef.current);
+      boxHelperRef.current.dispose();
+      boxHelperRef.current = null;
+    }
     if (outlineRef.current) {
       outlineRef.current.selectedObjects = [];
     }

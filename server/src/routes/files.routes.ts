@@ -12,8 +12,37 @@ import os from 'os';
 
 const router = Router();
 const tempDir = path.join(os.tmpdir(), 'uploads');
+const chunkTempDir = path.join(os.tmpdir(), 'chunk-uploads');
 try { fs.mkdirSync(tempDir, { recursive: true }); } catch {}
+try { fs.mkdirSync(chunkTempDir, { recursive: true }); } catch {}
 const upload = multer({ dest: tempDir });
+const chunkUpload = multer({ dest: chunkTempDir });
+
+// 分块上传状态存储（生产环境建议用 Redis）
+const chunkUploadSessions = new Map<string, {
+  uploadId: string;
+  originalName: string;
+  totalChunks: number;
+  totalSize: number;
+  uploadedChunks: Set<number>;
+  visibility: FileVisibility;
+  userId: string;
+  userRole: string;
+  createdAt: Date;
+}>();
+
+// 定期清理过期的分块上传会话（1小时过期）
+setInterval(() => {
+  const now = Date.now();
+  for (const [uploadId, session] of chunkUploadSessions) {
+    if (now - session.createdAt.getTime() > 3600000) {
+      // 清理临时分块文件
+      const sessionDir = path.join(chunkTempDir, uploadId);
+      try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+      chunkUploadSessions.delete(uploadId);
+    }
+  }
+}, 600000); // 每10分钟检查一次
 
 function detectKindByExt(ext: string): FileKind {
   switch (ext) {
@@ -332,6 +361,233 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     return res.status(500).json({ message: e?.message || 'upload failed' });
   }
 });
+
+// ==================== 分块上传接口 ====================
+
+// 1. 初始化分块上传
+router.post('/chunk/init', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string; role: string };
+    const { fileName, fileSize, totalChunks, visibility = 'private' } = req.body;
+
+    if (!fileName || !fileSize || !totalChunks) {
+      return res.status(400).json({ message: 'fileName, fileSize, totalChunks are required' });
+    }
+
+    const ext = path.extname(fileName).toLowerCase();
+    const allowed = ['.mp4','.jpg','.jpeg','.png','.pdf','.ppt','.pptx','.doc','.docx','.glb','.fbx','.obj','.stl'];
+    if (!allowed.includes(ext)) {
+      return res.status(400).json({ message: 'unsupported file type' });
+    }
+
+    if (visibility === 'public' && current.role !== 'superadmin') {
+      return res.status(403).json({ message: 'only superadmin can upload public resource' });
+    }
+
+    const uploadId = crypto.randomUUID();
+    const sessionDir = path.join(chunkTempDir, uploadId);
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    chunkUploadSessions.set(uploadId, {
+      uploadId,
+      originalName: fileName,
+      totalChunks: parseInt(totalChunks),
+      totalSize: parseInt(fileSize),
+      uploadedChunks: new Set(),
+      visibility: visibility as FileVisibility,
+      userId: current.userId,
+      userRole: current.role,
+      createdAt: new Date(),
+    });
+
+    return res.json({ ok: true, uploadId, message: 'Chunk upload initialized' });
+  } catch (e: any) {
+    console.error('chunk init failed:', e);
+    return res.status(500).json({ message: e?.message || 'init failed' });
+  }
+});
+
+// 2. 上传单个分块
+router.post('/chunk/upload', authenticate as any, chunkUpload.single('chunk'), async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const { uploadId, chunkIndex } = req.body;
+    const file = (req as any).file;
+
+    if (!uploadId || chunkIndex === undefined || !file) {
+      return res.status(400).json({ message: 'uploadId, chunkIndex, chunk are required' });
+    }
+
+    const session = chunkUploadSessions.get(uploadId);
+    if (!session) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ message: 'Upload session not found or expired' });
+    }
+
+    if (session.userId !== current.userId) {
+      fs.unlinkSync(file.path);
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const idx = parseInt(chunkIndex);
+    if (idx < 0 || idx >= session.totalChunks) {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({ message: 'Invalid chunk index' });
+    }
+
+    // 移动分块到会话目录
+    const chunkPath = path.join(chunkTempDir, uploadId, `chunk_${idx}`);
+    fs.renameSync(file.path, chunkPath);
+    session.uploadedChunks.add(idx);
+
+    const progress = Math.round((session.uploadedChunks.size / session.totalChunks) * 100);
+
+    return res.json({
+      ok: true,
+      chunkIndex: idx,
+      uploadedChunks: session.uploadedChunks.size,
+      totalChunks: session.totalChunks,
+      progress,
+    });
+  } catch (e: any) {
+    console.error('chunk upload failed:', e);
+    return res.status(500).json({ message: e?.message || 'chunk upload failed' });
+  }
+});
+
+// 3. 完成分块上传（合并文件）
+router.post('/chunk/complete', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const { uploadId } = req.body;
+
+    if (!uploadId) {
+      return res.status(400).json({ message: 'uploadId is required' });
+    }
+
+    const session = chunkUploadSessions.get(uploadId);
+    if (!session) {
+      return res.status(404).json({ message: 'Upload session not found or expired' });
+    }
+
+    if (session.userId !== current.userId) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    // 检查所有分块是否已上传
+    if (session.uploadedChunks.size !== session.totalChunks) {
+      return res.status(400).json({
+        message: `Missing chunks: uploaded ${session.uploadedChunks.size}/${session.totalChunks}`,
+      });
+    }
+
+    // 合并分块
+    const sessionDir = path.join(chunkTempDir, uploadId);
+    const mergedPath = path.join(tempDir, `merged_${uploadId}_${session.originalName}`);
+    const writeStream = fs.createWriteStream(mergedPath);
+
+    for (let i = 0; i < session.totalChunks; i++) {
+      const chunkPath = path.join(sessionDir, `chunk_${i}`);
+      const chunkData = fs.readFileSync(chunkPath);
+      writeStream.write(chunkData);
+    }
+    writeStream.end();
+
+    await new Promise<void>((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    // 计算 SHA256
+    const sha256 = await new Promise<string>((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      fs.createReadStream(mergedPath)
+        .on('data', (d) => hash.update(d))
+        .on('end', () => resolve(hash.digest('hex')))
+        .on('error', reject);
+    });
+
+    // 构建存储路径
+    const decodedName = session.originalName;
+    const ext = path.extname(decodedName).toLowerCase();
+    const now = new Date();
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const id = new mongoose.Types.ObjectId().toString();
+    const rel = session.visibility === 'public'
+      ? path.posix.join('public', yyyy, mm, id, decodedName)
+      : path.posix.join('users', session.userId, yyyy, mm, id, decodedName);
+
+    const relDir = path.posix.dirname(rel);
+    try { ensureNestedDir(config.storageRoot, relDir); } catch (mkErr: any) {
+      console.error('ensure dir failed:', mkErr?.message);
+      throw mkErr;
+    }
+    const finalPath = path.join(config.storageRoot, rel);
+
+    // 移动合并后的文件到最终位置
+    await new Promise<void>((resolve, reject) => {
+      const rs = fs.createReadStream(mergedPath);
+      const ws = fs.createWriteStream(finalPath, { flags: 'w' });
+      rs.on('error', reject);
+      ws.on('error', reject);
+      ws.on('finish', () => resolve());
+      rs.pipe(ws);
+    });
+
+    // 清理临时文件
+    fs.unlinkSync(mergedPath);
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    chunkUploadSessions.delete(uploadId);
+
+    // 获取实际文件大小
+    const finalStat = fs.statSync(finalPath);
+
+    // 保存到数据库
+    const saved = await FileModel.create({
+      ownerUserId: new mongoose.Types.ObjectId(session.userId),
+      ownerRole: session.userRole as any,
+      visibility: session.visibility,
+      type: detectKindByExt(ext),
+      originalName: decodedName,
+      originalNameSaved: decodedName,
+      ext,
+      size: finalStat.size,
+      sha256,
+      storageRelPath: rel.replace(/\\/g, '/'),
+      storageDir: relDir.replace(/\\/g, '/'),
+    } as any);
+
+    const savedId = ((saved as any)._id || '').toString();
+    const downloadUrl = `/api/files/${savedId}/download/${encodeURIComponent(decodedName)}`;
+
+    return res.json({ ok: true, file: saved, downloadUrl });
+  } catch (e: any) {
+    console.error('chunk complete failed:', e);
+    return res.status(500).json({ message: e?.message || 'complete failed' });
+  }
+});
+
+// 4. 取消/清理分块上传
+router.delete('/chunk/:uploadId', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const { uploadId } = req.params;
+
+    const session = chunkUploadSessions.get(uploadId);
+    if (session && session.userId === current.userId) {
+      const sessionDir = path.join(chunkTempDir, uploadId);
+      try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+      chunkUploadSessions.delete(uploadId);
+    }
+
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(500).json({ message: e?.message || 'cleanup failed' });
+  }
+});
+
+// ==================== 分块上传接口结束 ====================
 
 router.delete('/:id', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string; role: string };

@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { CoursewareModel } from '../models/Courseware';
-import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, getAzureVoices } from '../utils/ai-services';
+import { AICourseModel } from '../models/AICourse';
+import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, getAzureVoices, generateQuestionsWithDeepSeek } from '../utils/ai-services';
 
 // 生成AI课程
 export async function generateCourse(req: Request, res: Response) {
@@ -327,6 +328,131 @@ export async function getTTSProviders(req: Request, res: Response) {
     });
   } catch (error) {
     console.error('Get TTS providers error:', error);
+    const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}
+
+// 生成AI考题
+export async function generateQuestions(req: Request, res: Response) {
+  try {
+    const { courseId, questionCount = 10, theoryRatio = 0.6 } = req.body || {};
+    
+    if (!courseId || !Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ message: 'Valid courseId is required' });
+    }
+
+    // 获取AI课程数据
+    const aiCourse = await AICourseModel.findById(courseId).lean();
+    if (!aiCourse) {
+      return res.status(404).json({ message: 'AI Course not found' });
+    }
+
+    // 权限检查
+    const user = (req as any).user;
+    if (user.role !== 'superadmin' && aiCourse.createdBy.toString() !== user.userId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // 获取关联的课件数据
+    const courseware = await CoursewareModel.findById(aiCourse.coursewareId).lean();
+    if (!courseware) {
+      return res.status(404).json({ message: 'Associated courseware not found' });
+    }
+
+    // 检查大纲是否存在
+    if (!aiCourse.outline || aiCourse.outline.length === 0) {
+      return res.status(400).json({ message: 'Course outline is required. Please generate outline first.' });
+    }
+
+    // 准备课件数据
+    const coursewareData = {
+      name: courseware.name,
+      description: courseware.description || '',
+      annotations: (courseware.annotations || []).map((ann: any) => ({
+        id: ann.id,
+        title: ann.title,
+        description: ann.description,
+        nodeKey: ann.nodeKey
+      })),
+      animations: (courseware.animations || []).map((anim: any) => ({
+        id: anim.id,
+        name: anim.name,
+        description: anim.description,
+        steps: (anim.steps || []).map((step: any) => ({
+          name: step.name,
+          description: step.description
+        }))
+      }))
+    };
+
+    // 调用 DeepSeek 生成考题
+    const questions = await generateQuestionsWithDeepSeek({
+      coursewareData,
+      outline: aiCourse.outline,
+      questionCount: Math.min(Math.max(parseInt(String(questionCount)), 1), 50), // 限制1-50题
+      theoryRatio: Math.min(Math.max(parseFloat(String(theoryRatio)), 0), 1),    // 限制0-1
+      language: aiCourse.language || 'zh-CN'
+    });
+
+    // 更新AI课程的考题
+    await AICourseModel.findByIdAndUpdate(courseId, {
+      questions,
+      updatedBy: new Types.ObjectId(user.userId)
+    });
+
+    res.json({
+      success: true,
+      courseId,
+      questionCount: questions.length,
+      theoryCount: questions.filter(q => q.type === 'theory').length,
+      interactiveCount: questions.filter(q => q.type === 'interactive').length,
+      questions
+    });
+  } catch (error) {
+    console.error('Generate questions error:', error);
+    const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}
+
+// 更新考题（手动编辑）
+export async function updateQuestions(req: Request, res: Response) {
+  try {
+    const { courseId, questions } = req.body || {};
+    
+    if (!courseId || !Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ message: 'Valid courseId is required' });
+    }
+
+    if (!Array.isArray(questions)) {
+      return res.status(400).json({ message: 'Questions array is required' });
+    }
+
+    // 获取AI课程数据
+    const aiCourse = await AICourseModel.findById(courseId);
+    if (!aiCourse) {
+      return res.status(404).json({ message: 'AI Course not found' });
+    }
+
+    // 权限检查
+    const user = (req as any).user;
+    if (user.role !== 'superadmin' && aiCourse.createdBy.toString() !== user.userId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    // 更新考题
+    aiCourse.questions = questions;
+    aiCourse.updatedBy = new Types.ObjectId(user.userId);
+    await aiCourse.save();
+
+    res.json({
+      success: true,
+      courseId,
+      questionCount: questions.length
+    });
+  } catch (error) {
+    console.error('Update questions error:', error);
     const message = (error as any)?.message || 'Internal server error';
     res.status(500).json({ message });
   }

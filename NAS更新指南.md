@@ -1,3 +1,18 @@
+#### 步骤 1：在本地压缩文件
+
+```powershell
+# 进入项目目录
+cd D:\Admin_Platform_Project\admin-platform
+
+# 压缩 server 目录（Windows 10+ 自带 tar）
+tar -czf server.tar.gz server
+
+# 压缩 web 目录
+tar -czf web.tar.gz web
+```
+
+
+
 ssh Tyrael@192.168.0.239
 cd /volume1/docker/admin-platform
 

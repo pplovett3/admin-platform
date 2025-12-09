@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Button, Form, Input, Space, message, Layout } from 'antd';
-import { GlobalOutlined } from '@ant-design/icons';
+import { Button, Form, Input, Space, message, Layout, Badge } from 'antd';
+import { GlobalOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
 import OutlineEditor from './components/OutlineEditor';
 import PropertyPanel from './components/PropertyPanel';
 import CoursewareViewer from './components/CoursewareViewer';
 import CoursePreviewPlayer from './components/CoursePreviewPlayer';
 import PublishDialog from './components/PublishDialog';
+import QuestionEditor from './components/QuestionEditor';
 
 const { Sider, Content } = Layout;
 
@@ -23,6 +24,8 @@ export default function EditAICoursePage() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [publishDialogVisible, setPublishDialogVisible] = useState(false);
+  const [questionEditorVisible, setQuestionEditorVisible] = useState(false);
+  const [coursewareAnnotations, setCoursewareAnnotations] = useState<any[]>([]);
 
   async function load() {
     if (!id) return;
@@ -31,6 +34,16 @@ export default function EditAICoursePage() {
       const res = await authFetch<any>(`/api/ai-courses/${id}`);
       form.setFieldsValue(res);
       setCourseData(res);
+      
+      // 加载关联课件的标注列表（用于考题编辑器）
+      if (res.coursewareId) {
+        try {
+          const courseware = await authFetch<any>(`/api/coursewares/${res.coursewareId}`);
+          setCoursewareAnnotations(courseware.annotations || []);
+        } catch (e) {
+          console.warn('加载课件标注失败', e);
+        }
+      }
     } catch (e: any) {
       message.error(e?.message || '加载失败');
     } finally {
@@ -42,7 +55,11 @@ export default function EditAICoursePage() {
     setSaving(true);
     try {
       const values = await form.validateFields();
-      const updated = { ...values, outline: courseData?.outline || [] };
+      const updated = { 
+        ...values, 
+        outline: courseData?.outline || [],
+        questions: courseData?.questions || []
+      };
       await authFetch(`/api/ai-courses/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -56,6 +73,11 @@ export default function EditAICoursePage() {
       setSaving(false);
     }
   }
+
+  // 考题变更处理
+  const onQuestionsChange = (newQuestions: any[]) => {
+    setCourseData({ ...courseData, questions: newQuestions });
+  };
 
   async function onGenerateAI() {
     if (!courseData?.coursewareId) {
@@ -170,6 +192,16 @@ export default function EditAICoursePage() {
           >
             预览播放
           </Button>
+          <Badge count={courseData?.questions?.length || 0} size="small" offset={[-5, 0]}>
+            <Button 
+              icon={<QuestionCircleOutlined />}
+              onClick={() => setQuestionEditorVisible(true)}
+              disabled={!courseData?.outline || courseData.outline.length === 0}
+              style={{ backgroundColor: '#fa8c16', borderColor: '#fa8c16', color: 'white' }}
+            >
+              考题管理
+            </Button>
+          </Badge>
           <Button 
             type="primary" 
             icon={<GlobalOutlined />}
@@ -261,6 +293,16 @@ export default function EditAICoursePage() {
           message.success('发布成功！');
           // 可以在这里更新UI状态或刷新数据
         }}
+      />
+
+      {/* 考题编辑器 */}
+      <QuestionEditor
+        courseId={id}
+        questions={courseData?.questions || []}
+        onChange={onQuestionsChange}
+        annotations={coursewareAnnotations}
+        visible={questionEditorVisible}
+        onClose={() => setQuestionEditorVisible(false)}
       />
     </div>
   );

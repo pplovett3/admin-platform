@@ -32,4 +32,21 @@ export function requireRole(roles: AuthPayload['role'][]) {
     }
     next();
   };
+}
+
+// 可选认证：如果有token则解析，没有则继续（用于支持游客访问）
+export function optionalAuthenticate(req: Request & { user?: AuthPayload }, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    // 没有token，继续执行（游客模式）
+    return next();
+  }
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, config.jwtSecret) as AuthPayload;
+    (req as any).user = payload;
+  } catch (e) {
+    // token无效，忽略错误，继续执行（当作游客）
+  }
+  next();
 } 

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requireRole } from '../middlewares/auth';
-import { generateCourse, searchImages, ttsPreview, queryTTS, getTTSProviders } from '../controllers/ai.controller';
+import { generateCourse, searchImages, ttsPreview, queryTTS, getTTSProviders, generateQuestions, updateQuestions } from '../controllers/ai.controller';
 
 const router = Router();
 
@@ -20,5 +20,11 @@ router.get('/tts/status', requireRole(['superadmin', 'schoolAdmin', 'teacher']),
 
 // 获取TTS供应商和音色列表
 router.get('/tts/providers', requireRole(['superadmin', 'schoolAdmin', 'teacher']), getTTSProviders);
+
+// AI 考题生成
+router.post('/generate-questions', requireRole(['superadmin', 'schoolAdmin', 'teacher']), generateQuestions);
+
+// 更新考题（手动编辑）
+router.put('/questions', requireRole(['superadmin', 'schoolAdmin', 'teacher']), updateQuestions);
 
 export default router;

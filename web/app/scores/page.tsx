@@ -1,13 +1,19 @@
 "use client";
 import { useEffect, useState, useMemo } from 'react';
-import { Card, Typography, Select, Table, Space, Input, App, Alert, Modal, Button } from 'antd';
-import { apiGet } from '@/app/_utils/api';
+import { Card, Typography, Select, Table, Space, Input, App, Alert, Modal, Button, Tabs, Tag, Statistic, Row, Col, Progress, Empty } from 'antd';
+import { TrophyOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { apiGet, authFetch } from '@/app/_utils/api';
 import { getToken, parseJwt, Role } from '@/app/_utils/auth';
 
 export default function ScoresPage() {
   const { message } = App.useApp();
   const [mounted, setMounted] = useState(false);
   const [me, setMe] = useState<{ userId: string; role: Role; className?: string; schoolId?: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<string>('traditional');
+
+  // AI课程答题记录
+  const [aiQuizRecords, setAiQuizRecords] = useState<any[]>([]);
+  const [aiQuizLoading, setAiQuizLoading] = useState(false);
 
   const [courses, setCourses] = useState<any[]>([]);
   const [courseId, setCourseId] = useState<string>('');
@@ -42,6 +48,26 @@ export default function ScoresPage() {
     const payload = parseJwt(token);
     if (payload) setMe({ userId: payload.userId, role: payload.role, className: (payload as any).className, schoolId: (payload as any).schoolId });
   }, []);
+
+  // 加载AI课程答题记录
+  const loadAiQuizRecords = async () => {
+    setAiQuizLoading(true);
+    try {
+      const res = await authFetch<any>('/api/quiz/records');
+      setAiQuizRecords(res.records || []);
+    } catch (e: any) {
+      console.error('加载AI课程答题记录失败:', e);
+      setAiQuizRecords([]);
+    } finally {
+      setAiQuizLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'ai-quiz' && me?.userId) {
+      loadAiQuizRecords();
+    }
+  }, [activeTab, me?.userId]);
 
   const loadCourses = async () => {
     try {
@@ -178,9 +204,92 @@ export default function ScoresPage() {
 
   const canSearch = isSuperadmin ? Boolean(courseId && schoolIdFilter && classIdFilter) : Boolean(courseId);
 
+  // AI课程答题统计
+  const aiQuizStats = {
+    totalAttempts: aiQuizRecords.length,
+    avgScore: aiQuizRecords.length > 0 
+      ? Math.round(aiQuizRecords.reduce((sum, r) => sum + (r.score || 0), 0) / aiQuizRecords.length) 
+      : 0,
+    bestScore: aiQuizRecords.length > 0 
+      ? Math.max(...aiQuizRecords.map(r => r.score || 0)) 
+      : 0,
+    passCount: aiQuizRecords.filter(r => (r.score || 0) >= 60).length
+  };
+
+  // AI课程答题记录列定义
+  const aiQuizColumns = [
+    {
+      title: '课程名称',
+      dataIndex: 'courseTitle',
+      key: 'courseTitle',
+      ellipsis: true,
+      render: (text: string) => text || '未知课程'
+    },
+    {
+      title: '得分',
+      dataIndex: 'score',
+      key: 'score',
+      width: 100,
+      align: 'center' as const,
+      render: (score: number) => (
+        <span style={{ 
+          color: score >= 80 ? '#52c41a' : score >= 60 ? '#faad14' : '#ff4d4f',
+          fontWeight: 600,
+          fontSize: '16px'
+        }}>
+          {score}
+        </span>
+      )
+    },
+    {
+      title: '正确/总题',
+      key: 'correctRate',
+      width: 100,
+      align: 'center' as const,
+      render: (_: any, record: any) => (
+        <span>
+          <span style={{ color: '#52c41a' }}>{record.correctCount}</span>
+          <span style={{ color: '#999' }}> / {record.totalQuestions}</span>
+        </span>
+      )
+    },
+    {
+      title: '状态',
+      key: 'status',
+      width: 80,
+      align: 'center' as const,
+      render: (_: any, record: any) => (
+        record.score >= 60 
+          ? <Tag color="success">及格</Tag>
+          : <Tag color="error">不及格</Tag>
+      )
+    },
+    {
+      title: '答题时间',
+      dataIndex: 'completedAt',
+      key: 'completedAt',
+      width: 180,
+      render: (date: string) => new Date(date).toLocaleString('zh-CN')
+    }
+  ];
+
   return (
     <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 16 }} wrap>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'traditional',
+            label: (
+              <span>
+                <ClockCircleOutlined style={{ marginRight: 8 }} />
+                传统课程成绩
+              </span>
+            ),
+            children: (
+              <>
+                <Space style={{ marginBottom: 16 }} wrap>
         <Select
           value={courseId}
           style={{ width: 300 }}
@@ -343,6 +452,84 @@ export default function ScoresPage() {
           </Card>
         )
       )}
+              </>
+            )
+          },
+          {
+            key: 'ai-quiz',
+            label: (
+              <span>
+                <TrophyOutlined style={{ marginRight: 8 }} />
+                AI课程答题成绩
+              </span>
+            ),
+            children: (
+              <div>
+                {/* 统计卡片 */}
+                <Row gutter={16} style={{ marginBottom: 24 }}>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic 
+                        title="答题次数" 
+                        value={aiQuizStats.totalAttempts} 
+                        suffix="次"
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic 
+                        title="平均分" 
+                        value={aiQuizStats.avgScore}
+                        suffix="分"
+                        valueStyle={{ color: aiQuizStats.avgScore >= 60 ? '#52c41a' : '#ff4d4f' }}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic 
+                        title="最高分" 
+                        value={aiQuizStats.bestScore}
+                        suffix="分"
+                        valueStyle={{ color: '#52c41a' }}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic 
+                        title="及格率" 
+                        value={aiQuizStats.totalAttempts > 0 ? Math.round((aiQuizStats.passCount / aiQuizStats.totalAttempts) * 100) : 0}
+                        suffix="%"
+                        valueStyle={{ color: aiQuizStats.passCount > 0 ? '#52c41a' : '#999' }}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+
+                {/* 答题记录列表 */}
+                <Card title="我的答题记录">
+                  {aiQuizRecords.length > 0 ? (
+                    <Table
+                      columns={aiQuizColumns}
+                      dataSource={aiQuizRecords}
+                      rowKey={(r) => `${r.courseId}-${r.completedAt}`}
+                      loading={aiQuizLoading}
+                      pagination={{ pageSize: 10 }}
+                    />
+                  ) : (
+                    <Empty 
+                      description={aiQuizLoading ? "加载中..." : "暂无答题记录"} 
+                      style={{ padding: '40px 0' }}
+                    />
+                  )}
+                </Card>
+              </div>
+            )
+          }
+        ]}
+      />
     </div>
   );
 } 

@@ -19,6 +19,8 @@ interface PublicThreeDViewerProps {
   width?: number;
   height?: number;
   onModelLoaded?: () => void;
+  onXRSessionStart?: () => void;
+  onXRSessionEnd?: () => void;
 }
 
 export interface PublicThreeDViewerControls {
@@ -32,10 +34,16 @@ export interface PublicThreeDViewerControls {
   stopAutoRotation: () => void;
   playAnimation: (animationId: string, startTime?: number, endTime?: number) => number; // 返回动画持续时间（秒）
   getAnimationDuration: (animationId: string) => number; // 获取动画持续时间但不播放
+  // WebXR 支持
+  getRenderer: () => THREE.WebGLRenderer | null;
+  getScene: () => THREE.Scene | null;
+  getCamera: () => THREE.PerspectiveCamera | null;
+  getModelRoot: () => THREE.Object3D | null;
+  getInteractableObjects: () => THREE.Object3D[];
 }
 
 const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDViewerProps>(
-  ({ coursewareData, width = 800, height = 600, onModelLoaded }, ref) => {
+  ({ coursewareData, width = 800, height = 600, onModelLoaded, onXRSessionStart, onXRSessionEnd }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
@@ -48,12 +56,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const animationsRef = useRef<THREE.AnimationClip[]>([]);
     const nodeMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
     const annotationsRef = useRef<THREE.Object3D[]>([]);
-    type MaterialBackup = {
-      emissive?: THREE.Color;
-      emissiveIntensity?: number;
-    };
-    const materialBackupRef = useRef<WeakMap<any, MaterialBackup>>(new WeakMap());
-    const highlightedMatsRef = useRef<Set<any>>(new Set());
+    // 【已删除】MaterialBackup 类型和相关 refs（自发光高亮已废弃，使用边界框高亮）
+    const boxHelperRef = useRef<THREE.BoxHelper | null>(null); // 轻量级边界框高亮
     const shadowPlaneRef = useRef<THREE.Mesh | null>(null);
     const autoRotationRef = useRef<boolean>(false);
     const rotationSpeedRef = useRef<number>(0.0006); // 再降低速度（更慢）
@@ -62,20 +66,45 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const environmentMapRef = useRef<THREE.Texture | null>(null);
     const pmremGeneratorRef = useRef<THREE.PMREMGenerator | null>(null);
     const hiddenObjectsRef = useRef<Map<string, boolean>>(new Map()); // 记录对象的初始可见性状态
+    const animationFrameIdRef = useRef<number | null>(null); // 渲染循环ID
+    const isXRPresentingRef = useRef<boolean>(false); // XR会话状态
+    const splatViewerRef = useRef<any>(null); // 高斯泼溅查看器
     
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [webglSupported, setWebglSupported] = useState<boolean | null>(null);
+    const [splatLoading, setSplatLoading] = useState(false);
 
-    // WebGL支持检测
+    // WebGL 2 支持检测（Three.js r163+ 只支持 WebGL 2）
     const checkWebGLSupport = (): boolean => {
       try {
         const canvas = document.createElement('canvas');
-        const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        const context = canvas.getContext('webgl2');
         return !!context;
       } catch (e) {
         return false;
       }
+    };
+    
+    // 移动端检测（用于高斯模型性能优化）
+    const isMobileDevice = (): boolean => {
+      if (typeof window === 'undefined') return false;
+      const ua = navigator.userAgent.toLowerCase();
+      return /iphone|ipad|ipod|android|mobile|tablet/.test(ua);
+    };
+    
+    // 检测是否为低端移动设备（如 iPhone X 系列）
+    const isLowEndMobile = (): boolean => {
+      if (typeof window === 'undefined') return false;
+      const ua = navigator.userAgent.toLowerCase();
+      // iPhone X/XS/XR/11 等使用 A11-A13 芯片，内存相对较少
+      const isOlderIPhone = /iphone/.test(ua) && window.devicePixelRatio >= 2;
+      // 检测设备内存（如果可用）
+      const deviceMemory = (navigator as any).deviceMemory;
+      const isLowMemory = deviceMemory && deviceMemory < 6; // 小于 6GB
+      // 屏幕尺寸也可以作为参考
+      const isSmallScreen = window.screen.width < 500 || window.screen.height < 900;
+      return isOlderIPhone || isLowMemory || (isMobileDevice() && isSmallScreen);
     };
 
     // 创建渐变背景纹理
@@ -155,35 +184,1083 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       camera.position.set(5, 5, 5);
       cameraRef.current = camera;
 
-      // 创建渲染器，添加错误处理
+      // 创建渲染器
       try {
+        // 步骤1：先创建 canvas 并添加到 DOM
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        containerRef.current.appendChild(canvas);
+        
+        // 步骤2：让 Three.js 自己创建 WebGL 2 上下文
         const renderer = new THREE.WebGLRenderer({ 
-          antialias: true,
-          preserveDrawingBuffer: true,
-          powerPreference: "high-performance",
-          failIfMajorPerformanceCaveat: false
+          canvas: canvas,
+          antialias: false,
+          alpha: true,
+          powerPreference: 'default',
+          preserveDrawingBuffer: true
         });
         
         renderer.setSize(width, height);
-        renderer.shadowMap.enabled = true;   // 启用阴影系统
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // 软阴影
+        renderer.setPixelRatio(1);
         renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1;
+        
+        // 尝试启用阴影
+        try {
+          renderer.shadowMap.enabled = true;
+          renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        } catch (shadowError) {
+          // 阴影初始化失败，继续运行
+        }
         
         // 监听WebGL上下文丢失事件
-        renderer.domElement.addEventListener('webglcontextlost', (event) => {
+        canvas.addEventListener('webglcontextlost', (event) => {
           event.preventDefault();
-          console.warn('WebGL上下文丢失');
           setLoadError('3D渲染上下文丢失，请刷新页面重试');
         });
 
-        renderer.domElement.addEventListener('webglcontextrestored', () => {
-          console.log('WebGL上下文已恢复');
+        canvas.addEventListener('webglcontextrestored', () => {
           setLoadError(null);
         });
         
         rendererRef.current = renderer;
+        
+        // 启用WebXR支持（预配置，实际会话由XRManager控制）
+        try {
+          renderer.xr.enabled = true;
+          renderer.xr.setReferenceSpaceType('local-floor');
+          
+          // 监听XR会话开始/结束
+          renderer.xr.addEventListener('sessionstart', () => {
+            console.log('[PublicThreeDViewer] XR Session Started!');
+            isXRPresentingRef.current = true;
+            
+            // VR交互系统
+            if (sceneRef.current && cameraRef.current && rendererRef.current) {
+              const scene = sceneRef.current;
+              const currentRenderer = rendererRef.current;
+              const xrSession = currentRenderer.xr.getSession();
+              
+              // 主题色（参考网页版）
+              const THEME = {
+                primary: 0x3b82f6,      // 蓝色
+                accent: 0xff6600,       // 橙色（高亮）
+                hover: 0xffa500,        // 橙黄色（悬停）
+                bg: 'rgba(15, 23, 42, 0.95)',  // 深蓝灰背景
+                border: '#3b82f6',      // 蓝色边框
+                text: '#ffffff',
+                textMuted: '#94a3b8'
+              };
+              
+              // ========== 控制器设置 ==========
+              const controller1 = currentRenderer.xr.getController(0); // 右手
+              const controller2 = currentRenderer.xr.getController(1); // 左手
+              
+              // 右手射线（用于选中）
+              const rightRayGeom = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 0, -5)
+              ]);
+              const rightRay = new THREE.Line(rightRayGeom, new THREE.LineBasicMaterial({ color: THEME.primary }));
+              rightRay.name = 'VR_RIGHT_RAY';
+              controller1.add(rightRay);
+              
+              // 左手射线（用于传送）
+              const leftRayGeom = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 0, -5)
+              ]);
+              const leftRay = new THREE.Line(leftRayGeom, new THREE.LineBasicMaterial({ color: THEME.primary, transparent: true, opacity: 0.8 }));
+              leftRay.name = 'VR_LEFT_RAY';
+              controller2.add(leftRay);
+              
+              // 控制器指示球
+              const rightSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(0.02, 16, 16),
+                new THREE.MeshBasicMaterial({ color: THEME.primary })
+              );
+              controller1.add(rightSphere);
+              
+              const leftSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(0.02, 16, 16),
+                new THREE.MeshBasicMaterial({ color: THEME.primary })
+              );
+              controller2.add(leftSphere);
+              
+              controller1.name = 'VR_CONTROLLER_RIGHT';
+              controller2.name = 'VR_CONTROLLER_LEFT';
+              scene.add(controller1);
+              scene.add(controller2);
+              
+              // ========== 存储 InputSource 引用 ==========
+              let rightInputSource: XRInputSource | null = null;
+              let leftInputSource: XRInputSource | null = null;
+              
+              // 监听控制器连接事件获取 inputSource
+              controller1.addEventListener('connected', (event: any) => {
+                const inputSource = event.data as XRInputSource;
+                console.log('[VR] Controller 1 connected:', inputSource.handedness, inputSource.gamepad);
+                controller1.userData.inputSource = inputSource;
+                if (inputSource.handedness === 'right') {
+                  rightInputSource = inputSource;
+                } else if (inputSource.handedness === 'left') {
+                  leftInputSource = inputSource;
+                }
+              });
+              controller1.addEventListener('disconnected', () => {
+                console.log('[VR] Controller 1 disconnected');
+                controller1.userData.inputSource = null;
+                rightInputSource = null;
+              });
+              
+              controller2.addEventListener('connected', (event: any) => {
+                const inputSource = event.data as XRInputSource;
+                console.log('[VR] Controller 2 connected:', inputSource.handedness, inputSource.gamepad);
+                controller2.userData.inputSource = inputSource;
+                if (inputSource.handedness === 'right') {
+                  rightInputSource = inputSource;
+                } else if (inputSource.handedness === 'left') {
+                  leftInputSource = inputSource;
+                }
+              });
+              controller2.addEventListener('disconnected', () => {
+                console.log('[VR] Controller 2 disconnected');
+                controller2.userData.inputSource = null;
+                leftInputSource = null;
+              });
+              
+              // ========== 贝塞尔曲线传送射线 ==========
+              const curveSegments = 30;
+              const curveGeometry = new THREE.BufferGeometry();
+              const curveVertices = new Float32Array(curveSegments * 3);
+              curveGeometry.setAttribute('position', new THREE.BufferAttribute(curveVertices, 3));
+              const curveMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+              const teleportCurve = new THREE.Line(curveGeometry, curveMaterial);
+              teleportCurve.visible = false;
+              teleportCurve.frustumCulled = false; // 防止视锥剔除导致的闪烁
+              scene.add(teleportCurve);
+
+              // 辅助向量
+              const _p = new THREE.Vector3();
+              const _v = new THREE.Vector3();
+              const _g = new THREE.Vector3(0, -9.8, 0); // 重力
+              const _tempTarget = new THREE.Vector3();
+              const _floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // 地面平面 y=0
+
+              // 更新贝塞尔曲线和传送点
+              const updateTeleportCurve = (controller: THREE.Group) => {
+                // 强制更新控制器矩阵，确保位置是最新的
+                controller.updateMatrixWorld(true);
+                const startPos = controller.getWorldPosition(new THREE.Vector3());
+                const dir = controller.getWorldDirection(new THREE.Vector3()).negate();
+                
+                // 方法1: 抛物线视觉效果
+                _v.copy(dir).multiplyScalar(8); // 降低速度，让弧度更明显
+                _p.copy(startPos);
+
+                let hitGround = false;
+                let hitPoint = new THREE.Vector3();
+                const positions = teleportCurve.geometry.attributes.position.array as Float32Array;
+                
+                // 计算抛物线顶点
+                for (let i = 0; i < curveSegments; i++) {
+                  positions[i * 3] = _p.x;
+                  positions[i * 3 + 1] = _p.y;
+                  positions[i * 3 + 2] = _p.z;
+
+                  _v.addScaledVector(_g, 0.015); // 增加重力步长
+                  _p.addScaledVector(_v, 0.015);
+
+                  if (!hitGround && _p.y <= 0) {
+                     hitGround = true;
+                     // 简单插值计算交点
+                     const prevY = positions[i * 3 + 1];
+                     const t = prevY / (prevY - _p.y);
+                     hitPoint.set(
+                       positions[i * 3] + (_p.x - positions[i * 3]) * t,
+                       0,
+                       positions[i * 3 + 2] + (_p.z - positions[i * 3 + 2]) * t
+                     );
+                     // 将后续点都拉到地面，形成落地效果
+                     for (let j = i; j < curveSegments; j++) {
+                        positions[j * 3] = hitPoint.x;
+                        positions[j * 3 + 1] = 0;
+                        positions[j * 3 + 2] = hitPoint.z;
+                     }
+                     break;
+                  }
+                }
+                (teleportCurve.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+                teleportCurve.visible = true;
+
+                // 方法2: 射线检测作为逻辑备份 (确保一定能传送到地面)
+                let finalTarget: THREE.Vector3 | null = null;
+
+                if (hitGround) {
+                  finalTarget = hitPoint;
+                } else {
+                  // 几何计算: 强制投射到 y=0 平面
+                  if (dir.y < -0.1) { // 只要稍微向下
+                     const t = -startPos.y / dir.y;
+                     if (t > 0 && t < 20) { // 距离限制
+                        finalTarget = startPos.clone().add(dir.clone().multiplyScalar(t));
+                     }
+                  }
+                  
+                  if (!finalTarget) {
+                     // Raycaster 检测
+                     raycaster.ray.origin.copy(startPos);
+                     raycaster.ray.direction.copy(dir);
+                     const intersectPoint = new THREE.Vector3();
+                     const intersect = raycaster.ray.intersectPlane(_floorPlane, intersectPoint);
+                     if (intersect && intersectPoint.distanceTo(startPos) < 20) {
+                        finalTarget = intersectPoint;
+                     }
+                  }
+                }
+
+                if (finalTarget) {
+                  teleportIndicator.position.copy(finalTarget);
+                  teleportIndicator.visible = true;
+                  return finalTarget;
+                } else {
+                  // 强制显示逻辑 (Fallback): 如果都没检测到，显示在前方1.5米处 (跟随手柄方向)
+                  // 将手柄方向投影到水平面
+                  const flatDir = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+                  const forwardPoint = startPos.clone().add(flatDir.multiplyScalar(1.5));
+                  forwardPoint.y = 0; // 强制地面
+                  
+                  teleportIndicator.position.copy(forwardPoint);
+                  teleportIndicator.visible = true;
+                  return forwardPoint;
+                }
+              };
+              
+              // 创建名称标签
+              const createNameLabel = (text: string, position: THREE.Vector3) => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d')!;
+                canvas.width = 512;
+                canvas.height = 128;
+                
+                // 背景
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.strokeStyle = '#ff6600';
+                ctx.lineWidth = 4;
+                
+                // 圆角矩形
+                const x=4, y=4, w=504, h=120, r=20;
+                ctx.beginPath();
+                ctx.moveTo(x+r, y);
+                ctx.arcTo(x+w, y, x+w, y+h, r);
+                ctx.arcTo(x+w, y+h, x, y+h, r);
+                ctx.arcTo(x, y+h, x, y, r);
+                ctx.arcTo(x, y, x+w, y, r);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, 256, 64);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+                const sprite = new THREE.Sprite(material);
+                sprite.scale.set(0.5, 0.125, 1);
+                sprite.position.copy(position).add(new THREE.Vector3(0, 0.3, 0));
+                sprite.name = 'VR_NAME_LABEL';
+                sprite.renderOrder = 999; // 确保在最前面
+                return sprite;
+              };
+
+              // ========== 通用交互处理函数 ==========
+              const handleTriggerStart = (controller: THREE.Group, isC1: boolean) => {
+                if (isC1) buttonState.rightTrigger = true;
+                else buttonState.leftTrigger = true;
+
+                // 双手缩放检测
+                if (buttonState.rightTrigger && buttonState.leftTrigger) {
+                  console.log('[VR] 双手触发 -> 进入缩放模式');
+                  isScaling = true;
+                  teleportActive = false;
+                  teleportCurve.visible = false;
+                  teleportIndicator.visible = false;
+                  
+                  // 恢复两只手的射线颜色
+                  (rightRay.material as THREE.LineBasicMaterial).color.setHex(THEME.primary);
+                  (leftRay.material as THREE.LineBasicMaterial).color.setHex(THEME.primary);
+                  
+                  if (modelRootRef.current) {
+                    initialPinchDistance = getPinchDistance();
+                    initialModelScale.copy(modelRootRef.current.scale);
+                  }
+                  return;
+                }
+
+                // ========== 1. 优先检测模型树面板点击 ==========
+                if (modelTreeVisible && modelTreePanel) {
+                  tempMatrix.identity().extractRotation(controller.matrixWorld);
+                  raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+                  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+                  
+                  const panelHits = raycaster.intersectObject(modelTreePanel);
+                  if (panelHits.length > 0 && panelHits[0].uv) {
+                    const clickX = panelHits[0].uv.x * 512;  // canvas 宽度
+                    const clickY = (1 - panelHits[0].uv.y) * 700; // canvas 高度
+                    console.log('[VR] 面板点击 X:', clickX.toFixed(0), 'Y:', clickY.toFixed(0));
+                    
+                    // 检查滚动按钮 (右侧 462-502 区域)
+                    if (clickX >= 462 && clickX <= 502) {
+                      // 上滚动按钮 (Y: 60-120)
+                      if (clickY >= 60 && clickY <= 120 && treeScrollOffset > 0) {
+                        treeScrollOffset = Math.max(0, treeScrollOffset - 5);
+                        renderModelTree();
+                        console.log('[VR] 向上滚动, offset:', treeScrollOffset);
+                        return;
+                      }
+                      // 下滚动按钮 (Y: 620-680)
+                      if (clickY >= 620 && clickY <= 680 && treeScrollOffset < treeItems.length - maxVisibleItems) {
+                        treeScrollOffset = Math.min(treeItems.length - maxVisibleItems, treeScrollOffset + 5);
+                        renderModelTree();
+                        console.log('[VR] 向下滚动, offset:', treeScrollOffset);
+                        return;
+                      }
+                    }
+                    
+                    // 检查列表项目点击 (左侧区域)
+                    if (clickX < 462) {
+                      const visibleItems = treeItems.slice(treeScrollOffset, treeScrollOffset + maxVisibleItems);
+                      const itemH = 28;
+                      const startY = 60;
+                      
+                      for (let i = 0; i < visibleItems.length; i++) {
+                        const item = visibleItems[i];
+                        const itemY = startY + i * itemH;
+                        
+                        if (clickY >= itemY - 4 && clickY <= itemY + itemH) {
+                          // 选中这个模型对象
+                          removeHighlight(selectedObject, 'VR_SELECT_HIGHLIGHT');
+                          const oldLabel = scene.getObjectByName('VR_NAME_LABEL');
+                          if (oldLabel) oldLabel.parent?.remove(oldLabel);
+                          
+                          selectedObject = item.object;
+                          addOutlineHighlight(selectedObject, THEME.accent, 'VR_SELECT_HIGHLIGHT');
+                          
+                          // 添加标签
+                          const box = new THREE.Box3().setFromObject(item.object);
+                          const center = box.getCenter(new THREE.Vector3());
+                          center.y = box.max.y;
+                          const label = createNameLabel(item.name || '未命名对象', center);
+                          scene.add(label);
+                          
+                          renderModelTree();
+                          console.log('[VR] 从面板选中:', item.name, '(index:', treeScrollOffset + i, ')');
+                          break;
+                        }
+                      }
+                    }
+                    // 面板被点击，不进入传送模式
+                    return;
+                  }
+                }
+                
+                // ========== 2. 检测是否击中 3D 模型 ==========
+                const intersected = getIntersected(controller);
+                if (intersected) {
+                  // 击中物体 -> 选中模式
+                  console.log('[VR] 击中物体 -> 选中:', intersected.name);
+                  removeHighlight(selectedObject, 'VR_SELECT_HIGHLIGHT');
+                  const oldLabel = scene.getObjectByName('VR_NAME_LABEL');
+                  if (oldLabel) oldLabel.parent?.remove(oldLabel);
+                  
+                  selectedObject = intersected;
+                  addOutlineHighlight(selectedObject, THEME.accent, 'VR_SELECT_HIGHLIGHT');
+                  
+                  // 添加新标签
+                  const box = new THREE.Box3().setFromObject(intersected);
+                  const center = box.getCenter(new THREE.Vector3());
+                  center.y = box.max.y;
+                  const label = createNameLabel(intersected.name || '未命名对象', center);
+                  scene.add(label);
+                  
+                  renderModelTree();
+                  
+                  const ray = isC1 ? rightRay : leftRay;
+                  (ray.material as THREE.LineBasicMaterial).color.setHex(THEME.accent);
+                  return;
+                }
+                
+                // ========== 3. 未击中任何物体 -> 传送模式 ==========
+                // 面板打开时禁止传送
+                if (modelTreeVisible) {
+                  console.log('[VR] 面板打开，禁止传送');
+                  return;
+                }
+                
+                console.log('[VR] 进入传送瞄准模式');
+                teleportActive = true;
+                teleportController = controller;
+                
+                // 射线变紫，表示传送模式
+                const ray = isC1 ? rightRay : leftRay;
+                (ray.material as THREE.LineBasicMaterial).color.setHex(0xaa00ff);
+                
+                // 立即更新一次传送曲线
+                updateTeleportCurve(controller);
+              };
+
+              const handleTriggerEnd = (controller: THREE.Group, isC1: boolean) => {
+                if (isC1) buttonState.rightTrigger = false;
+                else buttonState.leftTrigger = false;
+
+                // 恢复射线显示
+                const ray = isC1 ? rightRay : leftRay;
+                ray.visible = true;
+                (ray.material as THREE.LineBasicMaterial).color.setHex(THEME.primary);
+
+                // 缩放结束检测
+                if (isScaling) {
+                   if (!buttonState.rightTrigger && !buttonState.leftTrigger) {
+                     isScaling = false;
+                     console.log('[VR] 缩放结束');
+                   }
+                   // 如果松开了一只手，保持 isScaling 为 true 直到两只手都松开? 
+                   // 或者松开一只手就退出缩放? 现在的逻辑是松开任一就退出
+                   if (!buttonState.rightTrigger || !buttonState.leftTrigger) {
+                     isScaling = false;
+                   }
+                   return;
+                }
+
+                // 传送执行
+                if (teleportActive && teleportController === controller) {
+                   if (teleportIndicator.visible) {
+                      console.log('[VR] 执行传送');
+                      const target = teleportIndicator.position;
+                      
+                      // 相对移动算法 (无需维护 accumulatedOffset)
+                      if (cameraRef.current) {
+                        const camera = cameraRef.current;
+                        // 计算位移向量: 目标点 - 当前相机位置 (忽略高度)
+                        const offsetX = target.x - camera.position.x;
+                        const offsetZ = target.z - camera.position.z;
+                        
+                        const currentRefSpace = currentRenderer.xr.getReferenceSpace();
+                        if (currentRefSpace) {
+                           // 这里的 transform 是 ReferenceSpace 的逆变换
+                           // 如果我们要让相机移动 (+x, +z)，我们需要把 ReferenceSpace 移动 (-x, -z)
+                           // 注意：WebXR 坐标系方向可能需要微调，通常是取反
+                           const transform = new XRRigidTransform({ 
+                             x: -offsetX, 
+                             y: 0, 
+                             z: -offsetZ, 
+                             w: 1 
+                           });
+                           const newSpace = currentRefSpace.getOffsetReferenceSpace(transform);
+                           currentRenderer.xr.setReferenceSpace(newSpace);
+                           
+                           // 维护累积偏移，用于位置重置
+                           accumulatedOffset.x += offsetX;
+                           accumulatedOffset.z += offsetZ;
+                        }
+                      }
+                   }
+                   teleportActive = false;
+                   teleportCurve.visible = false;
+                   teleportIndicator.visible = false;
+                   teleportController = null;
+                }
+              };
+
+              let teleportController: THREE.Group | null = null;
+
+              // ========== 绑定事件 (对称逻辑) ==========
+              // C1 (可能是右手也可能是左手)
+              controller1.addEventListener('selectstart', () => handleTriggerStart(controller1, true));
+              controller1.addEventListener('selectend', () => handleTriggerEnd(controller1, true));
+              controller1.addEventListener('squeezestart', () => toggleModelTree());
+
+              // C2 (可能是左手也可能是右手)
+              controller2.addEventListener('selectstart', () => handleTriggerStart(controller2, false));
+              controller2.addEventListener('selectend', () => handleTriggerEnd(controller2, false));
+              controller2.addEventListener('squeezestart', () => toggleModelTree());
+
+              
+              // ========== 传送系统 ==========
+              const teleportIndicator = new THREE.Group();
+              const ringGeom = new THREE.RingGeometry(0.25, 0.35, 32);
+              const ringMat = new THREE.MeshBasicMaterial({ color: THEME.primary, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+              const ring = new THREE.Mesh(ringGeom, ringMat);
+              ring.rotation.x = -Math.PI / 2;
+              teleportIndicator.add(ring);
+              
+              const centerGeom = new THREE.CircleGeometry(0.1, 16);
+              const centerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+              const center = new THREE.Mesh(centerGeom, centerMat);
+              center.rotation.x = -Math.PI / 2;
+              center.position.y = 0.01;
+              teleportIndicator.add(center);
+              
+              teleportIndicator.visible = false;
+              teleportIndicator.name = 'VR_TELEPORT_INDICATOR';
+              scene.add(teleportIndicator);
+              
+              // 隐形地板（用于传送检测）
+              const teleportFloor = new THREE.Mesh(
+                new THREE.PlaneGeometry(100, 100),
+                new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
+              );
+              teleportFloor.rotation.x = -Math.PI / 2;
+              teleportFloor.position.y = 0;
+              teleportFloor.name = 'VR_TELEPORT_FLOOR';
+              scene.add(teleportFloor);
+              
+              // ========== 选中标签 ==========
+              let selectionLabel: THREE.Sprite | null = null;
+              const updateSelectionLabel = (obj: THREE.Object3D | null) => {
+                // 移除旧标签
+                if (selectionLabel) {
+                  scene.remove(selectionLabel);
+                  selectionLabel = null;
+                }
+                
+                if (!obj) return;
+                
+                // 创建新标签
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d')!;
+                canvas.width = 512;
+                canvas.height = 128;
+                
+                // 背景
+                context.fillStyle = 'rgba(15, 23, 42, 0.9)';
+                context.fillRect(0, 0, 512, 128);
+                // 边框
+                context.strokeStyle = '#f97316'; // Orange-500
+                context.lineWidth = 8;
+                context.strokeRect(4, 4, 504, 120);
+                // 文字
+                context.fillStyle = '#ffffff';
+                context.font = 'bold 48px monospace';
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                context.fillText(obj.name || '未命名对象', 256, 64);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+                selectionLabel = new THREE.Sprite(material);
+                selectionLabel.scale.set(0.5, 0.125, 1);
+                selectionLabel.name = 'VR_SELECTION_LABEL';
+                selectionLabel.renderOrder = 999; // 确保在最上层
+                
+                // 计算位置：包围盒上方
+                const box = new THREE.Box3().setFromObject(obj);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                selectionLabel.position.copy(center);
+                selectionLabel.position.y += size.y / 2 + 0.2;
+                
+                scene.add(selectionLabel);
+              };
+
+              // ========== 按钮状态追踪 ==========
+              // Pico 4 按钮映射:
+              // buttons[0] = Trigger
+              // buttons[1] = Grip/Squeeze  
+              // buttons[3] = Thumbstick press
+              // buttons[4] = A/X 按钮
+              // buttons[5] = B/Y 按钮
+              const buttonState = {
+                rightTrigger: false, rightGrip: false, rightA: false, rightB: false, rightStick: false,
+                leftTrigger: false, leftGrip: false, leftX: false, leftY: false, leftStick: false,
+                leftStickX: 0, leftStickY: 0,
+                rightStickX: 0, rightStickY: 0
+              };
+              const prevButtonState = { ...buttonState };
+              let lastSnapTurnTime = 0; // 防止连续转向
+              
+              // ========== 状态变量 ==========
+              let selectedObject: THREE.Object3D | null = null;
+              let hoveredObject: THREE.Object3D | null = null;
+              let modelTreeVisible = false;
+              let modelTreePanel: THREE.Mesh | null = null;
+              let modelTreeCanvas: HTMLCanvasElement | null = null;
+              let modelTreeTexture: THREE.CanvasTexture | null = null;
+              let treeItems: { name: string; depth: number; object: THREE.Object3D; y: number }[] = [];
+              let treeScrollOffset = 0;
+              const maxVisibleItems = 20;
+              
+              // 缩放状态
+              let isScaling = false;
+              let initialPinchDistance = 0;
+              let initialModelScale = new THREE.Vector3(1, 1, 1);
+              
+              // 传送状态
+              let teleportActive = false;
+              let accumulatedOffset = new THREE.Vector3(0, 0, 0);
+              
+              // ========== 射线检测 ==========
+              const raycaster = new THREE.Raycaster();
+              const tempMatrix = new THREE.Matrix4();
+              
+              const addOutlineHighlight = (obj: THREE.Object3D | null, color: number, namePrefix: string) => {
+                if (!obj) return;
+                obj.traverse((child) => {
+                  if (child instanceof THREE.Mesh && !child.name.startsWith('VR_')) {
+                    const edges = new THREE.EdgesGeometry(child.geometry, 15);
+                    const lineMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
+                    const wireframe = new THREE.LineSegments(edges, lineMat);
+                    wireframe.name = namePrefix;
+                    wireframe.scale.setScalar(1.002);
+                    child.add(wireframe);
+                  }
+                });
+              };
+              
+              const removeHighlight = (obj: THREE.Object3D | null, namePrefix: string) => {
+                if (!obj) return;
+                const toRemove: THREE.Object3D[] = [];
+                obj.traverse((child) => { if (child.name === namePrefix) toRemove.push(child); });
+                toRemove.forEach(c => c.parent?.remove(c));
+              };
+              
+              const getIntersected = (ctrl: THREE.XRTargetRaySpace): THREE.Object3D | null => {
+                tempMatrix.identity().extractRotation(ctrl.matrixWorld);
+                raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+                if (!modelRootRef.current) return null;
+                const intersects = raycaster.intersectObject(modelRootRef.current, true);
+                if (intersects.length > 0) {
+                  let obj: THREE.Object3D | null = intersects[0].object;
+                  while (obj && !obj.name && obj.parent && obj.parent !== scene) obj = obj.parent;
+                  return obj;
+                }
+                return null;
+              };
+              
+              const getTeleportTarget = (ctrl: THREE.XRTargetRaySpace): THREE.Vector3 | null => {
+                tempMatrix.identity().extractRotation(ctrl.matrixWorld);
+                raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+                const intersects = raycaster.intersectObject(teleportFloor);
+                return intersects.length > 0 ? intersects[0].point : null;
+              };
+              
+              const getPinchDistance = () => {
+                const pos1 = new THREE.Vector3();
+                const pos2 = new THREE.Vector3();
+                controller1.getWorldPosition(pos1);
+                controller2.getWorldPosition(pos2);
+                return pos1.distanceTo(pos2);
+              };
+              
+              // ========== 模型树 ==========
+              const buildTreeData = () => {
+                treeItems = [];
+                if (!modelRootRef.current) return;
+                const traverse = (obj: THREE.Object3D, depth: number) => {
+                  if (obj.name.startsWith('VR_') || obj.name.startsWith('XR_')) return;
+                  let displayName = obj.name;
+                  if (!displayName) {
+                    if (obj instanceof THREE.Mesh) displayName = `[Mesh_${treeItems.length}]`;
+                    else if (obj instanceof THREE.Group) displayName = `[Group_${treeItems.length}]`;
+                    else if (obj.children.length > 0) displayName = `[Node_${treeItems.length}]`;
+                    else return;
+                  }
+                  treeItems.push({ name: displayName, depth, object: obj, y: 0 });
+                  if (depth < 8) obj.children.forEach(child => traverse(child, depth + 1));
+                };
+                traverse(modelRootRef.current, 0);
+                if (treeItems.length > 100) treeItems = treeItems.slice(0, 100);
+              };
+              
+              const renderModelTree = () => {
+                if (!modelTreeCanvas) return;
+                const ctx = modelTreeCanvas.getContext('2d')!;
+                const w = 512, h = 700;
+                ctx.fillStyle = THEME.bg;
+                ctx.fillRect(0, 0, w, h);
+                ctx.strokeStyle = THEME.border;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(3, 3, w - 6, h - 6);
+                ctx.fillStyle = THEME.text;
+                ctx.font = 'bold 22px Arial';
+                ctx.fillText('📋 模型树 (' + treeItems.length + ')', 20, 38);
+                
+                const itemH = 28;
+                const startY = 60;
+                ctx.font = '14px monospace';
+                const visible = treeItems.slice(treeScrollOffset, treeScrollOffset + maxVisibleItems);
+                visible.forEach((item, i) => {
+                  const y = startY + i * itemH;
+                  item.y = y;
+                  const indent = Math.min(item.depth * 8, 60) + 15;
+                  if (selectedObject && item.object === selectedObject) {
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.3)';
+                    ctx.fillRect(10, y - 4, w - 20, itemH - 2);
+                    ctx.fillStyle = '#ff6600';
+                  } else {
+                    ctx.fillStyle = item.object.visible ? THEME.text : THEME.textMuted;
+                  }
+                  const prefix = item.depth > 0 ? '·'.repeat(Math.min(item.depth, 4)) + ' ' : '● ';
+                  const displayName = item.name.length > 28 ? item.name.substring(0, 25) + '...' : item.name;
+                  ctx.fillText(prefix + displayName, indent, y + 12);
+                });
+                
+                // 滚动按钮区域 (右侧)
+                if (treeItems.length > maxVisibleItems) {
+                  // 上滚动按钮
+                  ctx.fillStyle = treeScrollOffset > 0 ? THEME.primary : THEME.textMuted;
+                  ctx.fillRect(w - 50, 60, 40, 60);
+                  ctx.fillStyle = '#ffffff';
+                  ctx.font = 'bold 24px Arial';
+                  ctx.fillText('▲', w - 40, 100);
+                  
+                  // 下滚动按钮
+                  ctx.fillStyle = treeScrollOffset < treeItems.length - maxVisibleItems ? THEME.primary : THEME.textMuted;
+                  ctx.fillRect(w - 50, h - 80, 40, 60);
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillText('▼', w - 40, h - 40);
+                  
+                  // 页码显示
+                  ctx.fillStyle = THEME.textMuted;
+                  ctx.font = '11px Arial';
+                  ctx.fillText(`${treeScrollOffset + 1}-${Math.min(treeScrollOffset + maxVisibleItems, treeItems.length)} / ${treeItems.length}`, 20, h - 15);
+                }
+                if (modelTreeTexture) modelTreeTexture.needsUpdate = true;
+              };
+              
+              const createModelTreePanel = () => {
+                modelTreeCanvas = document.createElement('canvas');
+                modelTreeCanvas.width = 512;
+                modelTreeCanvas.height = 700;
+                buildTreeData();
+                modelTreeTexture = new THREE.CanvasTexture(modelTreeCanvas);
+                modelTreePanel = new THREE.Mesh(
+                  new THREE.PlaneGeometry(0.8, 1.1),
+                  new THREE.MeshBasicMaterial({ map: modelTreeTexture, transparent: true, side: THREE.DoubleSide })
+                );
+                modelTreePanel.position.set(-1.0, 1.3, -1.2);
+                modelTreePanel.rotation.y = 0.25;
+                modelTreePanel.name = 'VR_MODEL_TREE';
+                modelTreePanel.visible = false;
+                scene.add(modelTreePanel);
+                renderModelTree();
+              };
+              createModelTreePanel();
+              
+              // 切换模型树显示（跟随相机）
+              const toggleModelTree = () => {
+                if (!modelTreePanel) createModelTreePanel();
+                
+                modelTreeVisible = !modelTreeVisible;
+                if (modelTreePanel) {
+                  modelTreePanel.visible = modelTreeVisible;
+                  if (modelTreeVisible) {
+                    // 每次打开时重新构建数据
+                    buildTreeData();
+                    treeScrollOffset = 0;
+                    renderModelTree();
+                    
+                    if (cameraRef.current) {
+                      const camera = cameraRef.current;
+                      // 计算面前位置 (忽略 pitch)
+                      const forward = new THREE.Vector3(0, 0, -1);
+                      forward.applyQuaternion(camera.quaternion);
+                      forward.y = 0;
+                      forward.normalize();
+                      
+                      const targetPos = camera.position.clone().add(forward.multiplyScalar(0.8));
+                      modelTreePanel.position.copy(targetPos);
+                      modelTreePanel.lookAt(camera.position.x, modelTreePanel.position.y, camera.position.z);
+                    }
+                    console.log('[VR] Model tree: ON, items:', treeItems.length);
+                  } else {
+                    console.log('[VR] Model tree: OFF');
+                  }
+                }
+              };
+              
+              // ========== 帮助面板 ==========
+              const helpCanvas = document.createElement('canvas');
+              helpCanvas.width = 500;
+              helpCanvas.height = 380;
+              const hctx = helpCanvas.getContext('2d')!;
+              hctx.fillStyle = THEME.bg;
+              hctx.fillRect(0, 0, 500, 380);
+              hctx.strokeStyle = THEME.border;
+              hctx.lineWidth = 2;
+              hctx.strokeRect(3, 3, 494, 374);
+              hctx.fillStyle = THEME.text;
+              hctx.font = 'bold 24px Arial';
+              hctx.fillText('VR 操作说明', 20, 38);
+              hctx.font = '16px Arial';
+              hctx.fillStyle = '#60a5fa';
+              hctx.fillText('右手 Trigger → 选中模型部件', 20, 80);
+              hctx.fillStyle = '#a78bfa';
+              hctx.fillText('右手 A键 → 显示/隐藏模型树', 20, 110);
+              hctx.fillStyle = '#34d399';
+              hctx.fillText('右手 B键 → 开始/结束缩放模式', 20, 140);
+              hctx.fillStyle = '#fbbf24';
+              hctx.fillText('左手 Trigger → 瞄准传送位置', 20, 180);
+              hctx.fillStyle = '#f472b6';
+              hctx.fillText('左手 X键 → 确认传送', 20, 210);
+              hctx.fillStyle = '#fb923c';
+              hctx.fillText('左手 Y键 → 重置位置', 20, 240);
+              hctx.fillStyle = '#94a3b8';
+              hctx.fillText('左手摇杆上下 → 滚动模型树', 20, 280);
+              hctx.fillText('缩放模式下移动双手 → 放大/缩小', 20, 310);
+              hctx.fillStyle = '#64748b';
+              hctx.font = '13px Arial';
+              hctx.fillText('橙色边框 = 选中  |  黄色边框 = 悬停', 20, 355);
+              
+              const helpTexture = new THREE.CanvasTexture(helpCanvas);
+              const helpPanel = new THREE.Mesh(
+                new THREE.PlaneGeometry(1.0, 0.76),
+                new THREE.MeshBasicMaterial({ map: helpTexture, transparent: true, side: THREE.DoubleSide })
+              );
+              helpPanel.position.set(0, 2.0, -2.5);
+              helpPanel.name = 'VR_HELP_PANEL';
+              scene.add(helpPanel);
+              
+              // ========== 调试面板已隐藏（生产环境不显示）==========
+              // VR调试面板已移除以提升性能
+              
+              // ========== Gamepad轮询函数 (仅作为补充) ==========
+              const pollGamepadState = () => {
+                const session = currentRenderer.xr.getSession();
+                if (!session) return;
+                
+                // 只有当确实有 gamepad 数据时才更新状态
+                for (const source of session.inputSources) {
+                  if (!source.gamepad) continue;
+                  
+                  const gp = source.gamepad;
+                  
+                  if (source.handedness === 'right') {
+                    // 只读取 A/B 键和摇杆，Trigger/Grip 由事件驱动 (作为 fallback)
+                    if (gp.buttons[0]?.pressed) buttonState.rightTrigger = true;
+                    if (gp.buttons[1]?.pressed) buttonState.rightGrip = true;
+                    buttonState.rightStick = gp.buttons[3]?.pressed || false;
+                    buttonState.rightA = gp.buttons[4]?.pressed || false;
+                    buttonState.rightB = gp.buttons[5]?.pressed || false;
+                  } else if (source.handedness === 'left') {
+                    // Trigger/Grip fallback
+                    if (gp.buttons[0]?.pressed) buttonState.leftTrigger = true;
+                    if (gp.buttons[1]?.pressed) buttonState.leftGrip = true;
+                    buttonState.leftStick = gp.buttons[3]?.pressed || false;
+                    buttonState.leftX = gp.buttons[4]?.pressed || false;
+                    buttonState.leftY = gp.buttons[5]?.pressed || false;
+                    buttonState.leftStickX = gp.axes[2] || 0;
+                    buttonState.leftStickY = gp.axes[3] || 0;
+                  }
+                  
+                  // 右手摇杆也读取（用于转向）
+                  if (source.handedness === 'right' && gp.axes.length >= 4) {
+                    buttonState.rightStickX = gp.axes[2] || 0;
+                    buttonState.rightStickY = gp.axes[3] || 0;
+                  }
+                }
+              };
+              
+              // 检测按钮按下（边沿检测）
+              const wasJustPressed = (key: keyof typeof buttonState) => {
+                return buttonState[key] && !prevButtonState[key];
+              };
+              
+              // ========== 主循环 ==========
+              const vrUpdateLoop = () => {
+                if (!isXRPresentingRef.current) return;
+                
+                // 保存上一帧状态
+                Object.assign(prevButtonState, buttonState);
+                
+                // 尝试从 Gamepad API 更新额外按钮 (A/B/X/Y/Stick)
+                pollGamepadState();
+                
+                // === 右手 A键: 切换模型树 (备用) ===
+                if (wasJustPressed('rightA')) {
+                  toggleModelTree();
+                }
+                
+                // === 右手 B键: 重置位置 (新增) ===
+                if (wasJustPressed('rightB')) {
+                   accumulatedOffset.set(0, 0, 0);
+                   if (modelRootRef.current) modelRootRef.current.scale.set(1, 1, 1);
+                   const baseRefSpace = currentRenderer.xr.getReferenceSpace();
+                   if (baseRefSpace) {
+                     const transform = new XRRigidTransform({ x: 0, y: 0, z: 0, w: 1 });
+                     const newSpace = baseRefSpace.getOffsetReferenceSpace(transform);
+                     currentRenderer.xr.setReferenceSpace(newSpace);
+                   }
+                }
+
+                // === 摇杆转向 (Snap Turn) ===
+                const now = performance.now();
+                const stickX = buttonState.rightStickX || buttonState.leftStickX; // 任意一个摇杆
+                if (Math.abs(stickX) > 0.7 && now - lastSnapTurnTime > 300) { // 300ms 冷却
+                  lastSnapTurnTime = now;
+                  const turnAngle = stickX > 0 ? -Math.PI / 2 : Math.PI / 2; // 左推转右，右推转左
+                  
+                  const currentRefSpace = currentRenderer.xr.getReferenceSpace();
+                  if (currentRefSpace && cameraRef.current) {
+                    // 创建绕 Y 轴旋转的变换
+                    const cos = Math.cos(turnAngle);
+                    const sin = Math.sin(turnAngle);
+                    // XRRigidTransform 的 orientation 是四元数 [x, y, z, w]
+                    // 绕 Y 轴旋转 θ: [0, sin(θ/2), 0, cos(θ/2)]
+                    const halfAngle = turnAngle / 2;
+                    const transform = new XRRigidTransform(
+                      { x: 0, y: 0, z: 0, w: 1 },
+                      { x: 0, y: Math.sin(halfAngle), z: 0, w: Math.cos(halfAngle) }
+                    );
+                    const newSpace = currentRefSpace.getOffsetReferenceSpace(transform);
+                    currentRenderer.xr.setReferenceSpace(newSpace);
+                    console.log('[VR] Snap turn:', stickX > 0 ? '右转90°' : '左转90°');
+                  }
+                }
+                
+                // === 传送射线更新 (基于 teleportActive 标志) ===
+                // teleportActive 在 handleTriggerStart 中设置为 true (当未击中物体时)
+                // 在 handleTriggerEnd 中设置为 false
+                if (teleportActive && teleportController && !isScaling && !modelTreeVisible) {
+                  // 更新传送曲线和光圈
+                  teleportController.updateMatrixWorld(true);
+                  
+                  const startPos = teleportController.getWorldPosition(new THREE.Vector3());
+                  const dir = teleportController.getWorldDirection(new THREE.Vector3()).negate();
+                  
+                  // 计算抛物线
+                  const tempP = startPos.clone();
+                  const tempV = dir.clone().multiplyScalar(8);
+                  const grav = new THREE.Vector3(0, -9.8, 0);
+                  const positions = teleportCurve.geometry.attributes.position.array as Float32Array;
+                  
+                  let hitGround = false;
+                  let hitPoint = new THREE.Vector3();
+                  
+                  for (let i = 0; i < curveSegments; i++) {
+                    positions[i * 3] = tempP.x;
+                    positions[i * 3 + 1] = tempP.y;
+                    positions[i * 3 + 2] = tempP.z;
+                    
+                    tempV.addScaledVector(grav, 0.015);
+                    tempP.addScaledVector(tempV, 0.015);
+                    
+                    if (!hitGround && tempP.y <= 0) {
+                      hitGround = true;
+                      const prevY = positions[i * 3 + 1];
+                      const t = prevY / (prevY - tempP.y);
+                      hitPoint.set(
+                        positions[i * 3] + (tempP.x - positions[i * 3]) * t,
+                        0,
+                        positions[i * 3 + 2] + (tempP.z - positions[i * 3 + 2]) * t
+                      );
+                      for (let j = i; j < curveSegments; j++) {
+                        positions[j * 3] = hitPoint.x;
+                        positions[j * 3 + 1] = 0;
+                        positions[j * 3 + 2] = hitPoint.z;
+                      }
+                      break;
+                    }
+                  }
+                  
+                  (teleportCurve.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+                  teleportCurve.visible = true;
+                  
+                  // 设置光圈位置
+                  if (hitGround) {
+                    teleportIndicator.position.copy(hitPoint);
+                    teleportIndicator.visible = true;
+                  } else if (dir.y < -0.1) {
+                    const t = -startPos.y / dir.y;
+                    if (t > 0 && t < 20) {
+                      const target = startPos.clone().add(dir.clone().multiplyScalar(t));
+                      target.y = 0;
+                      teleportIndicator.position.copy(target);
+                      teleportIndicator.visible = true;
+                    }
+                  } else {
+                    const flatDir = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+                    const target = startPos.clone().add(flatDir.multiplyScalar(1.5));
+                    target.y = 0;
+                    teleportIndicator.position.copy(target);
+                    teleportIndicator.visible = true;
+                  }
+                }
+                
+                // === 缩放模式 ===
+                if (isScaling && modelRootRef.current && initialPinchDistance > 0) {
+                  const currentDist = getPinchDistance();
+                  const scaleFactor = currentDist / initialPinchDistance;
+                  modelRootRef.current.scale.copy(initialModelScale).multiplyScalar(scaleFactor);
+                  modelRootRef.current.scale.clampScalar(0.1, 10);
+                }
+                
+                // === 模型树滚动 (左手摇杆) ===
+                if (modelTreeVisible && Math.abs(buttonState.leftStickY) > 0.5) {
+                  const scrollSpeed = buttonState.leftStickY > 0 ? 1 : -1;
+                  treeScrollOffset = Math.max(0, Math.min(treeItems.length - maxVisibleItems, treeScrollOffset + scrollSpeed));
+                  renderModelTree();
+                }
+                
+                // === 悬停高亮 (使用 C1/C2 中激活射线的那个) ===
+                // 简单起见，两只手都做悬停检测? 还是只检测没在传送的那只手?
+                // 这里简单处理，两只手都可以高亮
+                const c1Hover = getIntersected(controller1);
+                const c2Hover = getIntersected(controller2);
+                const newHovered = c1Hover || c2Hover;
+                
+                if (newHovered !== hoveredObject) {
+                  removeHighlight(hoveredObject, 'VR_HOVER_HIGHLIGHT');
+                  hoveredObject = newHovered;
+                  if (hoveredObject && hoveredObject !== selectedObject) {
+                    addOutlineHighlight(hoveredObject, THEME.hover, 'VR_HOVER_HIGHLIGHT');
+                  }
+                }
+                
+                requestAnimationFrame(vrUpdateLoop);
+              };
+              vrUpdateLoop();
+              
+              console.log('[VR] 交互系统启动完成!');
+            }
+            
+            onXRSessionStart?.();
+          });
+          
+          renderer.xr.addEventListener('sessionend', () => {
+            console.log('[PublicThreeDViewer] XR Session Ended!');
+            isXRPresentingRef.current = false;
+            
+            // 移除VR相关对象和高亮
+            if (sceneRef.current) {
+              const toRemove: THREE.Object3D[] = [];
+              sceneRef.current.traverse((child) => {
+                if (child.name.startsWith('VR_') || 
+                    child.name.startsWith('XR_') || 
+                    child.name === 'VR_SELECT_HIGHLIGHT' ||
+                    child.name === 'VR_HOVER_HIGHLIGHT') {
+                  toRemove.push(child);
+                }
+              });
+              toRemove.forEach(obj => {
+                if (obj.parent) {
+                  obj.parent.remove(obj);
+                }
+              });
+            }
+            
+            onXRSessionEnd?.();
+          });
+        } catch (xrError) {
+          console.warn('WebXR initialization skipped:', xrError);
+        }
         
         // 初始化PMREMGenerator用于HDR环境贴图
         const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -196,29 +1273,34 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         controls.dampingFactor = 0.05;
         controlsRef.current = controls;
 
-        // 将渲染器添加到DOM
-        containerRef.current.appendChild(renderer.domElement);
-
-        // 创建后处理
-        const composer = new EffectComposer(renderer);
-        const renderPass = new RenderPass(scene, camera);
-        composer.addPass(renderPass);
-        
-        const outlinePass = new OutlinePass(new THREE.Vector2(width, height), scene, camera);
-        outlinePass.edgeStrength = 5;        // 增强边缘强度
-        outlinePass.edgeGlow = 1.0;          // 增强发光效果
-        outlinePass.edgeThickness = 2;       // 增加边缘厚度
-        outlinePass.pulsePeriod = 1.5;       // 加快呼吸频率（更明显）
-        outlinePass.visibleEdgeColor.set('#ff6600');  // 橙色
-        outlinePass.hiddenEdgeColor.set('#ff6600');   // 橙色
-        composer.addPass(outlinePass);
-        
-        composerRef.current = composer;
-        outlineRef.current = outlinePass;
+        // 创建后处理（可能会失败，不影响基本渲染）
+        try {
+          const composer = new EffectComposer(renderer);
+          const renderPass = new RenderPass(scene, camera);
+          composer.addPass(renderPass);
+          
+          const outlinePass = new OutlinePass(new THREE.Vector2(width, height), scene, camera);
+          outlinePass.edgeStrength = 5;
+          outlinePass.edgeGlow = 1.0;
+          outlinePass.edgeThickness = 2;
+          outlinePass.pulsePeriod = 1.5;
+          outlinePass.visibleEdgeColor.set('#ff6600');
+          outlinePass.hiddenEdgeColor.set('#ff6600');
+          composer.addPass(outlinePass);
+          
+          composerRef.current = composer;
+          outlineRef.current = outlinePass;
+        } catch (postError) {
+          // 后处理效果初始化失败，使用基础渲染
+        }
 
       } catch (error) {
-        console.error('WebGL渲染器创建失败:', error);
-        throw new Error('WebGL渲染器创建失败');
+        const errorDetail = error instanceof Error ? error.message : String(error);
+        
+        // 设置详细错误信息用于显示
+        setLoadError(`创建失败: ${errorDetail}`);
+        setWebglSupported(false);
+        return;
       }
 
       // 光照将在applySettings中根据三维课件编辑器的设置应用
@@ -234,18 +1316,11 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 渲染循环
     const startRenderLoop = () => {
-      const animate = () => {
-        // 模型自转 - 已取消
-        // if (autoRotationRef.current && modelRootRef.current) {
-        //   modelRootRef.current.rotation.y += rotationSpeedRef.current;
-        // }
-        
+      const animate = (time?: number, frame?: XRFrame) => {
         // 动画混合器更新
         if (mixerRef.current) {
           mixerRef.current.update(0.01);
         }
-        
-        // 标注使用固定大小，无需更新缩放
         
         // 标注位置更新（跟随模型自转）
         updateAnnotationPositions();
@@ -255,21 +1330,41 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           cameraAnimationRef.current.update();
         }
         
-        // 控制器更新
-        if (controlsRef.current) {
+        // 控制器更新（仅在非XR模式下）
+        if (controlsRef.current && !isXRPresentingRef.current) {
           controlsRef.current.update();
         }
         
-        // 渲染场景
-        if (composerRef.current) {
-          composerRef.current.render();
-        } else if (rendererRef.current && sceneRef.current && cameraRef.current) {
-          rendererRef.current.render(sceneRef.current, cameraRef.current);
+        // 更新高斯泼溅查看器（对WebXR至关重要）
+        if (splatViewerRef.current && splatViewerRef.current.update) {
+          try {
+            splatViewerRef.current.update();
+          } catch (e) {
+            // 静默处理更新错误
+          }
         }
         
-        requestAnimationFrame(animate);
+        // 渲染场景
+        // 在XR模式下或高斯泼溅模式下，使用基础渲染
+        // OutlinePass等后处理效果会严重影响高斯泼溅的渲染性能
+        if (isXRPresentingRef.current || splatViewerRef.current) {
+          if (rendererRef.current && sceneRef.current && cameraRef.current) {
+            rendererRef.current.render(sceneRef.current, cameraRef.current);
+          }
+        } else {
+          if (composerRef.current) {
+            composerRef.current.render();
+          } else if (rendererRef.current && sceneRef.current && cameraRef.current) {
+            rendererRef.current.render(sceneRef.current, cameraRef.current);
+          }
+        }
       };
-      animate();
+      
+      // 使用setAnimationLoop支持WebXR
+      // 在XR会话中，Three.js会自动使用XR帧率
+      if (rendererRef.current) {
+        rendererRef.current.setAnimationLoop(animate);
+      }
     };
 
     // 应用光照设置（从三维课件编辑器读取）
@@ -331,7 +1426,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         sceneRef.current.add(hemisphereLight);
       }
 
-      console.log('✅ 已应用三维课件编辑器的光照设置:', lighting);
     };
 
 
@@ -350,12 +1444,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         if (!targetObject) {
           targetObject = findNodeBySmartMatch(targetKey);
         }
-        if (!targetObject) {
-          console.warn('🔴 标注更新：找不到目标对象', targetKey);
-          return;
-        }
-        
-        // 标注位置更新（静默）
+        if (!targetObject) return;
         
         try {
           // 重新计算标注点的世界坐标
@@ -454,7 +1543,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         if (magic === 'glTF') {
           const version = new DataView(arrayBuffer, 4, 4).getUint32(0, true);
           if (version === 2) {
-            console.log('✅ 检测到 GLB 格式 (glTF 2.0)');
             return 'glb';
           }
         }
@@ -464,7 +1552,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       if (bytes.length >= 18) {
         const header = String.fromCharCode(...bytes.slice(0, 18));
         if (header.includes('Kaydara FBX')) {
-          console.log('✅ 检测到 FBX 格式');
           return 'fbx';
         }
       }
@@ -474,7 +1561,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         try {
           const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(0, 100));
           if (/^(#|v |vn |vt |f |o |g |mtllib |usemtl )/m.test(text)) {
-            console.log('✅ 检测到 OBJ 格式');
             return 'obj';
           }
         } catch {
@@ -482,7 +1568,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         }
       }
       
-      console.log('❌ 无法识别文件格式');
       return '';
     };
 
@@ -494,18 +1579,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
       try {
         const manager = new THREE.LoadingManager();
-        // 检测是否为公网域名，如果是则使用相对路径
-        let baseUrl = '';
-        if (typeof window !== 'undefined') {
-          const hostname = window.location.hostname;
-          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
-            baseUrl = '';
-          } else {
-            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
-          }
-        } else {
-          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-        }
+        // 使用当前域名作为基础URL（浏览器端始终使用 window.location.origin）
+        // 不使用 NEXT_PUBLIC_API_URL，因为那可能是 Docker 内部地址（如 server:4000）
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
         let finalUrl = modelUrl;
         let useProxy = false;
         
@@ -535,7 +1611,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         // 从响应头 Content-Disposition 中提取文件名和扩展名
         let fileExt = '';
         const contentDisposition = response.headers.get('Content-Disposition');
-        console.log('📋 Content-Disposition 响应头:', contentDisposition);
         
         if (contentDisposition) {
           // 解析 Content-Disposition: inline; filename="model.glb" 或 filename*=UTF-8''model.glb
@@ -551,7 +1626,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           
           if (filename) {
             fileExt = filename.toLowerCase().split('.').pop() || '';
-            console.log('✅ 从 Content-Disposition 提取文件扩展名:', fileExt, '文件名:', filename);
           }
         }
         
@@ -562,7 +1636,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           const lastPart = urlParts[urlParts.length - 1];
           if (lastPart && lastPart.includes('.')) {
             fileExt = lastPart.toLowerCase().split('.').pop() || '';
-            console.log('⚠️ 从 URL 路径提取文件扩展名:', fileExt);
           }
         }
 
@@ -571,7 +1644,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         // 最后的回退：尝试从文件二进制头部识别格式
         if (!fileExt) {
           fileExt = detectFileFormat(arrayBuffer);
-          console.log('🔍 从文件头部识别格式:', fileExt || '未识别');
           
           if (!fileExt) {
             throw new Error('无法识别文件格式。请确保文件是有效的 GLB、FBX 或 OBJ 格式。');
@@ -690,8 +1762,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       });
       
       nodeMapRef.current = map;
-      console.log('节点映射构建完成，总数:', map.size);
-      console.log('样例节点键:', Array.from(map.keys()).slice(0, 10));
     };
 
     // 获取对象名称路径 - 完全复制编辑器逻辑
@@ -733,8 +1803,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const createAnnotations = (annotations: any[]) => {
       if (!sceneRef.current) return;
 
-      console.log('创建标注:', annotations.length, '个');
-
       // 清除旧标注
       annotationsRef.current.forEach(annotation => {
         sceneRef.current!.remove(annotation);
@@ -742,9 +1810,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       annotationsRef.current = [];
 
       // 创建新标注
-      annotations.forEach((annotation, index) => {
-        console.log(`处理标注 ${index + 1}:`, annotation.title, 'nodeKey:', annotation.nodeKey);
-        
+      annotations.forEach((annotation) => {
         // 尝试多种nodeKey匹配方式
         let targetObject = nodeMapRef.current.get(annotation.nodeKey);
         
@@ -754,22 +1820,15 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         }
         
         if (targetObject) {
-          console.log('为对象创建标注:', targetObject.name || targetObject.uuid);
           const annotationGroup = createAnnotationWithOffset(annotation, targetObject);
           if (annotationGroup) {
             annotationGroup.userData.annotationId = annotation.id;
             annotationGroup.visible = false; // 默认隐藏，等待显示动作触发
             sceneRef.current!.add(annotationGroup);
             annotationsRef.current.push(annotationGroup);
-            console.log('标注创建成功（默认隐藏）:', annotation.title);
           }
-        } else {
-          console.warn('未找到标注目标对象:', annotation.nodeKey);
-          console.log('可用nodeKey:', Array.from(nodeMapRef.current.keys()).slice(0, 10));
         }
       });
-      
-      console.log('标注创建完成，总计:', annotationsRef.current.length, '个');
     };
 
     // 创建带偏移的标注 - 完全复制编辑器逻辑
@@ -806,7 +1865,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           anchorWorld = center.clone().add(
             new THREE.Vector3(0, size.y * 0.6, 0) // 向上偏移
           );
-          console.warn('标注缺少偏移信息，使用默认固定偏移:', annotation.id);
         }
 
         // 2. 计算标签位置（基于完整的label.offset逻辑）
@@ -851,7 +1909,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             anchorWorld.y + 0.1,
             anchorWorld.z + 0.0
           );
-          console.warn('标注缺少偏移信息，使用默认固定偏移:', annotation.id);
         }
 
         // 创建标注组
@@ -892,16 +1949,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           annotationGroup.add(labelSprite);
         }
 
-        console.log('标注创建成功:', {
-          id: annotation.id,
-          title: annotation.title,
-          anchorWorld: anchorWorld.toArray(),
-          labelWorld: labelWorld.toArray()
-        });
-
         return annotationGroup;
       } catch (error) {
-        console.error('创建标注失败:', error);
         return null;
       }
     };
@@ -989,7 +2038,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         
         return sprite;
       } catch (error) {
-        console.error('创建标签精灵失败:', error);
         return null;
       }
     };
@@ -1029,11 +2077,179 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       // 如果没有背景设置，使用默认HDR背景
       const backgroundType = settings?.backgroundType || 'panorama';
       const backgroundPanorama = settings?.backgroundPanorama || '/360background_7.hdr';
+      const backgroundSplat = settings?.backgroundSplat || '/garden.splat';
       const bgPanoramaBrightness = settings?.backgroundPanoramaBrightness || 1.0;
       const useHDREnvironment = settings?.useHDREnvironment !== undefined ? settings.useHDREnvironment : true;
 
-      // 应用HDR全景背景
-      if (backgroundType === 'panorama' && backgroundPanorama) {
+      // 在高斯泼溅模式下隐藏阴影平面（性能优化）
+      if (shadowPlaneRef.current) {
+        shadowPlaneRef.current.visible = backgroundType !== 'splat';
+      }
+
+      // 清理函数：移除旧的高斯泼溅查看器
+      const cleanupSplatViewer = () => {
+        if (splatViewerRef.current) {
+          try {
+            scene.remove(splatViewerRef.current);
+            if (splatViewerRef.current.dispose) {
+              splatViewerRef.current.dispose();
+            }
+          } catch (e) {
+            console.warn('清理高斯泼溅查看器时出错:', e);
+          }
+          splatViewerRef.current = null;
+        }
+      };
+
+      // 应用高斯泼溅背景
+      if (backgroundType === 'splat' && backgroundSplat) {
+        // 【修复】处理 world 场景路径：/world/world_1 -> /world/world_1/world_1.spz
+        const isWorldScene = backgroundSplat.startsWith('/world/') && !backgroundSplat.endsWith('.spz') && !backgroundSplat.endsWith('.splat');
+        const splatPath = isWorldScene 
+          ? `${backgroundSplat}/${backgroundSplat.split('/').pop()}.spz`
+          : backgroundSplat;
+        const hdrPath = isWorldScene 
+          ? `${backgroundSplat}/${backgroundSplat.split('/').pop()}.hdr`
+          : backgroundPanorama;
+        
+        console.log('🌌 [PublicThreeDViewer/Splat] 开始加载高斯泼溅模型:', { originalPath: backgroundSplat, splatPath, hdrPath, isWorldScene });
+        setSplatLoading(true);
+        
+        // 移除背景球体
+        const oldSphere = scene.getObjectByName('__background_sphere__');
+        if (oldSphere) scene.remove(oldSphere);
+        scene.background = null;
+        
+        // 【优化】在高斯泼溅模式下，仍然加载HDR作为环境光照（提升材质反射效果）
+        // 使用设置中的全景图或默认HDR作为环境光照源
+        const envHDR = hdrPath || '/360background_7.hdr';
+        if (envHDR.toLowerCase().endsWith('.hdr') || envHDR.toLowerCase().endsWith('.exr')) {
+          const envLoader = envHDR.toLowerCase().endsWith('.hdr') ? new RGBELoader() : new EXRLoader();
+          envLoader.load(envHDR, (texture) => {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            const pmremGenerator = pmremGeneratorRef.current;
+            if (pmremGenerator) {
+              const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+              environmentMapRef.current = envMap;
+              scene.environment = envMap; // 只设置环境光照，不设置背景
+              updateMaterialsEnvMap(envMap, useHDREnvironment ? bgPanoramaBrightness : 0.5);
+              console.log('✅ [PublicThreeDViewer/Splat] HDR环境光照已应用（用于材质反射）:', envHDR);
+            }
+          }, undefined, (error) => {
+            console.warn('⚠️ [PublicThreeDViewer/Splat] 加载HDR环境光照失败:', error);
+          });
+        }
+        
+        // 移动端性能检测
+        const isMobile = isMobileDevice();
+        const isLowEnd = isLowEndMobile();
+        
+        // 低端移动设备（如 iPhone X）跳过高斯模型，使用HDR背景代替
+        if (isLowEnd) {
+          console.warn('⚠️ [PublicThreeDViewer/Splat] 检测到低端移动设备，跳过高斯模型加载以避免崩溃');
+          setSplatLoading(false);
+          // 使用HDR全景图作为背景替代
+          if (envHDR) {
+            const envLoader = new RGBELoader();
+            envLoader.load(envHDR, (texture) => {
+              texture.mapping = THREE.EquirectangularReflectionMapping;
+              scene.background = texture;
+              scene.environment = texture;
+              console.log('✅ [PublicThreeDViewer/Splat] 低端设备使用HDR全景图替代高斯模型');
+            });
+          } else if (settings.background) {
+            scene.background = new THREE.Color(settings.background);
+          }
+          return;
+        }
+        
+        // 动态导入高斯泼溅库
+        import('@mkkellogg/gaussian-splats-3d').then((GaussianSplats3D) => {
+          // 清理旧的查看器
+          cleanupSplatViewer();
+          
+          try {
+            // 移动端优化配置
+            const viewerConfig: any = {
+              sharedMemoryForWorkers: false,
+              dynamicScene: true,
+              selfDrivenMode: false // 我们自己控制渲染，这对WebXR很重要
+            };
+            
+            // 移动端额外优化
+            if (isMobile) {
+              viewerConfig.gpuAcceleratedSort = false; // 禁用GPU排序，减少内存占用
+              viewerConfig.halfPrecisionCovariancesOnGPU = true; // 使用半精度，减少内存
+              viewerConfig.integerBasedSort = true; // 使用整数排序，更快
+              console.log('📱 [PublicThreeDViewer/Splat] 移动端优化已启用');
+            }
+            
+            // 创建DropInViewer（WebXR兼容）
+            const viewer = new GaussianSplats3D.DropInViewer(viewerConfig);
+            
+            splatViewerRef.current = viewer;
+            scene.add(viewer);
+            
+            // 获取变换参数
+            const splatTransform = settings?.splatTransform || {};
+            const splatPos = splatTransform.position || { x: 0, y: 0, z: 0 };
+            const splatRot = splatTransform.rotation || { x: 0, y: 0, z: 0 };
+            const splatScl = splatTransform.scale !== undefined ? splatTransform.scale : 1.0;
+            
+            // 将角度转换为四元数
+            const euler = new THREE.Euler(
+              splatRot.x * Math.PI / 180,
+              splatRot.y * Math.PI / 180,
+              splatRot.z * Math.PI / 180,
+              'XYZ'
+            );
+            const quaternion = new THREE.Quaternion().setFromEuler(euler);
+            
+            // 移动端降低质量参数
+            const splatConfig: any = {
+              showLoadingUI: false,
+              splatAlphaRemovalThreshold: isMobile ? 10 : 5, // 移动端更积极地移除透明点
+              position: [splatPos.x, splatPos.y, splatPos.z],
+              rotation: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+              scale: [splatScl, splatScl, splatScl]
+            };
+            
+            // 加载splat文件（使用转换后的路径）
+            viewer.addSplatScene(splatPath, splatConfig).then(() => {
+              console.log('✅ [PublicThreeDViewer/Splat] 高斯泼溅模型加载成功（支持WebXR）', { splatPath, position: splatPos, rotation: splatRot, scale: splatScl, isMobile });
+              setSplatLoading(false);
+            }).catch((error: any) => {
+              console.error('❌ [PublicThreeDViewer/Splat] 加载高斯泼溅模型失败:', error);
+              setSplatLoading(false);
+              // 加载失败时尝试使用HDR背景
+              if (envHDR) {
+                const envLoader = new RGBELoader();
+                envLoader.load(envHDR, (texture) => {
+                  texture.mapping = THREE.EquirectangularReflectionMapping;
+                  scene.background = texture;
+                  console.log('✅ [PublicThreeDViewer/Splat] 高斯加载失败，使用HDR背景替代');
+                });
+              } else if (settings.background) {
+                scene.background = new THREE.Color(settings.background);
+              }
+            });
+          } catch (error) {
+            console.error('❌ [PublicThreeDViewer/Splat] 创建高斯泼溅查看器失败:', error);
+            setSplatLoading(false);
+            if (settings.background) {
+              scene.background = new THREE.Color(settings.background);
+            }
+          }
+        }).catch((error) => {
+          console.error('❌ [PublicThreeDViewer/Splat] 导入高斯泼溅库失败:', error);
+          setSplatLoading(false);
+          if (settings.background) {
+            scene.background = new THREE.Color(settings.background);
+          }
+        });
+      } else if (backgroundType === 'panorama' && backgroundPanorama) {
+        // 清理高斯泼溅查看器
+        cleanupSplatViewer();
         let bgPanorama = backgroundPanorama;
         
         // 处理相对路径（如 /360background_7.hdr）
@@ -1050,11 +2266,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         if (isHDR || isEXR) {
           // 根据文件类型选择加载器
           const loader = isHDR ? new RGBELoader() : new EXRLoader();
-          console.log(`🌐 开始加载${isHDR ? 'HDR' : 'EXR'}全景图:`, bgPanorama);
           loader.load(
             bgPanorama,
             (texture) => {
-              console.log(`✅ ${isHDR ? 'HDR' : 'EXR'}全景图加载成功:`, bgPanorama);
               texture.mapping = THREE.EquirectangularReflectionMapping;
               backgroundTextureRef.current = texture;
               
@@ -1125,18 +2339,14 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
               sphere.frustumCulled = false;
               sphere.position.set(0, 0, 0);
               
-              console.log(`🌐 创建HDR背景球体: 半径=${sphereRadius.toFixed(2)}, 相机距离=${cameraDistance.toFixed(2)}`);
-              
               // 移除旧的背景球体
               const oldSphere = scene.getObjectByName('__background_sphere__');
               if (oldSphere) {
                 scene.remove(oldSphere);
-                console.log('🗑️ 移除旧的HDR背景球体');
               }
               
               scene.add(sphere);
               scene.background = null; // 清除默认背景
-              console.log('✅ HDR背景球体已添加到场景');
               
               // 强制重新渲染
               if (composerRef.current) {
@@ -1147,7 +2357,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             },
             undefined,
             (error) => {
-              console.error(`❌ 加载${isHDR ? 'HDR' : 'EXR'}全景图失败:`, error);
               // 失败时使用默认背景
               if (settings.background) {
                 scene.background = new THREE.Color(settings.background);
@@ -1157,11 +2366,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         } else {
           // 加载普通全景图
           const loader = new THREE.TextureLoader();
-          console.log('🖼️ 开始加载普通全景图:', bgPanorama);
           loader.load(
             bgPanorama,
             (texture) => {
-              console.log('✅ 普通全景图加载成功:', bgPanorama);
               texture.mapping = THREE.EquirectangularReflectionMapping;
               backgroundTextureRef.current = texture;
               
@@ -1235,7 +2442,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             },
             undefined,
             (error) => {
-              console.error('❌ 加载普通全景图失败:', error);
               if (settings.background) {
                 scene.background = new THREE.Color(settings.background);
               }
@@ -1243,10 +2449,23 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           );
         }
       } else {
+        // 纯色背景
         // 移除背景球体，使用默认背景
         const oldSphere = scene.getObjectByName('__background_sphere__');
         if (oldSphere) {
           scene.remove(oldSphere);
+        }
+        // 清理高斯泼溅查看器
+        if (splatViewerRef.current) {
+          try {
+            scene.remove(splatViewerRef.current);
+            if (splatViewerRef.current.dispose) {
+              splatViewerRef.current.dispose();
+            }
+          } catch (e) {
+            console.warn('清理高斯泼溅查看器时出错:', e);
+          }
+          splatViewerRef.current = null;
         }
         if (settings.background) {
           scene.background = new THREE.Color(settings.background);
@@ -1348,7 +2567,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         }
       }
       
-      console.warn('⚠️ 节点未找到:', nodeKey);
       return undefined;
     };
 
@@ -1415,42 +2633,9 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       }
     };
 
-    // 清除自发光高亮（与编辑器完全一致）
-    const clearEmissiveHighlight = () => {
-      for (const m of Array.from(highlightedMatsRef.current)) {
-        const backup = materialBackupRef.current.get(m);
-        if (backup) {
-          if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
-          if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
-        }
-      }
-      highlightedMatsRef.current.clear();
-    };
+    // 【已废弃】自发光高亮相关代码已删除，现在统一使用边界框高亮（高斯泼溅模式）或轮廓高亮（普通模式）
 
-    // 应用自发光高亮（与编辑器完全一致）
-    const applyEmissiveHighlight = (obj: THREE.Object3D) => {
-      clearEmissiveHighlight();
-      obj.traverse((o: THREE.Object3D) => {
-        const mesh = o as any;
-        if (mesh.material) {
-          const materials: any[] = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          materials.forEach((mat: any) => {
-            const backup = { 
-              emissive: (mat.emissive ? mat.emissive.clone() : undefined), 
-              emissiveIntensity: mat.emissiveIntensity 
-            };
-            materialBackupRef.current.set(mat, backup);
-            try {
-              if (mat.emissive) mat.emissive.set(0x22d3ee);
-              if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
-              highlightedMatsRef.current.add(mat);
-            } catch {}
-          });
-        }
-      });
-    };
-
-    // 高亮节点 - 只使用橙色边框高亮（带呼吸效果）
+    // 高亮节点 - 在高斯泼溅模式下使用轻量级边界框，否则使用橙色边框高亮
     const highlightNode = (nodeKey: string, highlight: boolean) => {
       // console.log('🔆 设置高亮:', nodeKey, highlight);
       
@@ -1466,13 +2651,28 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
       // console.log('🎯 找到目标对象:', targetObject.name || targetObject.uuid);
 
+      // 清除之前的边界框高亮
+      if (boxHelperRef.current && sceneRef.current) {
+        sceneRef.current.remove(boxHelperRef.current);
+        boxHelperRef.current.dispose();
+        boxHelperRef.current = null;
+      }
+
       if (highlight) {
-        // 只使用橙色边框轮廓高亮（不改变材质颜色）
-        if (outlineRef.current) {
-          outlineRef.current.selectedObjects = [targetObject];
+        // 在高斯泼溅模式下使用轻量级边界框高亮（不修改材质，零性能开销）
+        if (splatViewerRef.current) {
+          const boxHelper = new THREE.BoxHelper(targetObject, 0xff6600); // 橙色边界框
+          boxHelper.name = '__highlight_box__';
+          sceneRef.current?.add(boxHelper);
+          boxHelperRef.current = boxHelper;
+        } else {
+          // 普通模式使用橙色边框轮廓高亮
+          if (outlineRef.current) {
+            outlineRef.current.selectedObjects = [targetObject];
+          }
         }
         
-        // console.log('✅ 橙色边框高亮设置完成');
+        // console.log('✅ 高亮设置完成');
       } else {
         // 清除高亮
         // console.log('🧹 清除高亮');
@@ -1525,7 +2725,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 设置节点显隐
     const setNodeVisibility = (nodeKey: string, visible: boolean) => {
-      console.log('设置节点显隐:', nodeKey, visible);
       let targetObject = nodeMapRef.current.get(nodeKey);
       
       // 如果直接找不到，尝试智能匹配（优先精确匹配）
@@ -1538,7 +2737,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
             for (const [key, obj] of nodeMapRef.current) {
               if (key.endsWith('/' + targetName) || key === targetName) {
                 targetObject = obj;
-                console.log('通过路径匹配找到:', key);
                 break;
               }
             }
@@ -1550,24 +2748,19 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           for (const [key, obj] of nodeMapRef.current) {
             if (key === nodeKey || key.endsWith('/' + nodeKey) || nodeKey.endsWith('/' + key)) {
               targetObject = obj;
-              console.log('通过模糊匹配找到:', key);
               break;
             }
           }
         }
       }
       
-      if (!targetObject) {
-        console.warn('未找到要设置显隐的节点:', nodeKey);
-        return;
-      }
+      if (!targetObject) return;
 
       // 记录初始可见性状态（只在第一次设置时记录）
       if (!hiddenObjectsRef.current.has(nodeKey)) {
         hiddenObjectsRef.current.set(nodeKey, targetObject.visible);
       }
 
-      console.log('设置对象显隐:', targetObject.name || targetObject.uuid, visible);
       // 只设置目标对象本身，不递归设置子对象（避免隐藏所有对象）
       targetObject.visible = visible;
     };
@@ -1599,7 +2792,12 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     const resetAllStates = () => {
       // console.log('重置所有状态');
       
-      // 清除高亮
+      // 清除高亮（边界框或轮廓）
+      if (boxHelperRef.current && sceneRef.current) {
+        sceneRef.current.remove(boxHelperRef.current);
+        boxHelperRef.current.dispose();
+        boxHelperRef.current = null;
+      }
       if (outlineRef.current) {
         outlineRef.current.selectedObjects = [];
       }
@@ -1633,17 +2831,12 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
 
     // 播放动画 - 增强智能匹配，返回动画持续时间（秒）
     const playAnimation = (animationId: string, startTime?: number, endTime?: number): number => {
-      console.log('播放动画:', animationId, 'startTime:', startTime, 'endTime:', endTime);
-      
       if (!mixerRef.current || !animationsRef.current.length) {
-        console.warn('没有可用的动画');
         return 3; // 默认3秒
       }
 
       // 停止所有当前动画
       mixerRef.current.stopAllAction();
-
-      console.log('可用动画:', animationsRef.current.map(clip => ({ name: clip.name, uuid: clip.uuid })));
 
       // 历史UUID到动画名称的映射（修复旧版本保存的UUID问题）
       const uuidToNameMap: { [key: string]: string } = {
@@ -1654,7 +2847,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       let searchId = animationId;
       if (uuidToNameMap[animationId]) {
         searchId = uuidToNameMap[animationId];
-        console.log('历史UUID映射:', animationId, '->', searchId);
       }
       
       // 首先尝试从 coursewareData.animations 中查找对应的动画名称
@@ -1665,7 +2857,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         );
         if (coursewareAnim?.name) {
           animationNameFromData = coursewareAnim.name;
-          console.log('从课件数据中找到动画名称:', animationNameFromData);
         }
       }
       
@@ -1676,53 +2867,39 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       
       // 1. 精确名称匹配（优先，因为用户选择的是名称）
       let targetAnimation = animationsRef.current.find(clip => clip.name === searchId || clip.name === animationId);
-      if (targetAnimation) {
-        console.log('名称精确匹配成功:', targetAnimation.name);
-      } else {
+      if (!targetAnimation) {
         // 2. 精确UUID匹配
         targetAnimation = animationsRef.current.find(clip => clip.uuid === searchId || clip.uuid === animationId);
-        if (targetAnimation) {
-          console.log('UUID精确匹配成功:', targetAnimation.name);
-        } else {
-          // 3. 部分名称匹配（包含关系）
+      }
+      if (!targetAnimation) {
+        // 3. 部分名称匹配（包含关系）
+        targetAnimation = animationsRef.current.find(clip => 
+          clip.name.includes(searchId) || searchId.includes(clip.name) ||
+          clip.name.includes(animationId) || animationId.includes(clip.name)
+        );
+      }
+      if (!targetAnimation) {
+        // 4. 模糊名称匹配（根据关键词）
+        const lowerAnimationId = searchId.toLowerCase();
+        
+        // 根据关键词尝试匹配已知动画类型
+        if (lowerAnimationId.includes('71361f28') || lowerAnimationId.includes('拆装') || lowerAnimationId.includes('assembly')) {
+          // 查找拆装相关动画
           targetAnimation = animationsRef.current.find(clip => 
-            clip.name.includes(searchId) || searchId.includes(clip.name) ||
-            clip.name.includes(animationId) || animationId.includes(clip.name)
+            clip.name.includes('拆装') || clip.name.includes('assembly') || clip.name.includes('安装')
           );
-          if (targetAnimation) {
-            console.log('部分名称匹配成功:', targetAnimation.name);
-          } else {
-            // 4. 模糊名称匹配（根据关键词）
-            const lowerAnimationId = searchId.toLowerCase();
-            
-            // 根据关键词尝试匹配已知动画类型
-            if (lowerAnimationId.includes('71361f28') || lowerAnimationId.includes('拆装') || lowerAnimationId.includes('assembly')) {
-              // 查找拆装相关动画
-              targetAnimation = animationsRef.current.find(clip => 
-                clip.name.includes('拆装') || clip.name.includes('assembly') || clip.name.includes('安装')
-              );
-              if (targetAnimation) {
-                console.log('关键词匹配成功（拆装）:', targetAnimation.name);
-              }
-            }
-            
-            if (!targetAnimation && (lowerAnimationId.includes('旋转') || lowerAnimationId.includes('rotate'))) {
-              // 查找旋转相关动画
-              targetAnimation = animationsRef.current.find(clip => 
-                clip.name.includes('旋转') || clip.name.includes('rotate') || clip.name.includes('转动')
-              );
-              if (targetAnimation) {
-                console.log('关键词匹配成功（旋转）:', targetAnimation.name);
-              }
-            }
-            
-            // 5. 如果还没找到，不要回退到第一个动画，而是返回错误
-            if (!targetAnimation) {
-              console.warn('⚠️ 未找到匹配的动画:', animationId, 'searchId:', searchId);
-              console.log('可用动画列表:', animationsRef.current.map(clip => clip.name));
-              return 3; // 返回默认3秒，但不播放动画
-            }
-          }
+        }
+        
+        if (!targetAnimation && (lowerAnimationId.includes('旋转') || lowerAnimationId.includes('rotate'))) {
+          // 查找旋转相关动画
+          targetAnimation = animationsRef.current.find(clip => 
+            clip.name.includes('旋转') || clip.name.includes('rotate') || clip.name.includes('转动')
+          );
+        }
+        
+        // 5. 如果还没找到，返回默认值
+        if (!targetAnimation) {
+          return 3; // 返回默认3秒，但不播放动画
         }
       }
 
@@ -1742,17 +2919,10 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         }
       }
       
-      console.log('找到课件动画数据:', coursewareAnimation ? {
-        id: coursewareAnimation.id,
-        name: coursewareAnimation.name,
-        hasCameraKeys: !!coursewareAnimation?.timeline?.cameraKeys
-      } : '未找到');
-      
       // 读取相机轨道关键帧
       let cameraKeys: any[] = [];
       if (coursewareAnimation?.timeline?.cameraKeys) {
         cameraKeys = [...coursewareAnimation.timeline.cameraKeys].sort((a: any, b: any) => a.time - b.time);
-        console.log('找到相机轨道关键帧:', cameraKeys.length, '个');
       }
       
       // 辅助函数：检查是否是有效的三维向量
@@ -1890,11 +3060,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           animateLoop();
         }
         
-        // console.log('开始播放动画:', targetAnimation.name, 'UUID:', targetAnimation.uuid, '持续时间:', targetAnimation.duration);
         return targetAnimation.duration || 3; // 返回动画持续时间（秒）
       } else {
-        console.warn('⚠️ 未找到动画:', animationId);
-        // console.log('尝试播放第一个动画作为回退');
         if (animationsRef.current.length > 0) {
           const fallbackAnimation = animationsRef.current[0];
           const action = mixerRef.current.clipAction(fallbackAnimation);
@@ -1909,7 +3076,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           // 开始动画循环
           animateLoop();
           
-          // console.log('回退播放动画:', fallbackAnimation.name);
           return fallbackAnimation.duration || 3; // 返回动画持续时间（秒）
         }
       }
@@ -1968,6 +3134,23 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     };
 
     // 暴露控制方法
+    // 获取所有可交互对象（用于XR射线检测）
+    const getInteractableObjects = (): THREE.Object3D[] => {
+      const objects: THREE.Object3D[] = [];
+      if (modelRootRef.current) {
+        modelRootRef.current.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            objects.push(child);
+          }
+        });
+      }
+      // 添加标注
+      annotationsRef.current.forEach(annotation => {
+        objects.push(annotation);
+      });
+      return objects;
+    };
+
     useImperativeHandle(ref, () => ({
       focusOnNode,
       highlightNode,
@@ -1978,7 +3161,13 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       startAutoRotation,
       stopAutoRotation,
       playAnimation,
-      getAnimationDuration
+      getAnimationDuration,
+      // WebXR 支持
+      getRenderer: () => rendererRef.current,
+      getScene: () => sceneRef.current,
+      getCamera: () => cameraRef.current,
+      getModelRoot: () => modelRootRef.current,
+      getInteractableObjects
     }));
 
     // 初始化和清理
@@ -1993,6 +3182,26 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       initThreeJS();
 
       return () => {
+        // 停止渲染循环
+        if (rendererRef.current) {
+          rendererRef.current.setAnimationLoop(null);
+        }
+        
+        // 清理高斯泼溅查看器
+        if (splatViewerRef.current) {
+          try {
+            if (sceneRef.current) {
+              sceneRef.current.remove(splatViewerRef.current);
+            }
+            if (splatViewerRef.current.dispose) {
+              splatViewerRef.current.dispose();
+            }
+          } catch (e) {
+            console.warn('清理高斯泼溅查看器时出错:', e);
+          }
+          splatViewerRef.current = null;
+        }
+        
         // 清理资源
         if (containerRef.current && rendererRef.current) {
           containerRef.current.removeChild(rendererRef.current.domElement);
@@ -2019,8 +3228,6 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
         if (composerRef.current) {
           composerRef.current.setSize(width, height);
         }
-        
-        console.log('ThreeDViewer尺寸更新:', { width, height });
       }
     }, [width, height]);
 
@@ -2046,13 +3253,54 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
     // WebGL不支持的提示
     if (webglSupported === false) {
       return (
-        <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Alert
-            message="WebGL不支持"
-            description="您的浏览器不支持WebGL，无法显示3D内容。请使用现代浏览器如Chrome、Firefox、Safari或Edge。"
-            type="error"
-            showIcon
-          />
+        <div style={{ 
+          width, 
+          height, 
+          display: 'flex', 
+          flexDirection: 'column',
+          alignItems: 'center', 
+          justifyContent: 'center',
+          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+          color: 'white',
+          padding: '40px',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '64px', marginBottom: '20px' }}>🎮</div>
+          <div style={{ fontSize: '20px', fontWeight: 600, marginBottom: '12px' }}>
+            3D 功能暂不可用
+          </div>
+          <div style={{ 
+            fontSize: '14px', 
+            color: 'rgba(255,255,255,0.7)',
+            maxWidth: '400px',
+            lineHeight: 1.6
+          }}>
+            您的设备或浏览器暂不支持 WebGL 3D 渲染。课程音频讲解仍可正常播放。
+          </div>
+          {loadError && (
+            <div style={{
+              marginTop: '16px',
+              padding: '10px 16px',
+              background: 'rgba(255,100,100,0.2)',
+              borderRadius: '8px',
+              fontSize: '11px',
+              color: 'rgba(255,200,200,0.8)',
+              maxWidth: '90%',
+              wordBreak: 'break-all'
+            }}>
+              错误详情: {loadError}
+            </div>
+          )}
+          <div style={{
+            marginTop: '20px',
+            padding: '12px 20px',
+            background: 'rgba(255,255,255,0.1)',
+            borderRadius: '8px',
+            fontSize: '12px',
+            color: 'rgba(255,255,255,0.5)'
+          }}>
+            💡 提示：请关闭其他标签页后刷新，或尝试使用 Chrome 浏览器
+          </div>
         </div>
       );
     }

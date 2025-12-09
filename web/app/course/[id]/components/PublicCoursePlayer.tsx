@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, Component, ReactNode } from 'react';
 import { Button, Progress, Space, Typography, message } from 'antd';
 import { 
   PlayCircleOutlined, 
@@ -7,9 +7,64 @@ import {
   StepBackwardOutlined, 
   StepForwardOutlined,
   ShareAltOutlined,
-  SoundOutlined
+  SoundOutlined,
+  ArrowLeftOutlined,
+  MenuUnfoldOutlined,
+  MenuFoldOutlined,
+  CheckCircleOutlined,
+  PlayCircleFilled
 } from '@ant-design/icons';
 import PublicThreeDViewer, { PublicThreeDViewerControls } from './PublicThreeDViewer';
+
+// 错误边界组件
+class PlayerErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error('PublicCoursePlayer Error:', error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ 
+          width: '100%', 
+          height: '100vh', 
+          display: 'flex', 
+          flexDirection: 'column',
+          alignItems: 'center', 
+          justifyContent: 'center',
+          background: '#000',
+          color: 'white',
+          padding: '20px'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '20px' }}>⚠️</div>
+          <div style={{ fontSize: '18px', fontWeight: 600, marginBottom: '10px' }}>课程播放器加载失败</div>
+          <div style={{ 
+            fontSize: '12px', 
+            color: '#ff6b6b', 
+            background: 'rgba(255,0,0,0.1)',
+            padding: '15px',
+            borderRadius: '8px',
+            maxWidth: '90%',
+            wordBreak: 'break-all',
+            textAlign: 'left',
+            fontFamily: 'monospace'
+          }}>
+            {this.state.error?.message || '未知错误'}
+            <br/><br/>
+            {this.state.error?.stack?.slice(0, 500)}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const { Text } = Typography;
 
@@ -18,6 +73,7 @@ interface PublicCoursePlayerProps {
   isPlaying: boolean;
   onPlayStateChange: (playing: boolean) => void;
   onShare: () => void;
+  onBack?: () => void;
 }
 
 interface PlaybackState {
@@ -31,7 +87,8 @@ export default function PublicCoursePlayer({
   courseData, 
   isPlaying, 
   onPlayStateChange, 
-  onShare
+  onShare,
+  onBack
 }: PublicCoursePlayerProps) {
   const threeDViewerRef = useRef<HTMLDivElement>(null);
   const viewerControlsRef = useRef<PublicThreeDViewerControls>(null);
@@ -51,6 +108,23 @@ export default function PublicCoursePlayer({
   const [totalItems, setTotalItems] = useState(0);
   const [currentItemNumber, setCurrentItemNumber] = useState(0);
   const [modelLoaded, setModelLoaded] = useState(false);
+  const [outlineVisible, setOutlineVisible] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [windowSize, setWindowSize] = useState({ width: 1920, height: 1080 });
+
+  // 检测移动端和窗口尺寸（安全检查）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const updateSize = () => {
+      const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+      setIsMobile(mobile);
+      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
 
   // 计算总步骤数
   useEffect(() => {
@@ -478,18 +552,9 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 检测是否为公网域名，如果是则使用相对路径
-        let baseUrl = '';
-        if (typeof window !== 'undefined') {
-          const hostname = window.location.hostname;
-          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
-            baseUrl = '';
-          } else {
-            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
-          }
-        } else {
-          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-        }
+        // 使用当前域名作为基础URL（浏览器端始终使用 window.location.origin）
+        // 不使用 NEXT_PUBLIC_API_URL，因为那可能是 Docker 内部地址
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
         let audioUrl = item.audioUrl;
         
         // 处理相对路径
@@ -637,18 +702,9 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 检测是否为公网域名，如果是则使用相对路径
-        let baseUrl = '';
-        if (typeof window !== 'undefined') {
-          const hostname = window.location.hostname;
-          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
-            baseUrl = '';
-          } else {
-            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
-          }
-        } else {
-          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-        }
+        // 使用当前域名作为基础URL（浏览器端始终使用 window.location.origin）
+        // 不使用 NEXT_PUBLIC_API_URL，因为那可能是 Docker 内部地址
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
         let audioUrl = item.audioUrl;
         
         // 处理相对路径
@@ -756,18 +812,9 @@ export default function PublicCoursePlayer({
       return new Promise((resolve) => {
         const audio = new Audio();
         
-        // 检测是否为公网域名，如果是则使用相对路径
-        let baseUrl = '';
-        if (typeof window !== 'undefined') {
-          const hostname = window.location.hostname;
-          if (hostname.includes('yf-xr.com') || hostname.includes('platform')) {
-            baseUrl = '';
-          } else {
-            baseUrl = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
-          }
-        } else {
-          baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-        }
+        // 使用当前域名作为基础URL（浏览器端始终使用 window.location.origin）
+        // 不使用 NEXT_PUBLIC_API_URL，因为那可能是 Docker 内部地址
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
         let audioUrl = item.audioUrl;
         
         // 处理相对路径
@@ -1004,7 +1051,57 @@ export default function PublicCoursePlayer({
            playbackState.currentSegmentIndex < outline.length - 1;
   })();
 
+  // 跳转到指定段落和项目
+  const jumpToItem = (segmentIndex: number, itemIndex: number) => {
+    // 停止当前播放
+    if (playbackState.currentAudio) {
+      playbackState.currentAudio.pause();
+      playbackState.currentAudio.src = '';
+    }
+    
+    // 设置新的播放位置
+    setPlaybackState({
+      currentSegmentIndex: segmentIndex,
+      currentItemIndex: itemIndex,
+      progress: 0
+    });
+    
+    // 清除字幕和图片
+    setCurrentSubtitle('');
+    setCurrentImage(null);
+    
+    // 移动端自动关闭大纲
+    if (isMobile) {
+      setOutlineVisible(false);
+    }
+  };
+
+  // 获取项目的全局索引
+  const getGlobalItemIndex = (segmentIndex: number, itemIndex: number): number => {
+    const outline = courseData?.courseData?.outline;
+    if (!outline) return 0;
+    
+    let index = 0;
+    for (let i = 0; i < segmentIndex; i++) {
+      index += outline[i]?.items?.length || 0;
+    }
+    return index + itemIndex + 1;
+  };
+
+  // 检查项目是否已完成
+  const isItemCompleted = (segmentIndex: number, itemIndex: number): boolean => {
+    const currentGlobal = getGlobalItemIndex(playbackState.currentSegmentIndex, playbackState.currentItemIndex);
+    const targetGlobal = getGlobalItemIndex(segmentIndex, itemIndex);
+    return targetGlobal < currentGlobal;
+  };
+
+  // 检查是否是当前项目
+  const isCurrentItem = (segmentIndex: number, itemIndex: number): boolean => {
+    return segmentIndex === playbackState.currentSegmentIndex && itemIndex === playbackState.currentItemIndex;
+  };
+
   return (
+    <PlayerErrorBoundary>
     <>
       <style>{`
         @keyframes pulse {
@@ -1012,7 +1109,89 @@ export default function PublicCoursePlayer({
           50% { transform: translate(-50%, -50%) scale(1.05); }
           100% { transform: translate(-50%, -50%) scale(1); }
         }
+        
+        /* 移动端横屏适配 */
+        @media screen and (max-width: 768px) and (orientation: portrait) {
+          .landscape-hint {
+            display: flex !important;
+          }
+        }
+        @media screen and (max-width: 768px) and (orientation: landscape) {
+          .landscape-hint {
+            display: none !important;
+          }
+        }
+        @media screen and (min-width: 769px) {
+          .landscape-hint {
+            display: none !important;
+          }
+        }
+        
+        /* 移动端工具栏紧凑样式 */
+        @media screen and (max-width: 768px) {
+          .mobile-toolbar {
+            padding: 0 12px !important;
+            height: 50px !important;
+          }
+          .mobile-toolbar .ant-btn {
+            padding: 2px 6px !important;
+            font-size: 12px !important;
+          }
+        }
       `}</style>
+      
+      {/* 移动端竖屏提示 */}
+      {isMobile && (
+        <div 
+          className="landscape-hint"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.98)',
+            zIndex: 9999,
+            display: 'none',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '20px'
+          }}
+        >
+          <div style={{ fontSize: '60px' }}>📱</div>
+          <div style={{ 
+            color: 'rgba(255, 255, 255, 0.9)',
+            fontSize: '18px',
+            fontWeight: 600
+          }}>
+            请横屏观看
+          </div>
+          <div style={{ 
+            color: 'rgba(255, 255, 255, 0.5)',
+            fontSize: '14px',
+            textAlign: 'center',
+            padding: '0 40px'
+          }}>
+            为获得最佳学习体验，请将设备横向放置
+          </div>
+          <div style={{
+            marginTop: '20px',
+            animation: 'rotate-hint 1.5s ease-in-out infinite'
+          }}>
+            <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5">
+              <rect x="4" y="2" width="16" height="20" rx="2" />
+              <path d="M12 18h.01" />
+            </svg>
+          </div>
+          <style>{`
+            @keyframes rotate-hint {
+              0%, 100% { transform: rotate(0deg); }
+              50% { transform: rotate(90deg); }
+            }
+          `}</style>
+        </div>
+      )}
       <div style={{ 
         width: '100%', 
         height: '100vh', 
@@ -1035,9 +1214,21 @@ export default function PublicCoursePlayer({
           backdropFilter: 'blur(10px)',
           borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
         }}>
-          {/* 左侧标题 */}
-          <div style={{ color: 'white', fontSize: '16px', fontWeight: 'bold' }}>
-            {courseData.title || '课程播放中'}
+          {/* 左侧：返回按钮和标题 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {onBack && (
+              <Button 
+                type="text" 
+                icon={<ArrowLeftOutlined />} 
+                onClick={onBack}
+                style={{ color: 'white', padding: '4px 8px' }}
+              >
+                返回
+              </Button>
+            )}
+            <div style={{ color: 'white', fontSize: '16px', fontWeight: 'bold' }}>
+              {courseData.title || '课程播放中'}
+            </div>
           </div>
           
           {/* 中间播放控制 */}
@@ -1111,7 +1302,18 @@ export default function PublicCoursePlayer({
               style={{ color: 'white' }}
               size="small"
             >
-              分享
+              {!isMobile && '分享'}
+            </Button>
+            
+            {/* 大纲按钮 */}
+            <Button 
+              type="text" 
+              icon={outlineVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} 
+              onClick={() => setOutlineVisible(!outlineVisible)}
+              style={{ color: 'white' }}
+              size="small"
+            >
+              {!isMobile && '大纲'}
             </Button>
           </div>
         </div>
@@ -1128,13 +1330,228 @@ export default function PublicCoursePlayer({
           <PublicThreeDViewer
             ref={viewerControlsRef}
             coursewareData={courseData?.coursewareData}
-            width={typeof window !== 'undefined' ? window.innerWidth : 1920}
-            height={typeof window !== 'undefined' ? window.innerHeight - 60 : 1020}
+            width={outlineVisible && !isMobile ? windowSize.width - 320 : windowSize.width}
+            height={windowSize.height - 60}
             onModelLoaded={() => {
               console.log('✅ 3D模型加载完成');
               setModelLoaded(true);
             }}
           />
+        </div>
+
+        {/* 课程大纲面板 - 毛玻璃深色风格 */}
+        <div 
+          style={{
+            position: 'absolute',
+            top: '60px',
+            right: outlineVisible ? 0 : '-320px',
+            width: isMobile ? '85%' : '320px',
+            maxWidth: isMobile ? '320px' : '320px',
+            height: 'calc(100vh - 60px)',
+            background: 'rgba(15, 23, 42, 0.92)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: '-10px 0 40px rgba(0, 0, 0, 0.5)',
+            transition: 'right 0.3s ease',
+            zIndex: 1100,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }}
+        >
+          {/* 面板标题 */}
+          <div style={{
+            padding: '16px 20px',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexShrink: 0
+          }}>
+            <div style={{ 
+              color: 'rgba(255, 255, 255, 0.95)', 
+              fontWeight: 600,
+              fontSize: '15px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <MenuUnfoldOutlined style={{ color: '#06b6d4' }} />
+              课程大纲
+            </div>
+            <Button 
+              type="text" 
+              size="small"
+              onClick={() => setOutlineVisible(false)}
+              style={{ 
+                color: 'rgba(255, 255, 255, 0.6)',
+                fontSize: '18px',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              ×
+            </Button>
+          </div>
+
+          {/* 大纲内容 */}
+          <div style={{ 
+            flex: 1,
+            overflow: 'auto',
+            padding: '12px 0'
+          }}>
+            {courseData?.courseData?.outline?.map((segment: any, segmentIndex: number) => (
+              <div key={segmentIndex} style={{ marginBottom: '8px' }}>
+                {/* 段落标题 */}
+                <div style={{
+                  padding: '10px 20px',
+                  color: 'rgba(255, 255, 255, 0.9)',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  background: playbackState.currentSegmentIndex === segmentIndex 
+                    ? 'rgba(6, 182, 212, 0.15)' 
+                    : 'transparent',
+                  borderLeft: playbackState.currentSegmentIndex === segmentIndex 
+                    ? '3px solid #06b6d4' 
+                    : '3px solid transparent'
+                }}>
+                  {segment.title || `第 ${segmentIndex + 1} 章节`}
+                </div>
+                
+                {/* 段落项目列表 */}
+                <div style={{ paddingLeft: '20px' }}>
+                  {segment.items?.map((item: any, itemIndex: number) => {
+                    const isCurrent = isCurrentItem(segmentIndex, itemIndex);
+                    const isCompleted = isItemCompleted(segmentIndex, itemIndex);
+                    const globalIndex = getGlobalItemIndex(segmentIndex, itemIndex);
+                    
+                    return (
+                      <div
+                        key={itemIndex}
+                        onClick={() => jumpToItem(segmentIndex, itemIndex)}
+                        style={{
+                          padding: '10px 16px',
+                          marginRight: '12px',
+                          marginBottom: '4px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: isCurrent 
+                            ? 'rgba(139, 92, 246, 0.25)' 
+                            : 'rgba(255, 255, 255, 0.03)',
+                          border: isCurrent 
+                            ? '1px solid rgba(139, 92, 246, 0.5)' 
+                            : '1px solid transparent',
+                          transition: 'all 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isCurrent) {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isCurrent) {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                          }
+                        }}
+                      >
+                        {/* 状态图标 */}
+                        <div style={{
+                          width: '22px',
+                          height: '22px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '12px',
+                          flexShrink: 0,
+                          background: isCurrent 
+                            ? '#8b5cf6' 
+                            : isCompleted 
+                              ? '#10b981' 
+                              : 'rgba(255, 255, 255, 0.1)',
+                          color: isCurrent || isCompleted ? 'white' : 'rgba(255, 255, 255, 0.5)'
+                        }}>
+                          {isCurrent ? (
+                            <PlayCircleFilled style={{ fontSize: '12px' }} />
+                          ) : isCompleted ? (
+                            <CheckCircleOutlined style={{ fontSize: '12px' }} />
+                          ) : (
+                            globalIndex
+                          )}
+                        </div>
+                        
+                        {/* 项目内容 */}
+                        <div style={{ 
+                          flex: 1,
+                          minWidth: 0
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: isCurrent 
+                              ? 'rgba(255, 255, 255, 0.95)' 
+                              : isCompleted 
+                                ? 'rgba(255, 255, 255, 0.7)' 
+                                : 'rgba(255, 255, 255, 0.8)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {item.say?.substring(0, 30) || item.type || `步骤 ${itemIndex + 1}`}
+                            {item.say && item.say.length > 30 && '...'}
+                          </div>
+                          <div style={{
+                            fontSize: '11px',
+                            color: 'rgba(255, 255, 255, 0.4)',
+                            marginTop: '2px'
+                          }}>
+                            {item.type === 'scene.action' ? '场景动作' : 
+                             item.type === 'image.explain' ? '图片讲解' : 
+                             item.type || '讲解'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 底部进度信息 */}
+          <div style={{
+            padding: '12px 20px',
+            borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+            background: 'rgba(0, 0, 0, 0.2)',
+            flexShrink: 0
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '8px'
+            }}>
+              <span style={{ color: 'rgba(255, 255, 255, 0.6)', fontSize: '12px' }}>
+                学习进度
+              </span>
+              <span style={{ color: '#06b6d4', fontSize: '13px', fontWeight: 600 }}>
+                {currentItemNumber} / {totalItems}
+              </span>
+            </div>
+            <Progress 
+              percent={totalItems > 0 ? Math.round((currentItemNumber / totalItems) * 100) : 0}
+              strokeColor={{ '0%': '#06b6d4', '100%': '#8b5cf6' }}
+              trailColor="rgba(255, 255, 255, 0.1)"
+              size="small"
+              showInfo={false}
+            />
+          </div>
         </div>
 
       {/* 图片叠加层 */}
@@ -1221,6 +1638,7 @@ export default function PublicCoursePlayer({
       )}
       </div>
     </>
+    </PlayerErrorBoundary>
   );
 }
 
@@ -1409,13 +1827,19 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
         overflow: 'hidden'
       }}>
         <span>缩放: {Math.round(scale * 100)}%</span>
-        <span style={{ display: window.innerWidth > 640 ? 'inline' : 'none' }}>|</span>
-        <span style={{ 
-          display: window.innerWidth > 640 ? 'inline' : 'none',
-          whiteSpace: 'nowrap'
-        }}>
-          {window.innerWidth > 768 ? '滚轮缩放 • 拖拽移动 • 双击重置 • ESC关闭' : '拖拽移动 • 双击重置'}
-        </span>
+        {!isMobile && (
+          <>
+            <span>|</span>
+            <span style={{ whiteSpace: 'nowrap' }}>
+              滚轮缩放 • 拖拽移动 • 双击重置 • ESC关闭
+            </span>
+          </>
+        )}
+        {isMobile && (
+          <span style={{ whiteSpace: 'nowrap' }}>
+            拖拽移动 • 双击重置
+          </span>
+        )}
       </div>
 
       {/* 关闭按钮 */}

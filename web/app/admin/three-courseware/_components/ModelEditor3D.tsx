@@ -430,7 +430,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const composerRef = useRef<EffectComposer | null>(null);
   const outlineRef = useRef<OutlinePass | null>(null);
   const modelRootRef = useRef<THREE.Object3D | null>(null);
-  const boxHelperRef = useRef<THREE.Box3Helper | null>(null);
+  const boxHelperRef = useRef<THREE.BoxHelper | null>(null);
   const tcontrolsRef = useRef<TransformControls | null>(null);
   const multiPivotRef = useRef<THREE.Object3D | null>(null);
   const prevPivotWorldRef = useRef<THREE.Matrix4 | null>(null);
@@ -470,31 +470,97 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [bgTransparent, setBgTransparent] = useState<boolean>(false);
   const [bgColor, setBgColor] = useState<string>('#919191');
-  const [bgType, setBgType] = useState<'color' | 'panorama'>('panorama');
-  const [bgPanorama, setBgPanorama] = useState<string | null>('/360background_7.hdr');
+  const [bgType, setBgType] = useState<'color' | 'splat'>('splat'); // 只保留纯色和高斯+HDR两种模式
+  const [bgPanorama, setBgPanorama] = useState<string | null>('/360background_7.hdr'); // 用于环境光照
   const [bgPanoramaBrightness, setBgPanoramaBrightness] = useState<number>(1.0);
   const [useHDREnvironment, setUseHDREnvironment] = useState<boolean>(true);
+  const [bgSplat, setBgSplat] = useState<string>('/world/world_1'); // 默认world场景路径
+  const [splatLoading, setSplatLoading] = useState<boolean>(false);
+  const splatViewerRef = useRef<any>(null);
+  // 高斯泼溅模型变换参数
+  const [splatPosition, setSplatPosition] = useState<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 });
+  const [splatRotation, setSplatRotation] = useState<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 });
+  const [splatScale, setSplatScale] = useState<number>(1.0);
   
-  // 全景图列表配置 - 添加新图片时只需在此数组中添加新项
-  const panoramaOptions = [
-    { label: '全景图1', value: '/360background_1.jpg' },
-    { label: '全景图2', value: '/360background_2.jpg' },
-    { label: '全景图3', value: '/360background_3.png' },
-    { label: '全景图4', value: '/360background_4.png' },
-    { label: '全景图5', value: '/360background_5.png' },
-    { label: '全景图6 (HDR)', value: '/360background_6.hdr' },
-    { label: '全景图7 (HDR)', value: '/360background_7.hdr' },
-    { label: '全景图8 (HDR)', value: '/360background_8.hdr' },
-    { label: '全景图9 (HDR)', value: '/360background_9.hdr' },
-    { label: '全景图10 (HDR)', value: '/360background_10.hdr' },
-    { label: '全景图11 (HDR)', value: '/360background_11.hdr' },
-    { label: '全景图12 (HDR)', value: '/360background_12.hdr' },
-    { label: '全景图13 (HDR)', value: '/360background_13.hdr' },
-    { label: '全景图13 (HDR)', value: '/360background_14.hdr' },
-  ];
-  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.2, position: { x: 3, y: 5, z: 2 } });
-  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.6 });
-  const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0.6 });
+  // 待应用的设置（点击"应用"按钮才生效）
+  const [pendingSettings, setPendingSettings] = useState<{
+    bgType: 'color' | 'splat';
+    bgColor: string;
+    bgSplat: string;
+    bgPanorama: string | null;
+    bgPanoramaBrightness: number;
+    splatPosition: { x: number; y: number; z: number };
+    splatRotation: { x: number; y: number; z: number };
+    splatScale: number;
+    dirLight: { color: string; intensity: number; position: { x: number; y: number; z: number } };
+    ambLight: { color: string; intensity: number };
+    hemiLight: { skyColor: string; groundColor: string; intensity: number };
+  } | null>(null);
+  
+  // HDR全景图列表（用于环境光照）
+  // 【已废弃】panoramaOptions 数组已删除，高斯泼溅模式使用配套的 .hdr 文件
+  
+  // World场景列表（每个场景包含spz模型+对应HDR+配置json）
+  const [worldScenes, setWorldScenes] = useState<Array<{
+    id: string;
+    name: string;
+    path: string;
+    position: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number };
+    scale: number;
+  }>>([]);
+  
+  // 跟踪是否已加载保存的设置
+  const savedSettingsLoadedRef = useRef<boolean>(false);
+  
+  // 加载world场景列表（只扫描有json配置文件的文件夹）
+  useEffect(() => {
+    const loadWorldScenes = async () => {
+      const scenes: typeof worldScenes = [];
+      // 尝试加载world_1到world_20（只加载有json配置的）
+      for (let i = 1; i <= 20; i++) {
+        try {
+          const jsonUrl = `/world/world_${i}/world_${i}.json`;
+          const res = await fetch(jsonUrl, { cache: 'no-store' }); // 禁用缓存确保获取最新配置
+          if (res.ok) {
+            const config = await res.json();
+            const sceneName = config.name || `场景${i}`;
+            scenes.push({
+              id: `world_${i}`,
+              name: sceneName,
+              path: `/world/world_${i}`,
+              position: config.position || { x: 0, y: 0, z: 0 },
+              rotation: config.rotation || { x: 0, y: 0, z: 0 },
+              scale: parseFloat(config.scale) || 1.0
+            });
+            console.log(`✅ 加载world场景配置: world_${i}`, sceneName);
+          }
+        } catch (e) {
+          // 场景不存在或json无效，跳过
+          console.log(`⚠️ world_${i} 场景不存在或无效`);
+        }
+      }
+      console.log(`📂 共找到 ${scenes.length} 个world场景:`, scenes.map(s => s.name));
+      setWorldScenes(scenes);
+      
+      // 只有当没有加载保存的设置时，才默认选择第一个场景
+      // 延迟检查，等待保存的设置加载完成
+      setTimeout(() => {
+        if (!savedSettingsLoadedRef.current && scenes.length > 0) {
+          const firstScene = scenes[0];
+          setBgSplat(firstScene.path);
+          setSplatPosition(firstScene.position);
+          setSplatRotation(firstScene.rotation);
+          setSplatScale(firstScene.scale);
+          console.log('✅ 没有保存设置，默认选择第一个场景:', firstScene.name);
+        }
+      }, 500);
+    };
+    loadWorldScenes();
+  }, []);
+  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 0, position: { x: 3, y: 5, z: 2 } });
+  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0 });
+  const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0 });
   const [autoKey, setAutoKey] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -502,8 +568,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [coursewareName, setCoursewareName] = useState<string>('');
   useEffect(()=>{ autoKeyRef.current = autoKey; }, [autoKey]);
   const trackLabelWidth = 160;
-  const materialBackup = useRef<WeakMap<any, { emissive?: THREE.Color, emissiveIntensity?: number }>>(new WeakMap());
-  const highlightedMats = useRef<Set<any>>(new Set());
+  // 【已废弃】自发光高亮相关的 materialBackup 和 highlightedMats 已删除
+  // 使用已有的 boxHelperRef 进行边界框高亮（零性能开销）
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
   const [mode, setMode] = useState<'annot'|'anim'>('annot');
@@ -529,6 +595,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [localFileInputKey, setLocalFileInputKey] = useState<number>(0);
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const gridRef = useRef<THREE.GridHelper | null>(null);
+  // 监听 showGrid 变化，同步更新地面显示
+  useEffect(() => {
+    if (gridRef.current) {
+      gridRef.current.visible = showGrid;
+    }
+  }, [showGrid]);
   const [selectedCamKeyIdx, setSelectedCamKeyIdx] = useState<number | null>(null);
   const [selectedTrs, setSelectedTrs] = useState<{ key: string; index: number } | null>(null);
   const [selectedVis, setSelectedVis] = useState<{ key: string; index: number } | null>(null);
@@ -1280,14 +1352,156 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       bgType,
       bgPanorama,
       bgPanoramaBrightness,
-      useHDREnvironment
+      useHDREnvironment,
+      bgSplat
     });
+    
+    // 清理函数：移除旧的高斯泼溅查看器
+    const cleanupSplatViewer = () => {
+      if (splatViewerRef.current) {
+        try {
+          scene.remove(splatViewerRef.current);
+          if (splatViewerRef.current.dispose) {
+            splatViewerRef.current.dispose();
+          }
+        } catch (e) {
+          console.warn('清理高斯泼溅查看器时出错:', e);
+        }
+        splatViewerRef.current = null;
+      }
+    };
     
     if (bgTransparent) {
       scene.background = null;
-    } else if (bgType === 'panorama' && bgPanorama) {
+      cleanupSplatViewer();
+    } else if (bgType === 'splat' && bgSplat) {
+      // 高斯泼溅背景 + HDR环境光照
+      // 判断是world场景路径还是直接splat文件
+      const isWorldScene = bgSplat.startsWith('/world/');
+      const splatPath = isWorldScene 
+        ? `${bgSplat}/${bgSplat.split('/').pop()}.spz`  // /world/world_1 -> /world/world_1/world_1.spz
+        : bgSplat;
+      const hdrPath = isWorldScene
+        ? `${bgSplat}/${bgSplat.split('/').pop()}.hdr`  // /world/world_1 -> /world/world_1/world_1.hdr
+        : bgPanorama;
+      
+      console.log('🌌 [Background/Splat] 开始加载高斯泼溅场景:', { splatPath, hdrPath });
+      setSplatLoading(true);
+      
+      // 移除背景球体
+      const oldSphere = scene.getObjectByName('__background_sphere__');
+      if (oldSphere) scene.remove(oldSphere);
+      scene.background = null;
+      
+      // 加载HDR环境光照（如果有）
+      if (hdrPath && (hdrPath.toLowerCase().endsWith('.hdr') || hdrPath.toLowerCase().endsWith('.exr'))) {
+        const envLoader = hdrPath.toLowerCase().endsWith('.hdr') ? new RGBELoader() : new EXRLoader();
+        envLoader.load(hdrPath, (texture) => {
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+          const pmremGenerator = pmremGeneratorRef.current;
+          if (pmremGenerator) {
+            const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+            scene.environment = envMap;
+            // 应用 HDR 亮度到渲染器曝光度
+            const renderer = rendererRef.current;
+            if (renderer) {
+              renderer.toneMappingExposure = bgPanoramaBrightness;
+            }
+            // 应用到材质环境贴图强度
+            updateMaterialsEnvMap(envMap, bgPanoramaBrightness);
+            console.log('✅ [Background/Splat] HDR环境光照已应用:', hdrPath, '亮度:', bgPanoramaBrightness);
+          }
+        }, undefined, (error) => {
+          console.warn('⚠️ [Background/Splat] 加载HDR环境光照失败:', error);
+        });
+      }
+      
+      // 动态导入高斯泼溅库
+      import('@mkkellogg/gaussian-splats-3d').then((GaussianSplats3D) => {
+        // 清理旧的查看器
+        cleanupSplatViewer();
+        
+        try {
+          // 创建DropInViewer
+          const viewer = new GaussianSplats3D.DropInViewer({
+            sharedMemoryForWorkers: false,
+            dynamicScene: true,
+            selfDrivenMode: false // 我们自己控制渲染
+          });
+          
+          splatViewerRef.current = viewer;
+          scene.add(viewer);
+          
+          // 将角度转换为四元数
+          const euler = new THREE.Euler(
+            splatRotation.x * Math.PI / 180,
+            splatRotation.y * Math.PI / 180,
+            splatRotation.z * Math.PI / 180,
+            'XYZ'
+          );
+          const quaternion = new THREE.Quaternion().setFromEuler(euler);
+          
+          // 加载splat文件
+          viewer.addSplatScene(splatPath, {
+            showLoadingUI: false,
+            splatAlphaRemovalThreshold: 5,
+            position: [splatPosition.x, splatPosition.y, splatPosition.z],
+            rotation: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+            scale: [splatScale, splatScale, splatScale]
+          }).then(() => {
+            console.log('✅ [Background/Splat] 高斯泼溅模型加载成功', {
+              splatPath,
+              position: splatPosition,
+              rotation: splatRotation,
+              scale: splatScale
+            });
+            setSplatLoading(false);
+            
+            // 强制重新渲染
+            const r = rendererRef.current;
+            const c = cameraRef.current;
+            if (r && c) {
+              const composer = composerRef.current;
+              if (composer) composer.render();
+              else r.render(scene, c);
+            }
+          }).catch((error: any) => {
+            console.error('❌ [Background/Splat] 加载高斯泼溅模型失败:', error);
+            setSplatLoading(false);
+            scene.background = new THREE.Color(bgColor);
+          });
+        } catch (error) {
+          console.error('❌ [Background/Splat] 创建高斯泼溅查看器失败:', error);
+          setSplatLoading(false);
+          scene.background = new THREE.Color(bgColor);
+        }
+      }).catch((error) => {
+        console.error('❌ [Background/Splat] 导入高斯泼溅库失败:', error);
+        setSplatLoading(false);
+        scene.background = new THREE.Color(bgColor);
+      });
+      
+      return; // 异步操作，提前返回
+    } else {
+      // 纯色背景模式
+      cleanupSplatViewer();
+      // 移除背景球体
+      const oldSphere = scene.getObjectByName('__background_sphere__');
+      if (oldSphere) scene.remove(oldSphere);
+      scene.background = new THREE.Color(bgColor);
+      scene.environment = null;
+      console.log('✅ [Background/Color] 纯色背景已设置:', bgColor);
+    }
+    
+    const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
+      const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
+    }
+  }, [bgTransparent, bgColor, bgType, bgPanorama, bgSplat, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, useHDREnvironment, updateMaterialsEnvMap]);
+  
+  /* 删除全景图模式 - 以下代码已废弃
+    if (false && bgType === 'panorama' && bgPanorama) {
       // 检测是否为HDR或EXR文件
-      const lowerPath = bgPanorama.toLowerCase();
+      const lowerPath = bgPanorama?.toLowerCase() || '';
       const isHDR = lowerPath.endsWith('.hdr');
       const isEXR = lowerPath.endsWith('.exr');
       
@@ -1532,25 +1746,14 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           }
         );
       }
-    } else {
-      // 移除背景球体
-      const oldSphere = scene.getObjectByName('__background_sphere__');
-      if (oldSphere) scene.remove(oldSphere);
-      scene.background = new THREE.Color(bgColor);
-      scene.environment = null;
-      updateMaterialsEnvMap(null, 1.0);
     }
-    
-    const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
-      const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
-    }
-  }, [bgTransparent, bgColor, bgType, bgPanorama, useHDREnvironment, updateMaterialsEnvMap]);
+    全景图模式已删除 */
   
-  // HDR环境光照开关
+  // HDR环境光照开关（仅用于高斯泼溅模式中的环境光照）
   useEffect(() => {
     const scene = sceneRef.current;
     const renderer = rendererRef.current;
-    if (!scene || bgType !== 'panorama' || !bgPanorama) return;
+    if (!scene || bgType !== 'splat' || !bgPanorama) return;
     
     const lowerPath = bgPanorama.toLowerCase();
     const isHDR = lowerPath.endsWith('.hdr') || lowerPath.endsWith('.exr');
@@ -1576,48 +1779,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   }, [useHDREnvironment, bgType, bgPanorama, bgPanoramaBrightness, updateMaterialsEnvMap, updateMaterialsEnvMapIntensity]);
   
-  // 全景图亮度调节
-  useEffect(() => {
-    const scene = sceneRef.current;
-    const renderer = rendererRef.current;
-    if (!scene || bgType !== 'panorama') return;
-    
-    // 更新背景球体的亮度
-    const sphere = scene.getObjectByName('__background_sphere__') as THREE.Mesh;
-    if (sphere && sphere.material instanceof THREE.ShaderMaterial) {
-      sphere.material.uniforms.brightness.value = bgPanoramaBrightness;
-    }
-    
-    // 如果是HDR/EXR文件且启用了环境光照，同时调整环境光照强度
-    if (bgPanorama && renderer) {
-      const lowerPath = bgPanorama.toLowerCase();
-      const isHDR = lowerPath.endsWith('.hdr') || lowerPath.endsWith('.exr');
-      
-      if (isHDR && useHDREnvironment) {
-        // 通过调整toneMappingExposure来控制整体曝光
-        // 基础曝光值1.2，乘以亮度系数
-        renderer.toneMappingExposure = 1.2 * bgPanoramaBrightness;
-        
-        // 通过envMapIntensity控制环境贴图对模型的照明强度
-        // 这是直接影响模型光照的关键参数
-        updateMaterialsEnvMapIntensity(bgPanoramaBrightness);
-        
-        // 确保环境贴图已应用
-        if (environmentMapRef.current) {
-          scene.environment = environmentMapRef.current;
-        }
-      } else if (!useHDREnvironment) {
-        // 如果关闭了HDR环境光照，恢复默认曝光值和强度
-        renderer.toneMappingExposure = 1.2;
-        updateMaterialsEnvMapIntensity(1.0);
-      }
-    }
-    
-    // 强制重新渲染
-    const r = rendererRef.current; const c = cameraRef.current; if (r && c) {
-      const composer = composerRef.current; if (composer) composer.render(); else r.render(scene, c);
-    }
-  }, [bgPanoramaBrightness, bgType, bgPanorama, useHDREnvironment, updateMaterialsEnvMapIntensity]);
+  // 全景图亮度调节（panorama 模式已删除，此 useEffect 已废弃）
 
   useEffect(() => {
     const l = dirLightRef.current; if (!l) return;
@@ -1765,10 +1927,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           writeBackTRSFromObject(o);
         });
         prevPivotWorldRef.current = curMat.clone();
+        
+        // 更新高亮框位置
+        updateHighlightPosition();
         return;
       }
       // 单选
       writeBackTRSFromObject(obj);
+      
+      // 更新高亮框位置
+      updateHighlightPosition();
     });
     scene.add(tcontrols as any);
     tcontrolsRef.current = tcontrols;
@@ -1919,8 +2087,23 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       lastCameraDistanceRef.current = currentCameraDistance;
     }
     
-    const composer = composerRef.current;
-    if (composer) composer.render(); else renderer.render(scene, camera);
+    // 更新高斯泼溅查看器
+    if (splatViewerRef.current && splatViewerRef.current.update) {
+      try {
+        splatViewerRef.current.update();
+      } catch (e) {
+        // 静默处理更新错误
+      }
+    }
+    
+    // 在高斯泼溅模式下跳过后处理（EffectComposer），直接渲染以提升性能
+    // OutlinePass等后处理效果会严重影响高斯泼溅的渲染性能
+    if (splatViewerRef.current) {
+      renderer.render(scene, camera);
+    } else {
+      const composer = composerRef.current;
+      if (composer) composer.render(); else renderer.render(scene, camera);
+    }
   }
 
   function applyTimelineAt(t: number) {
@@ -2425,6 +2608,67 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             console.log('📁 已保存原始动画供后续导出使用');
           }
           
+          // 🔥 处理动画元数据（纯相机动画等）
+          if (pendingImportRef.current?.animationMetadata) {
+            console.log('🔄 [分支1] 检测到待处理的动画元数据，进行动画重建...');
+            console.log('📊 动画元数据数量:', pendingImportRef.current.animationMetadata.length);
+            console.log('📊 GLB动画数量:', animations.length);
+            
+            // 创建GLB动画的编辑器条目
+            const gltfClips: Clip[] = animations.map((clip, index) => ({
+              id: generateUuid(),
+              name: clip.name || `原始动画${index + 1}`,
+              description: `模型内置动画`,
+              timeline: {
+                duration: clip.duration || 10,
+                current: 0,
+                playing: false,
+                cameraKeys: [],
+                visTracks: {},
+                trsTracks: {},
+                annotationTracks: {},
+                gltfAnimation: { clip, mixer: null as any, isOriginal: true }
+              }
+            }));
+            
+            // 从GLB和元数据重建动画
+            const rebuiltClips = loadAnimationsFromGLB(animations, pendingImportRef.current.animationMetadata, root);
+            console.log('✅ 重建后的动画数量:', rebuiltClips.length);
+            
+            // 合并重建的动画和未匹配的内置动画
+            const matchedAnimationNames = new Set(rebuiltClips.map(c => c.name));
+            const unmatchedGltfClips = gltfClips.filter(clip => !matchedAnimationNames.has(clip.name));
+            const allClips = [...rebuiltClips, ...unmatchedGltfClips];
+            console.log('📊 合并后的总动画数量:', allClips.length);
+            
+            if (allClips.length > 0) {
+              setClips(allClips);
+              setActiveClipId(allClips[0].id);
+              setTimeline({
+                duration: allClips[0].timeline.duration || 10,
+                current: 0,
+                playing: false,
+                cameraKeys: allClips[0].timeline.cameraKeys || [],
+                visTracks: allClips[0].timeline.visTracks || {},
+                trsTracks: allClips[0].timeline.trsTracks || {},
+                annotationTracks: allClips[0].timeline.annotationTracks || {}
+              });
+              // 🔥 同步步骤数据
+              setSteps(Array.isArray((allClips[0] as any).steps) ? [...(allClips[0] as any).steps] : []);
+              console.log('✅ [分支1] 动画数据已加载，当前活动动画:', allClips[0].name, '步骤数:', (allClips[0] as any).steps?.length || 0);
+            }
+            
+            // 清除动画pending数据（保留标注数据供后续恢复）
+            delete pendingImportRef.current.animationMetadata;
+            delete pendingImportRef.current.allAnimations;
+            console.log('🧹 已清理GLB动画的pending数据');
+          }
+          
+          // 🔥 恢复标注数据
+          if (pendingImportRef.current) {
+            console.log('📍 [分支1] 开始恢复标注数据...');
+            tryRestoreFromPending();
+          }
           
           // 模型加载完成后消息提示
           message.destroy();
@@ -2551,7 +2795,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 trsTracks: allClips[0].timeline.trsTracks || {},
                 annotationTracks: allClips[0].timeline.annotationTracks || {}
               });
-              console.log('✅ 动画数据已加载，当前活动动画:', allClips[0].name);
+              // 🔥 同步步骤数据
+              setSteps(Array.isArray((allClips[0] as any).steps) ? [...(allClips[0] as any).steps] : []);
+              console.log('✅ 动画数据已加载，当前活动动画:', allClips[0].name, '步骤数:', (allClips[0] as any).steps?.length || 0);
             } else {
               console.warn('⚠️ 重建后的动画列表为空，尝试使用传统方式加载...');
               // 如果重建失败，尝试使用传统方式加载
@@ -2726,7 +2972,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 trsTracks: allClips[0].timeline.trsTracks || {},
                 annotationTracks: allClips[0].timeline.annotationTracks || {}
               });
-              console.log('✅ 动画数据已加载，当前活动动画:', allClips[0].name);
+              // 🔥 同步步骤数据
+              setSteps(Array.isArray((allClips[0] as any).steps) ? [...(allClips[0] as any).steps] : []);
+              console.log('✅ 动画数据已加载，当前活动动画:', allClips[0].name, '步骤数:', (allClips[0] as any).steps?.length || 0);
             } else {
               console.warn('⚠️ 重建后的动画列表为空，尝试使用传统方式加载...');
               // 如果重建失败，尝试使用传统方式加载
@@ -3563,7 +3811,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   function syncHighlight() {
     const outline = outlineRef.current;
     const objs: THREE.Object3D[] = Array.from(selectedSet).map(k=> keyToObject.current.get(k)!).filter(Boolean);
-    if (outline && highlightMode === 'outline') {
+    
+    // 在高斯泼溅模式下强制使用自发光高亮，因为OutlinePass会严重影响性能
+    const effectiveHighlightMode = (bgType === 'splat' && !bgTransparent) ? 'emissive' : highlightMode;
+    
+    if (outline && effectiveHighlightMode === 'outline') {
       outline.selectedObjects = objs;
       clearEmissiveHighlight();
     } else {
@@ -3572,7 +3824,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       objs.forEach(o=> applyEmissiveHighlight(o));
     }
   }
-  useEffect(()=>{ syncHighlight(); }, [selectedSet, highlightMode]);
+  useEffect(()=>{ syncHighlight(); }, [selectedSet, highlightMode, bgType, bgTransparent]);
 
   function attachTransformForSelection(nextSet: Set<string>) {
     const tcontrols = tcontrolsRef.current;
@@ -3727,34 +3979,102 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (action === 'delete') { deleteNode(key); return; }
   }
 
-  function clearEmissiveHighlight() {
-    for (const m of Array.from(highlightedMats.current)) {
-      const backup = materialBackup.current.get(m);
-      if (backup) {
-        if ('emissive' in m && backup.emissive) m.emissive.copy(backup.emissive);
-        if ('emissiveIntensity' in m && typeof backup.emissiveIntensity === 'number') m.emissiveIntensity = backup.emissiveIntensity;
+  // 更新高亮框位置（拖动时调用）
+  function updateHighlightPosition() {
+    if (!boxHelperRef.current || !sceneRef.current) return;
+    
+    // 如果是 BoxHelper，直接调用 update
+    if (boxHelperRef.current instanceof THREE.BoxHelper) {
+      boxHelperRef.current.update();
+      return;
+    }
+    
+    // 如果是 Group（边缘线），需要重新生成高亮
+    // 获取当前选中的第一个对象
+    const selIds = Array.from(selectedSetRef.current);
+    if (selIds.length > 0) {
+      const obj = keyToObject.current.get(selIds[0]);
+      if (obj) {
+        // 重新生成高亮
+        applyEmissiveHighlight(obj);
       }
     }
-    highlightedMats.current.clear();
   }
 
+  // 清除边缘高亮
+  function clearEmissiveHighlight() {
+    if (boxHelperRef.current && sceneRef.current) {
+      // 如果是 Group，需要遍历清理所有子对象
+      if (boxHelperRef.current instanceof THREE.Group) {
+        boxHelperRef.current.traverse((child) => {
+          if ((child as any).geometry) (child as any).geometry.dispose();
+          if ((child as any).material) (child as any).material.dispose();
+        });
+      } else {
+        if ((boxHelperRef.current as any).geometry) (boxHelperRef.current as any).geometry.dispose();
+        if ((boxHelperRef.current as any).material) (boxHelperRef.current as any).material.dispose();
+      }
+      sceneRef.current.remove(boxHelperRef.current);
+      boxHelperRef.current = null;
+    }
+  }
+
+  // 应用边缘线高亮（模型轮廓线，低性能消耗）
   function applyEmissiveHighlight(obj: THREE.Object3D) {
     clearEmissiveHighlight();
-    obj.traverse(o => {
-      const mesh = o as any;
-      if (mesh.material) {
-        const materials: any[] = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        materials.forEach(mat => {
-          const b = { emissive: (mat.emissive ? mat.emissive.clone() : undefined), emissiveIntensity: mat.emissiveIntensity };
-          materialBackup.current.set(mat, b);
-          try {
-            if (mat.emissive) mat.emissive.set(0x22d3ee);
-            if ('emissiveIntensity' in mat) mat.emissiveIntensity = Math.max(mat.emissiveIntensity || 0.2, 0.6);
-            highlightedMats.current.add(mat);
-          } catch {}
-        });
+    if (!sceneRef.current) return;
+    
+    // 创建一个组来容纳所有边缘线
+    const edgeGroup = new THREE.Group();
+    edgeGroup.name = '__highlight_edges__';
+    
+    let totalEdgeVertices = 0;
+    
+    // 遍历对象，为每个 Mesh 创建边缘线
+    obj.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.geometry) {
+        // 创建边缘几何体（只显示硬边缘，角度阈值15度，更敏感）
+        const edgesGeometry = new THREE.EdgesGeometry(child.geometry, 15);
+        const vertexCount = edgesGeometry.attributes.position?.count || 0;
+        totalEdgeVertices += vertexCount;
+        
+        if (vertexCount > 0) {
+          const edgesMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xff6600, // 橙色
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.9
+          });
+          const edgeLines = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+          
+          // 复制对象的世界变换矩阵
+          child.updateWorldMatrix(true, false);
+          edgeLines.applyMatrix4(child.matrixWorld);
+          
+          edgeGroup.add(edgeLines);
+        }
       }
     });
+    
+    // 如果边缘线太少（比如球体等圆滑物体），使用 BoxHelper 作为后备
+    if (totalEdgeVertices < 10) {
+      // 清理空的 edgeGroup
+      edgeGroup.traverse((child) => {
+        if ((child as any).geometry) (child as any).geometry.dispose();
+        if ((child as any).material) (child as any).material.dispose();
+      });
+      
+      // 使用 BoxHelper 作为后备方案
+      const boxHelper = new THREE.BoxHelper(obj, 0xff6600);
+      boxHelper.name = '__highlight_box__';
+      sceneRef.current.add(boxHelper);
+      boxHelperRef.current = boxHelper;
+      console.log('🔶 使用 BoxHelper 高亮（圆滑物体后备方案）');
+    } else {
+      sceneRef.current.add(edgeGroup);
+      boxHelperRef.current = edgeGroup as any;
+      console.log('🔶 使用边缘线高亮，边数:', totalEdgeVertices);
+    }
   }
 
   function focusObject(obj: THREE.Object3D) {
@@ -4932,17 +5252,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   // 🔄 从GLB动画数据重建编辑器动画（显式接收rootObject，避免root为null）
   const loadAnimationsFromGLB = (gltfAnimations: THREE.AnimationClip[], animationMetadata: any[], rootObject: THREE.Object3D) => {
     console.log('🔄 从GLB重建动画数据...');
+    console.log('📊 GLB动画列表:', gltfAnimations.map(c => c.name));
+    console.log('📊 元数据列表:', animationMetadata.map((m: any) => m.name));
     
     const loadedClips: Clip[] = [];
+    const matchedMetadataNames = new Set<string>(); // 追踪被名称匹配的元数据
     
     // 处理每个GLB动画
     gltfAnimations.forEach((clip, index) => {
-      // 查找对应的元数据
-      const metadata = animationMetadata.find(meta => meta.name === clip.name) || 
-                      animationMetadata[index] || 
-                      { id: generateUuid(), name: clip.name || `动画${index + 1}`, description: '', isOriginal: false };
+      // 🔥 只通过名称匹配元数据，不再用索引回退（避免误匹配纯相机动画）
+      const matchedMeta = animationMetadata.find((meta: any) => meta.name === clip.name);
+      const metadata = matchedMeta || { id: generateUuid(), name: clip.name || `动画${index + 1}`, description: '', isOriginal: true };
       
-      console.log(`  📁 加载动画: ${clip.name} (${metadata.isOriginal ? '原始' : '自定义'})`);
+      if (matchedMeta) {
+        matchedMetadataNames.add(matchedMeta.name);
+        console.log(`  📁 加载GLB动画: ${clip.name} (匹配到元数据)`);
+      } else {
+        console.log(`  📁 加载GLB动画: ${clip.name} (无匹配元数据，使用默认值)`);
+      }
       
       // 解析动画轨道数据（使用传入的rootObject）
       const safeRoot = rootObject || modelRootRef.current;
@@ -5046,12 +5373,43 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       loadedClips.push(editorClip);
     });
     
+    // 🔥 处理不存在于GLB中的纯相机动画（用户自定义的动画）
+    const loadedClipNames = new Set(loadedClips.map(c => c.name));
+    const pureMetadataAnimations = animationMetadata.filter(meta => !loadedClipNames.has(meta.name));
+    
+    if (pureMetadataAnimations.length > 0) {
+      console.log(`📷 发现${pureMetadataAnimations.length}个纯相机动画（不在GLB中）`);
+      
+      pureMetadataAnimations.forEach((metadata: any) => {
+        console.log(`  📷 加载纯相机动画: ${metadata.name}`);
+        
+        // 创建纯相机动画的编辑器对象
+        const pureClip: Clip = {
+          id: metadata.id || generateUuid(),
+          name: metadata.name || '未命名动画',
+          description: metadata.description || '',
+          timeline: {
+            duration: metadata.timeline?.duration || metadata.duration || 10,
+            current: 0,
+            playing: false,
+            cameraKeys: metadata.timeline?.cameraKeys || [],
+            visTracks: {},
+            trsTracks: {},
+            annotationTracks: {}
+          },
+          steps: metadata.steps || []
+        } as any;
+        
+        loadedClips.push(pureClip);
+      });
+    }
+    
     // 如果GLB中有动画，保存原始动画供导出使用
     if (gltfAnimations.length > 0) {
       originalAnimationsRef.current = [...gltfAnimations];
     }
     
-    console.log(`✅ 成功从GLB加载${loadedClips.length}个动画`);
+    console.log(`✅ 成功从GLB加载${loadedClips.length}个动画（含${pureMetadataAnimations.length}个纯相机动画）`);
     return loadedClips;
   };
   
@@ -5541,8 +5899,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           } : undefined,
           background: bgColor,
           backgroundType: bgType,
-          // 保存实际的全景图值（如果bgType是panorama）
-          backgroundPanorama: bgType === 'panorama' ? (bgPanorama || '/360background_7.hdr') : null,
+          // 保存HDR环境光照路径（用于splat模式的环境光照）
+          backgroundPanorama: bgType === 'splat' ? (bgPanorama || '/360background_7.hdr') : null,
+          // 保存高斯泼溅模型路径和变换（如果bgType是splat）
+          backgroundSplat: bgType === 'splat' ? (bgSplat || '/world/world_1') : null,
+          splatTransform: bgType === 'splat' ? {
+            position: splatPosition,
+            rotation: splatRotation,
+            scale: splatScale
+          } : null,
           // 保存实际的亮度值
           backgroundPanoramaBrightness: bgPanoramaBrightness,
           // 保存实际的HDR环境设置
@@ -5657,8 +6022,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         } : currentCourseware.settings?.cameraTarget,
         background: bgColor,
         backgroundType: bgType,
-        // 保存实际的全景图值（如果bgType是panorama）
-        backgroundPanorama: bgType === 'panorama' ? (bgPanorama || '/360background_7.hdr') : null,
+        // 保存HDR环境光照路径（用于splat模式的环境光照）
+        backgroundPanorama: bgType === 'splat' ? (bgPanorama || '/360background_7.hdr') : null,
+        // 保存高斯泼溅模型路径和变换（如果bgType是splat）
+        backgroundSplat: bgType === 'splat' ? (bgSplat || '/world/world_1') : null,
+        splatTransform: bgType === 'splat' ? {
+          position: splatPosition,
+          rotation: splatRotation,
+          scale: splatScale
+        } : null,
         // 保存实际的亮度值
         backgroundPanoramaBrightness: bgPanoramaBrightness,
         // 保存实际的HDR环境设置
@@ -5673,6 +6045,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       console.log('💾 [Settings/Save] 构建的新设置对象:', {
         backgroundType: newSettings.backgroundType,
         backgroundPanorama: newSettings.backgroundPanorama,
+        backgroundSplat: newSettings.backgroundSplat,
+        splatTransform: newSettings.splatTransform,
         backgroundPanoramaBrightness: newSettings.backgroundPanoramaBrightness,
         useHDREnvironment: newSettings.useHDREnvironment,
         hasLighting: !!newSettings.lighting
@@ -5937,6 +6311,36 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           setBgPanorama('/360background_7.hdr'); // 即使不是panorama类型，也保持默认值以便切换时使用
         }
         
+        // 确保backgroundSplat被正确读取
+        if (bgTypeValue === 'splat') {
+          const splatValue = settings.backgroundSplat && settings.backgroundSplat.trim() !== ''
+            ? settings.backgroundSplat
+            : '/world/world_1'; // 默认使用第一个 world 场景
+          console.log('✅ [Settings/Load] 设置高斯泼溅模型:', splatValue, '(原始值:', settings.backgroundSplat, ')');
+          setBgSplat(splatValue);
+          savedSettingsLoadedRef.current = true; // 标记已加载保存的设置
+          
+          // 加载高斯泼溅变换参数
+          if (settings.splatTransform) {
+            const transform = settings.splatTransform;
+            if (transform.position) {
+              setSplatPosition(transform.position);
+              console.log('✅ [Settings/Load] 设置高斯泼溅位置:', transform.position);
+            }
+            if (transform.rotation) {
+              setSplatRotation(transform.rotation);
+              console.log('✅ [Settings/Load] 设置高斯泼溅旋转:', transform.rotation);
+            }
+            if (transform.scale !== undefined) {
+              setSplatScale(transform.scale);
+              console.log('✅ [Settings/Load] 设置高斯泼溅缩放:', transform.scale);
+            }
+          }
+        } else {
+          console.log('✅ [Settings/Load] 背景类型不是splat，设置默认高斯泼溅模型');
+          setBgSplat('/world/world_1'); // 保持默认值以便切换时使用
+        }
+        
         // 确保backgroundPanoramaBrightness被正确读取（如果没有则使用默认值1.0）
         const brightnessValue = settings.backgroundPanoramaBrightness !== undefined && settings.backgroundPanoramaBrightness !== null 
           ? settings.backgroundPanoramaBrightness 
@@ -5988,12 +6392,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // 如果没有settings，使用默认值
         console.log('⚠️ [Settings/Load] 课件数据中没有settings对象，使用默认值');
         console.log('⚠️ [Settings/Load] 默认设置:', {
-          bgType: 'panorama',
+          bgType: 'splat',
           bgPanorama: '/360background_7.hdr',
           bgPanoramaBrightness: 1.0,
           useHDREnvironment: true
         });
-        setBgType('panorama');
+        setBgType('splat');
         setBgPanorama('/360background_7.hdr');
         setBgPanoramaBrightness(1.0);
         setUseHDREnvironment(true);
@@ -6024,62 +6428,198 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                 <span>背景类型：</span>
                 <Select 
                   size="small" 
-                  value={bgType} 
-                  style={{ width: 120 }} 
-                  onChange={(v)=>{ setBgType(v); if (v === 'panorama' && !bgPanorama) setBgPanorama(panoramaOptions[0]?.value || null); }}
+                  value={pendingSettings?.bgType ?? bgType} 
+                  style={{ width: 160 }} 
+                  onChange={(v)=>{ 
+                    setPendingSettings(prev => ({
+                      bgType: v,
+                      bgColor: prev?.bgColor ?? bgColor,
+                      bgSplat: prev?.bgSplat ?? bgSplat,
+                      bgPanorama: prev?.bgPanorama ?? bgPanorama,
+                      bgPanoramaBrightness: prev?.bgPanoramaBrightness ?? bgPanoramaBrightness,
+                      splatPosition: prev?.splatPosition ?? splatPosition,
+                      splatRotation: prev?.splatRotation ?? splatRotation,
+                      splatScale: prev?.splatScale ?? splatScale,
+                      dirLight: prev?.dirLight ?? dirLight,
+                      ambLight: prev?.ambLight ?? ambLight,
+                      hemiLight: prev?.hemiLight ?? hemiLight,
+                    }));
+                  }}
                   options={[
-                    { label: '纯色', value: 'color' },
-                    { label: '全景图', value: 'panorama' }
+                    { label: '纯色背景', value: 'color' },
+                    { label: '高斯场景+HDR光照', value: 'splat' }
                   ]} 
                 />
               </Space>
-              {bgType === 'color' ? (
+              {(pendingSettings?.bgType ?? bgType) === 'color' ? (
                 <Space>
                   <span>颜色：</span>
-                  <Input size="small" type="color" value={bgColor} onChange={(e)=>setBgColor(e.target.value)} />
+                  <Input 
+                    size="small" 
+                    type="color" 
+                    value={pendingSettings?.bgColor ?? bgColor} 
+                    onChange={(e) => setPendingSettings(prev => ({
+                      ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                      bgColor: e.target.value
+                    }))} 
+                  />
                 </Space>
               ) : (
                 <Space direction="vertical" style={{ width: '100%' }}>
                   <Space direction="vertical" style={{ width: '100%' }}>
-                    <span>选择全景图：</span>
+                    <span>选择3D场景：</span>
                     <Select 
                       size="small" 
-                      value={bgPanorama || panoramaOptions[0]?.value} 
+                      value={pendingSettings?.bgSplat ?? bgSplat} 
                       style={{ width: '100%' }} 
-                      onChange={(v)=>setBgPanorama(v)}
-                      options={panoramaOptions} 
+                      onChange={(v) => {
+                        // 查找选中场景的配置，自动填充变换参数
+                        const scene = worldScenes.find(s => s.path === v);
+                        setPendingSettings(prev => ({
+                          ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                          bgSplat: v,
+                          splatPosition: scene?.position ?? prev?.splatPosition ?? splatPosition,
+                          splatRotation: scene?.rotation ?? prev?.splatRotation ?? splatRotation,
+                          splatScale: scene?.scale ?? prev?.splatScale ?? splatScale,
+                        }));
+                      }}
+                      options={worldScenes.map(s => ({ label: s.name, value: s.path }))} 
                     />
+                  </Space>
+                  <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
+                    <span>HDR 亮度：</span>
+                    <Slider
+                      min={0}
+                      max={3}
+                      step={0.1}
+                      value={pendingSettings?.bgPanoramaBrightness ?? bgPanoramaBrightness}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        bgPanoramaBrightness: v
+                      }))}
+                      marks={{ 0: '0', 1: '1', 2: '2', 3: '3' }}
+                    />
+                  </Space>
+                  {splatLoading && (
+                    <div style={{ fontSize: '12px', color: '#1890ff', paddingLeft: 8 }}>
+                      ⏳ 正在加载高斯泼溅模型...
+                    </div>
+                  )}
+                  <Divider style={{ margin: '8px 0' }} />
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>场景变换（手动调整）</div>
+                  <Space wrap style={{ width: '100%' }}>
+                    <span style={{ minWidth: 40 }}>位置：</span>
+                    <span>X</span>
+                    <InputNumber 
+                      size="small" 
+                      step={0.5} 
+                      value={pendingSettings?.splatPosition?.x ?? splatPosition.x} 
+                      style={{ width: 70 }}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatPosition: { ...(prev?.splatPosition ?? splatPosition), x: Number(v || 0) }
+                      }))} 
+                    />
+                    <span>Y</span>
+                    <InputNumber 
+                      size="small" 
+                      step={0.5} 
+                      value={pendingSettings?.splatPosition?.y ?? splatPosition.y} 
+                      style={{ width: 70 }}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatPosition: { ...(prev?.splatPosition ?? splatPosition), y: Number(v || 0) }
+                      }))} 
+                    />
+                    <span>Z</span>
+                    <InputNumber 
+                      size="small" 
+                      step={0.5} 
+                      value={pendingSettings?.splatPosition?.z ?? splatPosition.z} 
+                      style={{ width: 70 }}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatPosition: { ...(prev?.splatPosition ?? splatPosition), z: Number(v || 0) }
+                      }))} 
+                    />
+                  </Space>
+                  <Space wrap style={{ width: '100%' }}>
+                    <span style={{ minWidth: 40 }}>旋转：</span>
+                    <span>X</span>
+                    <InputNumber 
+                      size="small" 
+                      step={15} 
+                      value={pendingSettings?.splatRotation?.x ?? splatRotation.x} 
+                      style={{ width: 70 }}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatRotation: { ...(prev?.splatRotation ?? splatRotation), x: Number(v || 0) }
+                      }))} 
+                    />
+                    <span>Y</span>
+                    <InputNumber 
+                      size="small" 
+                      step={15} 
+                      value={pendingSettings?.splatRotation?.y ?? splatRotation.y} 
+                      style={{ width: 70 }}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatRotation: { ...(prev?.splatRotation ?? splatRotation), y: Number(v || 0) }
+                      }))} 
+                    />
+                    <span>Z</span>
+                    <InputNumber 
+                      size="small" 
+                      step={15} 
+                      value={pendingSettings?.splatRotation?.z ?? splatRotation.z} 
+                      style={{ width: 70 }}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatRotation: { ...(prev?.splatRotation ?? splatRotation), z: Number(v || 0) }
+                      }))} 
+                    />
+                    <span style={{ color: '#999', fontSize: 12 }}>°</span>
                   </Space>
                   <Space align="center" style={{ width: '100%' }}>
-                    <span style={{ minWidth: 50 }}>亮度：</span>
+                    <span style={{ minWidth: 40 }}>缩放：</span>
                     <Slider 
-                      style={{ flex: 1, minWidth: 100 }} 
+                      style={{ flex: 1, minWidth: 120 }} 
                       min={0.1} 
-                      max={3.0} 
+                      max={5.0} 
                       step={0.1} 
-                      value={bgPanoramaBrightness} 
-                      onChange={(value: number) => {
-                        setBgPanoramaBrightness(value);
-                      }} 
+                      value={pendingSettings?.splatScale ?? splatScale} 
+                      onChange={(value: number) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        splatScale: value
+                      }))} 
                     />
-                    <span style={{ minWidth: 40, textAlign: 'right' }}>{bgPanoramaBrightness.toFixed(1)}x</span>
+                    <span style={{ minWidth: 40, textAlign: 'right' }}>{(pendingSettings?.splatScale ?? splatScale).toFixed(1)}x</span>
                   </Space>
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Space>
-                      <Switch 
-                        checkedChildren="HDR环境光照" 
-                        unCheckedChildren="普通背景" 
-                        checked={useHDREnvironment} 
-                        onChange={(v) => setUseHDREnvironment(v)}
-                        disabled={bgPanorama ? !(bgPanorama.toLowerCase().endsWith('.hdr') || bgPanorama.toLowerCase().endsWith('.exr')) : true}
-                      />
-                    </Space>
-                    <div style={{ fontSize: '12px', color: '#999', paddingLeft: 8 }}>
-                      {bgPanorama && (bgPanorama.toLowerCase().endsWith('.hdr') || bgPanorama.toLowerCase().endsWith('.exr')) 
-                        ? '✓ HDR文件，启用后模型将使用真实环境光照和反射，让模型看起来更真实' 
-                        : '提示：仅HDR/EXR格式文件支持环境光照功能'}
-                    </div>
-                  </Space>
+                  <div style={{ fontSize: '12px', color: '#999', paddingLeft: 8, marginTop: 8 }}>
+                    高斯泼溅是一种新型3D表示技术，可以呈现逼真的环境效果。支持WebXR（VR/AR）查看。
+                  </div>
+                </Space>
+              )}
+              {/* 应用按钮 */}
+              {pendingSettings && (
+                <Space style={{ marginTop: 12, width: '100%', justifyContent: 'flex-end' }}>
+                  <Button size="small" onClick={() => setPendingSettings(null)}>取消</Button>
+                  <Button size="small" type="primary" onClick={() => {
+                    // 应用待定设置
+                    if (pendingSettings.bgType) setBgType(pendingSettings.bgType);
+                    if (pendingSettings.bgColor) setBgColor(pendingSettings.bgColor);
+                    if (pendingSettings.bgSplat) setBgSplat(pendingSettings.bgSplat);
+                    if (pendingSettings.bgPanorama) setBgPanorama(pendingSettings.bgPanorama);
+                    if (pendingSettings.bgPanoramaBrightness) setBgPanoramaBrightness(pendingSettings.bgPanoramaBrightness);
+                    if (pendingSettings.splatPosition) setSplatPosition(pendingSettings.splatPosition);
+                    if (pendingSettings.splatRotation) setSplatRotation(pendingSettings.splatRotation);
+                    if (pendingSettings.splatScale) setSplatScale(pendingSettings.splatScale);
+                    if (pendingSettings.dirLight) setDirLight(pendingSettings.dirLight);
+                    if (pendingSettings.ambLight) setAmbLight(pendingSettings.ambLight);
+                    if (pendingSettings.hemiLight) setHemiLight(pendingSettings.hemiLight);
+                    setPendingSettings(null);
+                    message.success('设置已应用');
+                  }}>应用设置</Button>
                 </Space>
               )}
             </>
@@ -6089,27 +6629,57 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         <div style={{ fontWeight: 600 }}>灯光</div>
         <Space wrap>
           <span>平行光</span>
-          <Input size="small" type="color" value={dirLight.color} onChange={(e)=>setDirLight(v=>({ ...v, color: e.target.value }))} />
-          <InputNumber size="small" step={0.1} min={0} max={10} value={dirLight.intensity} onChange={(v)=>setDirLight(val=>({ ...val, intensity: Number(v||0) }))} />
-          <span>Px</span><InputNumber size="small" step={0.1} value={dirLight.position.x} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, x: Number(v||0) } }))} />
-          <span>Py</span><InputNumber size="small" step={0.1} value={dirLight.position.y} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, y: Number(v||0) } }))} />
-          <span>Pz</span><InputNumber size="small" step={0.1} value={dirLight.position.z} onChange={(v)=>setDirLight(val=>({ ...val, position: { ...val.position, z: Number(v||0) } }))} />
+          <Input size="small" type="color" value={pendingSettings?.dirLight?.color ?? dirLight.color} onChange={(e)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            dirLight: { ...(prev?.dirLight ?? dirLight), color: e.target.value }
+          }))} />
+          <InputNumber size="small" step={0.1} min={0} max={10} value={pendingSettings?.dirLight?.intensity ?? dirLight.intensity} onChange={(v)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            dirLight: { ...(prev?.dirLight ?? dirLight), intensity: Number(v||0) }
+          }))} />
+          <span>Px</span><InputNumber size="small" step={0.1} value={pendingSettings?.dirLight?.position?.x ?? dirLight.position.x} onChange={(v)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            dirLight: { ...(prev?.dirLight ?? dirLight), position: { ...(prev?.dirLight?.position ?? dirLight.position), x: Number(v||0) } }
+          }))} />
+          <span>Py</span><InputNumber size="small" step={0.1} value={pendingSettings?.dirLight?.position?.y ?? dirLight.position.y} onChange={(v)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            dirLight: { ...(prev?.dirLight ?? dirLight), position: { ...(prev?.dirLight?.position ?? dirLight.position), y: Number(v||0) } }
+          }))} />
+          <span>Pz</span><InputNumber size="small" step={0.1} value={pendingSettings?.dirLight?.position?.z ?? dirLight.position.z} onChange={(v)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            dirLight: { ...(prev?.dirLight ?? dirLight), position: { ...(prev?.dirLight?.position ?? dirLight.position), z: Number(v||0) } }
+          }))} />
         </Space>
         <Space wrap>
           <span>环境光</span>
-          <Input size="small" type="color" value={ambLight.color} onChange={(e)=>setAmbLight(v=>({ ...v, color: e.target.value }))} />
-          <InputNumber size="small" step={0.1} min={0} max={10} value={ambLight.intensity} onChange={(v)=>setAmbLight(val=>({ ...val, intensity: Number(v||0) }))} />
+          <Input size="small" type="color" value={pendingSettings?.ambLight?.color ?? ambLight.color} onChange={(e)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            ambLight: { ...(prev?.ambLight ?? ambLight), color: e.target.value }
+          }))} />
+          <InputNumber size="small" step={0.1} min={0} max={10} value={pendingSettings?.ambLight?.intensity ?? ambLight.intensity} onChange={(v)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            ambLight: { ...(prev?.ambLight ?? ambLight), intensity: Number(v||0) }
+          }))} />
         </Space>
         <Space wrap>
           <span>半球光</span>
-          <Input size="small" type="color" value={hemiLight.skyColor} onChange={(e)=>setHemiLight(v=>({ ...v, skyColor: e.target.value }))} />
-          <Input size="small" type="color" value={hemiLight.groundColor} onChange={(e)=>setHemiLight(v=>({ ...v, groundColor: e.target.value }))} />
-          <InputNumber size="small" step={0.1} min={0} max={10} value={hemiLight.intensity} onChange={(v)=>setHemiLight(val=>({ ...val, intensity: Number(v||0) }))} />
+          <Input size="small" type="color" value={pendingSettings?.hemiLight?.skyColor ?? hemiLight.skyColor} onChange={(e)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            hemiLight: { ...(prev?.hemiLight ?? hemiLight), skyColor: e.target.value }
+          }))} />
+          <Input size="small" type="color" value={pendingSettings?.hemiLight?.groundColor ?? hemiLight.groundColor} onChange={(e)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            hemiLight: { ...(prev?.hemiLight ?? hemiLight), groundColor: e.target.value }
+          }))} />
+          <InputNumber size="small" step={0.1} min={0} max={10} value={pendingSettings?.hemiLight?.intensity ?? hemiLight.intensity} onChange={(v)=>setPendingSettings(prev => ({
+            ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+            hemiLight: { ...(prev?.hemiLight ?? hemiLight), intensity: Number(v||0) }
+          }))} />
         </Space>
         <Divider style={{ margin: '8px 0' }} />
         <div style={{ fontWeight: 600 }}>显示</div>
         <Space>
-          <Switch checkedChildren="地面开" unCheckedChildren="地面关" checked={showGrid} onChange={(v)=>{ setShowGrid(v); resize(); }} />
+          <Switch checkedChildren="地面开" unCheckedChildren="地面关" checked={showGrid} onChange={setShowGrid} />
         </Space>
         <Divider style={{ margin: '8px 0' }} />
         <div style={{ fontWeight: 600 }}>高亮模式</div>

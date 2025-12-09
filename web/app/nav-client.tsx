@@ -15,6 +15,7 @@ import {
 	SafetyOutlined,
 	KeyOutlined,
 	UnorderedListOutlined,
+	TrophyOutlined,
 } from '@ant-design/icons';
 import { usePathname } from 'next/navigation';
 
@@ -64,6 +65,9 @@ export default function ClientNav() {
 		// 资源管理：超管默认显示；其他用户仅在被授权后显示
 		if (role === 'superadmin' || metaverseAllowed) {
 			list.push({ key: '/resources', icon: <FileOutlined />, label: <Link href="/resources">资源管理</Link> });
+		}
+		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
+			list.push({ key: '/admin/quiz-records', icon: <TrophyOutlined />, label: <Link href="/admin/quiz-records">成绩管理</Link> });
 		}
 		if (role === 'superadmin') {
 			list.push({ key: '/admin/activation-codes', icon: <KeyOutlined />, label: <Link href="/admin/activation-codes">激活码管理</Link> });

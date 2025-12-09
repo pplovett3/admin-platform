@@ -7,6 +7,25 @@ export interface IVoiceConfig {
   style?: string;
 }
 
+// 考题选项
+export interface IQuestionOption {
+  key: string;    // A/B/C/D
+  text: string;   // 选项内容
+}
+
+// 考题数据结构
+export interface IQuestion {
+  id: string;
+  type: 'theory' | 'interactive';  // 理论题/互动题
+  question: string;                 // 题目内容
+  options: IQuestionOption[];       // 选项A/B/C/D
+  answer: string;                   // 正确答案key
+  explanation?: string;             // 解析
+  // 互动题专用
+  highlightNodeKey?: string;        // 高亮的模型节点
+  relatedOutlineItemId?: string;    // 关联的大纲项ID
+}
+
 export interface IAICourse extends Document {
   version: string; // schema版本
   title: string;
@@ -19,6 +38,7 @@ export interface IAICourse extends Document {
   coursewareVersion?: number;
   modelHash?: string;
   outline?: any[]; // 段落结构，保持灵活
+  questions?: IQuestion[]; // 考题列表
   assets?: {
     images?: any[];
     audio?: any[];
@@ -36,6 +56,24 @@ const VoiceConfigSchema = new Schema({
   style: { type: String }
 }, { _id: false });
 
+// 考题选项Schema
+const QuestionOptionSchema = new Schema({
+  key: { type: String, required: true },   // A/B/C/D
+  text: { type: String, required: true }   // 选项内容
+}, { _id: false });
+
+// 考题Schema
+const QuestionSchema = new Schema({
+  id: { type: String, required: true },
+  type: { type: String, enum: ['theory', 'interactive'], required: true },
+  question: { type: String, required: true },
+  options: { type: [QuestionOptionSchema], required: true },
+  answer: { type: String, required: true },
+  explanation: { type: String },
+  highlightNodeKey: { type: String },        // 互动题：高亮的模型节点
+  relatedOutlineItemId: { type: String }     // 关联的大纲项ID
+}, { _id: false });
+
 const AICourseSchema = new Schema<IAICourse>({
   version: { type: String, default: '1.0' },
   title: { type: String, required: true },
@@ -48,6 +86,7 @@ const AICourseSchema = new Schema<IAICourse>({
   coursewareVersion: { type: Number },
   modelHash: { type: String },
   outline: { type: Schema.Types.Mixed, default: [] },
+  questions: { type: [QuestionSchema], default: [] },  // 考题列表
   assets: { type: Schema.Types.Mixed, default: {} },
   status: { type: String, enum: ['draft', 'published'], default: 'draft' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },

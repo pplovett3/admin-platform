@@ -317,13 +317,16 @@ export async function getPublicCourse(req: Request, res: Response) {
     const { publishId } = req.params;
     console.log('=== 公开课程访问 ===');
     console.log('publishId:', publishId);
+    console.log('Request headers:', req.headers);
 
     if (!publishId || !Types.ObjectId.isValid(publishId)) {
       console.error('Invalid publishId:', publishId);
       return res.status(400).json({ message: 'Valid publishId is required' });
     }
 
+    console.log('正在从数据库查询课程...');
     const publishedCourse = await PublishedCourseModel.findById(publishId).lean();
+    console.log('数据库查询完成');
     console.log('找到课程:', !!publishedCourse, '状态:', publishedCourse?.status);
     
     if (!publishedCourse || publishedCourse.status !== 'active') {
@@ -404,7 +407,9 @@ export async function getPublicCourse(req: Request, res: Response) {
       publishConfig: publishedCourse.publishConfig,
       courseData: processedCourseData,
       coursewareData: processedCoursewareData,
-      resourceBaseUrl: `${req.protocol}://${req.get('host')}/api/public`,
+      // 使用相对路径，让前端浏览器通过 Next.js 代理访问资源
+      // 不使用绝对URL，避免 Docker 内部地址（如 server:4000）暴露给浏览器
+      resourceBaseUrl: '/api/public',
       stats: {
         viewCount: updatedCourse?.stats?.viewCount || 0 // 使用更新后的访问次数
       },
@@ -421,10 +426,12 @@ export async function getPublicCourse(req: Request, res: Response) {
 
   } catch (error) {
     console.error('=== Get public course error ===');
-    console.error('Error details:', error);
+    console.error('Error name:', (error as any)?.name);
+    console.error('Error message:', (error as any)?.message);
     console.error('Error stack:', (error as any)?.stack);
+    console.error('Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     const message = (error as any)?.message || 'Internal server error';
-    res.status(500).json({ message });
+    res.status(500).json({ message, error: process.env.NODE_ENV !== 'production' ? String(error) : undefined });
   }
 }
 
