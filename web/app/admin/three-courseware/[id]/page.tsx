@@ -14,6 +14,7 @@ interface CoursewareData {
   description: string;
   modelUrl: string;
   modifiedModelUrl?: string;
+  thumbnail?: string;
   annotations: any[];
   animations: any[];
   settings: any;

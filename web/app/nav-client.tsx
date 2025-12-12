@@ -2,14 +2,12 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { parseJwt, getToken, Role } from '@/app/_utils/auth';
-import { Switch, Typography, Menu } from 'antd';
-import { useUiTheme } from './providers';
+import { Menu } from 'antd';
 import {
 	TeamOutlined,
 	CrownOutlined,
 	ReadOutlined,
 	ApartmentOutlined,
-	DeploymentUnitOutlined,
 	ExperimentOutlined,
 	FileOutlined,
 	SafetyOutlined,
@@ -22,7 +20,6 @@ import { usePathname } from 'next/navigation';
 export default function ClientNav() {
 	const [role, setRole] = useState<Role | undefined>(undefined);
 	const [metaverseAllowed, setMetaverseAllowed] = useState<boolean>(false);
-	const { uiTheme, setUiTheme } = useUiTheme();
 	const pathname = usePathname();
 
 	useEffect(() => {
@@ -42,7 +39,6 @@ export default function ClientNav() {
 			list.push({ key: '/analytics', icon: <ExperimentOutlined />, label: <Link href="/analytics">数据总览</Link> });
 		}
 
-		// 激活课程（所有用户都可见）
 		list.push({ key: '/activate', icon: <KeyOutlined />, label: <Link href="/activate">激活课程</Link> });
 
 		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
@@ -55,14 +51,10 @@ export default function ClientNav() {
 		if (role === 'superadmin') {
 			list.push({ key: '/admin/schools', icon: <CrownOutlined />, label: <Link href="/admin/schools">学校管理</Link> });
 			list.push({ key: '/admin/courses', icon: <ReadOutlined />, label: <Link href="/admin/courses">课程管理</Link> });
-			// 三维课件（仅超管起步；后续可开放 schoolAdmin）
 			list.push({ key: '/admin/three-courseware', icon: <FileOutlined />, label: <Link href="/admin/three-courseware">三维课件</Link> });
-			// AI课程编辑
 			list.push({ key: '/admin/ai-course', icon: <ReadOutlined />, label: <Link href="/admin/ai-course">AI课程编辑</Link> });
-			// 元宇宙大厅授权（仅超管）
 			list.push({ key: '/metaverse/authorize', icon: <SafetyOutlined />, label: <Link href="/metaverse/authorize">元宇宙大厅授权</Link> });
 		}
-		// 资源管理：超管默认显示；其他用户仅在被授权后显示
 		if (role === 'superadmin' || metaverseAllowed) {
 			list.push({ key: '/resources', icon: <FileOutlined />, label: <Link href="/resources">资源管理</Link> });
 		}
@@ -79,7 +71,7 @@ export default function ClientNav() {
 	return (
 		<div
 			style={{
-				width: 220,
+				width: 240,
 				position: 'fixed',
 				left: 0,
 				top: 0,
@@ -87,24 +79,63 @@ export default function ClientNav() {
 				height: '100vh',
 				display: 'flex',
 				flexDirection: 'column',
-				background: uiTheme === 'dark' ? 'linear-gradient(180deg, #0e1730 0%, #0b1220 100%)' : '#FFFFFF',
-				borderRight: uiTheme === 'dark' ? '1px solid rgba(255,255,255,0.06)' : '1px solid #E0DEEA'
+				// 半透明毛玻璃 + 浅蓝边框发光
+				background: 'linear-gradient(180deg, rgba(13, 21, 32, 0.75) 0%, rgba(10, 16, 24, 0.7) 100%)',
+				backdropFilter: 'blur(20px) saturate(150%)',
+				WebkitBackdropFilter: 'blur(20px) saturate(150%)',
+				borderRight: '1px solid rgba(34, 211, 238, 0.15)',
+				boxShadow: '1px 0 30px rgba(34, 211, 238, 0.05)',
+				zIndex: 100
 			}}
 		>
-			<div style={{ padding: '16px 14px', borderBottom: uiTheme === 'dark' ? '1px solid rgba(255,255,255,0.06)' : '1px solid #E0DEEA' }}>
-				<Typography.Text style={{ fontWeight: 800, letterSpacing: 0.6, color: uiTheme === 'dark' ? '#e2e8f0' : '#0f172a' }}>YF课程管理平台</Typography.Text>
+			
+			{/* Logo区域 */}
+			<div style={{ 
+				padding: '20px 18px', 
+				borderBottom: '1px solid rgba(34, 211, 238, 0.1)',
+				position: 'relative'
+			}}>
+				<div style={{ 
+					fontWeight: 700, 
+					fontSize: 18,
+					letterSpacing: 1, 
+					color: '#fff'
+				}}>
+					CollabXR平台
+				</div>
+				<div style={{
+					fontSize: 11,
+					color: 'rgba(148, 163, 184, 0.5)',
+					marginTop: 4,
+					letterSpacing: 0.5
+				}}>
+					内容管理系统
+				</div>
 			</div>
+			
+			{/* 菜单 */}
 			<Menu
 				mode="inline"
 				items={items}
-				style={{ borderRight: 0, flex: 1, background: 'transparent' }}
+				style={{ 
+					borderRight: 0, 
+					flex: 1, 
+					background: 'transparent',
+					padding: '8px 0'
+				}}
 				selectedKeys={[pathname || '/']}
 			/>
-			<div style={{ padding: 12, borderTop: uiTheme === 'dark' ? '1px solid rgba(255,255,255,0.06)' : '1px solid #E0DEEA' }}>
-				<span style={{ marginRight: 8 }}>亮色</span>
-				<Switch checked={uiTheme === 'dark'} onChange={(v) => setUiTheme(v ? 'dark' : 'light')} />
-				<span style={{ marginLeft: 8 }}>暗色</span>
+			
+			{/* 底部版本信息 */}
+			<div style={{ 
+				padding: '16px 18px', 
+				borderTop: '1px solid rgba(34, 211, 238, 0.1)',
+				fontSize: 11,
+				color: 'rgba(148, 163, 184, 0.4)',
+				textAlign: 'center'
+			}}>
+				v2.0.0 · Liquid Glass UI
 			</div>
 		</div>
 	);
-} 
+}

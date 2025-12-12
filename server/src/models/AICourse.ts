@@ -43,6 +43,7 @@ export interface IAICourse extends Document {
     images?: any[];
     audio?: any[];
   };
+  thumbnail?: string; // 缩略图URL
   status: 'draft' | 'published';
   createdBy: Types.ObjectId;
   updatedBy: Types.ObjectId;
@@ -88,6 +89,7 @@ const AICourseSchema = new Schema<IAICourse>({
   outline: { type: Schema.Types.Mixed, default: [] },
   questions: { type: [QuestionSchema], default: [] },  // 考题列表
   assets: { type: Schema.Types.Mixed, default: {} },
+  thumbnail: { type: String }, // 缩略图URL
   status: { type: String, enum: ['draft', 'published'], default: 'draft' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },

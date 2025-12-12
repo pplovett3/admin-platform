@@ -50,6 +50,10 @@ async function convertCoursewareUrls(courseware: any) {
     converted.modifiedModelUrl = await convertFileUrlToPublic(converted.modifiedModelUrl);
   }
   
+  if (converted.thumbnail) {
+    converted.thumbnail = await convertFileUrlToPublic(converted.thumbnail);
+  }
+  
   return converted;
 }
 

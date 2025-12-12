@@ -30,6 +30,7 @@ export async function listAICourses(req: Request, res: Response) {
         .find(filter)
         .populate('createdBy', 'name')
         .populate('updatedBy', 'name')
+        .populate('coursewareId', 'thumbnail name') // 关联三维课件的缩略图
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -37,8 +38,15 @@ export async function listAICourses(req: Request, res: Response) {
       AICourseModel.countDocuments(filter)
     ]);
 
+    // 将关联课件的缩略图提取到顶层，方便前端使用
+    const itemsWithThumbnail = items.map((item: any) => ({
+      ...item,
+      thumbnail: item.thumbnail || item.coursewareId?.thumbnail,
+      coursewareName: item.coursewareId?.name
+    }));
+
     res.json({
-      items,
+      items: itemsWithThumbnail,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) }
     });
   } catch (err) {

@@ -1,9 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Card, Button, Space, Table, Typography, Upload, App, Input, Select, Tag, Switch, Modal, Form, Popconfirm } from 'antd';
-import type { UploadProps } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Button, Space, Typography, App, Input, Modal, Form, Popconfirm, Empty, Spin, Tooltip } from 'antd';
+import { EditOutlined, DeleteOutlined, PlusOutlined, FileImageOutlined, EyeOutlined } from '@ant-design/icons';
 import { apiGet, apiPut, apiDelete } from '@/app/_utils/api';
 
 interface CoursewareRow { 
@@ -11,6 +10,7 @@ interface CoursewareRow {
   name: string; 
   description?: string;
   modelUrl?: string; 
+  thumbnail?: string;
   createdAt?: string; 
   updatedAt?: string; 
   createdBy?: { name: string };
@@ -25,6 +25,212 @@ interface CoursewareListResponse {
     total: number;
     pages: number;
   };
+}
+
+// 转换缩略图URL为公开访问格式
+function getThumbnailUrl(url?: string): string | null {
+  if (!url) return null;
+  // 如果已经是公开格式，直接返回
+  if (url.includes('/api/files/thumbnail/')) return url;
+  // 从旧格式 /api/files/:id/download/... 提取文件ID
+  const match = url.match(/\/api\/files\/([a-f0-9]{24})\/download/i);
+  if (match) {
+    return `/api/files/thumbnail/${match[1]}`;
+  }
+  // 其他格式（如公网URL）直接返回
+  return url;
+}
+
+// 课件卡片组件
+function CoursewareCard({ 
+  item, 
+  onEdit, 
+  onDelete 
+}: { 
+  item: CoursewareRow; 
+  onEdit: (item: CoursewareRow) => void;
+  onDelete: (item: CoursewareRow) => void;
+}) {
+  const [imageError, setImageError] = useState(false);
+  const thumbnailUrl = getThumbnailUrl(item.thumbnail);
+  
+  return (
+    <div style={{
+      background: 'linear-gradient(145deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9))',
+      borderRadius: 16,
+      overflow: 'hidden',
+      border: '1px solid rgba(100, 116, 139, 0.2)',
+      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      cursor: 'pointer',
+      position: 'relative',
+      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.transform = 'translateY(-4px)';
+      e.currentTarget.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.4)';
+      e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.4)';
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.transform = 'translateY(0)';
+      e.currentTarget.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.3)';
+      e.currentTarget.style.borderColor = 'rgba(100, 116, 139, 0.2)';
+    }}
+    >
+      {/* 缩略图区域 */}
+      <Link href={`/admin/three-courseware/${item._id}`}>
+        <div style={{
+          width: '100%',
+          aspectRatio: '16/10',
+          background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+          overflow: 'hidden',
+        }}>
+          {thumbnailUrl && !imageError ? (
+            <img 
+              src={thumbnailUrl} 
+              alt={item.name}
+              onError={() => setImageError(true)}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+              }}
+            />
+          ) : (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 8,
+              color: 'rgba(148, 163, 184, 0.5)',
+            }}>
+              <FileImageOutlined style={{ fontSize: 48 }} />
+              <span style={{ fontSize: 12 }}>暂无预览</span>
+            </div>
+          )}
+          {/* 悬停遮罩 */}
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(to top, rgba(15, 23, 42, 0.9) 0%, transparent 50%)',
+            opacity: 0,
+            transition: 'opacity 0.3s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          className="card-overlay"
+          >
+            <Button type="primary" icon={<EyeOutlined />} style={{ 
+              background: 'rgba(56, 189, 248, 0.9)',
+              borderColor: 'transparent',
+            }}>
+              编辑内容
+            </Button>
+          </div>
+        </div>
+      </Link>
+      
+      {/* 信息区域 */}
+      <div style={{ padding: '16px 16px 12px' }}>
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'flex-start',
+          marginBottom: 8,
+        }}>
+          <Tooltip title={item.name}>
+            <h3 style={{ 
+              margin: 0, 
+              fontSize: 15,
+              fontWeight: 600,
+              color: '#e2e8f0',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1,
+              marginRight: 8,
+            }}>
+              {item.name}
+            </h3>
+          </Tooltip>
+          <span style={{
+            fontSize: 11,
+            color: '#64748b',
+            whiteSpace: 'nowrap',
+          }}>
+            v{item.version || 1}
+          </span>
+        </div>
+        
+        <p style={{ 
+          margin: '0 0 12px',
+          fontSize: 13,
+          color: '#94a3b8',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          lineHeight: 1.5,
+          minHeight: 39,
+        }}>
+          {item.description || '暂无描述'}
+        </p>
+        
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          paddingTop: 12,
+          borderTop: '1px solid rgba(100, 116, 139, 0.15)',
+        }}>
+          <div style={{ fontSize: 11, color: '#64748b' }}>
+            <div>{item.createdBy?.name || 'Admin'}</div>
+            <div>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '-'}</div>
+          </div>
+          <Space size={4}>
+            <Tooltip title="修改信息">
+              <Button 
+                type="text" 
+                size="small" 
+                icon={<EditOutlined />}
+                onClick={(e) => { e.stopPropagation(); onEdit(item); }}
+                style={{ color: '#38bdf8' }}
+              />
+            </Tooltip>
+            <Popconfirm
+              title="确定删除此课件吗？"
+              description="删除后无法恢复，请谨慎操作。"
+              onConfirm={() => onDelete(item)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Tooltip title="删除">
+                <Button 
+                  type="text" 
+                  size="small" 
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </Tooltip>
+            </Popconfirm>
+          </Space>
+        </div>
+      </div>
+      
+      {/* 卡片悬停样式 */}
+      <style jsx>{`
+        div:hover .card-overlay {
+          opacity: 1 !important;
+        }
+      `}</style>
+    </div>
+  );
 }
 
 export default function ThreeCoursewareListPage() {
@@ -44,14 +250,12 @@ export default function ThreeCoursewareListPage() {
         setRows(response.items);
         setPagination(response.pagination);
       } else {
-        // 兼容旧的直接数组格式
         setRows(Array.isArray(response) ? response : []);
       }
     } catch (e: any) { message.error(e.message || '加载失败'); } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
 
-  // 编辑课件
   const handleEdit = (item: CoursewareRow) => {
     setEditingItem(item);
     form.setFieldsValue({
@@ -61,7 +265,6 @@ export default function ThreeCoursewareListPage() {
     setEditModalOpen(true);
   };
 
-  // 保存编辑
   const handleSaveEdit = async () => {
     try {
       const values = await form.validateFields();
@@ -69,55 +272,84 @@ export default function ThreeCoursewareListPage() {
       message.success('课件信息已更新');
       setEditModalOpen(false);
       setEditingItem(null);
-      load(); // 重新加载列表
+      load();
     } catch (e: any) {
       message.error(e.message || '保存失败');
     }
   };
 
-  // 删除课件
   const handleDelete = async (item: CoursewareRow) => {
     try {
       await apiDelete(`/api/coursewares/${item._id}`);
       message.success('课件已删除');
-      load(); // 重新加载列表
+      load();
     } catch (e: any) {
       message.error(e.message || '删除失败');
     }
   };
 
-  const columns = useMemo(() => [
-    { title: '名称', dataIndex: 'name', width: 200 },
-    { title: '描述', dataIndex: 'description', width: 300, render: (v: string) => v || '-' },
-    { title: '模型', dataIndex: 'modelUrl', width: 100, render: (v: string) => v ? <a href={v} target="_blank" rel="noopener noreferrer">GLB</a> : '-' },
-    { title: '创建者', dataIndex: ['createdBy', 'name'], width: 100, render: (v: string) => v || '-' },
-    { title: '更新时间', dataIndex: 'updatedAt', width: 150, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
-    { title: '操作', key: 'op', width: 150, render: (_:any, r:CoursewareRow) => <Space>
-      <Link href={`/admin/three-courseware/${r._id}`}>
-        <Button type="link" size="small">编辑内容</Button>
-      </Link>
-      <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)}>修改</Button>
-      <Popconfirm
-        title="确定删除此课件吗？"
-        description="删除后无法恢复，请谨慎操作。"
-        onConfirm={() => handleDelete(r)}
-        okText="确定"
-        cancelText="取消"
-      >
-        <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
-      </Popconfirm>
-    </Space> },
-  ],[]);
-
   return (
     <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 12 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>三维课件</Typography.Title>
-        <Link href={`/admin/three-courseware/new`}><Button type="primary">新建课件</Button></Link>
-      </Space>
-      <Card>
-        <Table rowKey="_id" loading={loading} dataSource={rows} columns={columns as any} pagination={false} />
-      </Card>
+      {/* 页头 */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: 24,
+      }}>
+        <Typography.Title level={3} style={{ margin: 0, color: '#e2e8f0' }}>
+          三维课件
+        </Typography.Title>
+        <Link href="/admin/three-courseware/new">
+          <Button type="primary" icon={<PlusOutlined />} style={{
+            background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+            borderColor: 'transparent',
+            height: 38,
+            paddingInline: 20,
+            fontWeight: 500,
+          }}>
+            新建课件
+          </Button>
+        </Link>
+      </div>
+      
+      {/* 卡片网格 */}
+      {loading ? (
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          minHeight: 400,
+        }}>
+          <Spin size="large" />
+        </div>
+      ) : rows.length === 0 ? (
+        <Empty 
+          description="暂无课件" 
+          style={{ marginTop: 100 }}
+        >
+          <Link href="/admin/three-courseware/new">
+            <Button type="primary" icon={<PlusOutlined />}>
+              创建第一个课件
+            </Button>
+          </Link>
+        </Empty>
+      ) : (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gap: 24,
+        }}>
+          {rows.map((item) => (
+            <CoursewareCard 
+              key={item._id} 
+              item={item} 
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+            />
+          ))}
+        </div>
+      )}
 
       {/* 编辑课件弹窗 */}
       <Modal
@@ -150,5 +382,3 @@ export default function ThreeCoursewareListPage() {
     </div>
   );
 }
-
-

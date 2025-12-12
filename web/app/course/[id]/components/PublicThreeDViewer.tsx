@@ -2074,8 +2074,8 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       const camera = cameraRef.current;
       const renderer = rendererRef.current;
 
-      // 如果没有背景设置，使用默认HDR背景
-      const backgroundType = settings?.backgroundType || 'panorama';
+      // 如果没有背景设置，使用默认纯色背景
+      const backgroundType = settings?.backgroundType || 'color';
       const backgroundPanorama = settings?.backgroundPanorama || '/360background_7.hdr';
       const backgroundSplat = settings?.backgroundSplat || '/garden.splat';
       const bgPanoramaBrightness = settings?.backgroundPanoramaBrightness || 1.0;

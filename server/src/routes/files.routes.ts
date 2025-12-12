@@ -155,17 +155,15 @@ router.get('/mine', authenticate as any, async (req, res) => {
     ownerUserId: new mongoose.Types.ObjectId(current.userId), 
     visibility: 'private',
     storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件（AI课件配音）
-    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
+    $and: [
+      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }, // 排除编辑器临时文件
+      { originalName: { $not: /^thumbnail-/i } } // 排除课件封面图
+    ]
   };
   if (type) filter.type = type;
   if (q) {
-    // 搜索时使用 $and 确保同时满足搜索条件和排除条件
-    filter.$and = [
-      { originalName: { $regex: String(q), $options: 'i' } },
-      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }
-    ];
-    // 移除单独的 originalName 条件，因为已经在 $and 中处理
-    delete filter.originalName;
+    // 搜索时添加搜索条件
+    filter.$and.push({ originalName: { $regex: String(q), $options: 'i' } });
   }
   const p = Math.max(parseInt(String(page), 10) || 1, 1);
   const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 20, 1), 100);
@@ -190,19 +188,16 @@ router.get('/public', authenticate as any, async (_req, res) => {
   const { type, q, page = '1', pageSize = '20' } = _req.query as any;
   const filter: any = { 
     visibility: 'public',
-    // 排除 TTS 自动生成的音频文件（AI课件配音）
-    storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件
-    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
+    storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件（AI课件配音）
+    $and: [
+      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }, // 排除编辑器临时文件
+      { originalName: { $not: /^thumbnail-/i } } // 排除课件封面图
+    ]
   };
   if (type) filter.type = type;
   if (q) {
-    // 搜索时使用 $and 确保同时满足搜索条件和排除条件
-    filter.$and = [
-      { originalName: { $regex: String(q), $options: 'i' } },
-      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }
-    ];
-    // 移除单独的 originalName 条件，因为已经在 $and 中处理
-    delete filter.originalName;
+    // 搜索时添加搜索条件
+    filter.$and.push({ originalName: { $regex: String(q), $options: 'i' } });
   }
   const p = Math.max(parseInt(String(page), 10) || 1, 1);
   const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 20, 1), 100);
@@ -217,10 +212,14 @@ router.get('/client/mine', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string };
   // 排除 TTS 自动生成的音频文件（AI课件配音）
   // 排除编辑器自动保存的临时GLB文件
+  // 排除课件封面图
   const rows = await FileModel.find({ 
     ownerUserId: new mongoose.Types.ObjectId(current.userId),
     storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件
-    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
+    $and: [
+      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }, // 排除编辑器临时文件
+      { originalName: { $not: /^thumbnail-/i } } // 排除课件封面图
+    ]
   }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
   const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
@@ -230,10 +229,14 @@ router.get('/client/mine', authenticate as any, async (req, res) => {
 router.get('/client/public', authenticate as any, async (_req, res) => {
   // 排除 TTS 自动生成的音频文件（AI课件配音）
   // 排除编辑器自动保存的临时GLB文件
+  // 排除课件封面图
   const rows = await FileModel.find({ 
     visibility: 'public',
     storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件
-    originalName: { $not: /^courseware-.*-modified\.glb$/i } // 排除编辑器临时文件
+    $and: [
+      { originalName: { $not: /^courseware-.*-modified\.glb$/i } }, // 排除编辑器临时文件
+      { originalName: { $not: /^thumbnail-/i } } // 排除课件封面图
+    ]
   }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
   const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
@@ -280,6 +283,38 @@ const handleDownload = async (req: any, res: any) => {
 
 router.get('/:id/download/:filename', authenticate as any, handleDownload);
 router.get('/:id/download', authenticate as any, handleDownload);
+
+// 公开的缩略图访问接口（不需要认证）- 仅限缩略图文件
+router.get('/thumbnail/:id', async (req: any, res: any) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+    
+    const doc = await FileModel.findById(id).lean();
+    if (!doc) return res.status(404).json({ message: 'Not found' });
+    
+    // 安全检查：只允许访问缩略图文件
+    const filename = (doc as any).originalName || '';
+    if (!filename.startsWith('thumbnail-') || !filename.endsWith('.png')) {
+      return res.status(403).json({ message: 'Access denied - only thumbnails allowed' });
+    }
+    
+    const rel = (doc as any).storageRelPath;
+    if (!rel) return res.status(404).json({ message: 'File path not found' });
+    
+    const abs = path.join(config.storageRoot, rel);
+    if (!fs.existsSync(abs)) return res.status(404).json({ message: 'File not found on disk' });
+    
+    const stat = fs.statSync(abs);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Cache-Control', 'public, max-age=31536000'); // 缓存1年
+    fs.createReadStream(abs).pipe(res);
+  } catch (e: any) {
+    console.error('Thumbnail access error:', e);
+    res.status(500).json({ message: 'Internal error' });
+  }
+});
 
 router.post('/upload', authenticate as any, upload.single('file'), async (req, res) => {
   try {

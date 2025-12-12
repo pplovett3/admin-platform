@@ -95,6 +95,7 @@ export interface ICourseware extends Document {
   description: string;
   modelUrl: string; // GLB文件URL
   modifiedModelUrl?: string; // 修改后的GLB文件URL（可选）
+  thumbnail?: string; // 缩略图URL（自动生成）
   annotations: IAnnotation[];
   animations: IAnimation[];
   settings: {
@@ -231,6 +232,7 @@ const CoursewareSchema = new Schema<ICourseware>(
     description: { type: String, default: '' },
     modelUrl: { type: String, required: true },
     modifiedModelUrl: { type: String },
+    thumbnail: { type: String }, // 缩略图URL
     annotations: [AnnotationSchema],
     animations: [AnimationSchema],
     settings: {

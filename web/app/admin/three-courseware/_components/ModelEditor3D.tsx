@@ -405,6 +405,7 @@ interface CoursewareData {
   description: string;
   modelUrl: string;
   modifiedModelUrl?: string;
+  thumbnail?: string;
   annotations: any[];
   animations: any[];
   settings: any;
@@ -470,7 +471,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [bgTransparent, setBgTransparent] = useState<boolean>(false);
   const [bgColor, setBgColor] = useState<string>('#919191');
-  const [bgType, setBgType] = useState<'color' | 'splat'>('splat'); // 只保留纯色和高斯+HDR两种模式
+  const [bgType, setBgType] = useState<'color' | 'splat'>('color'); // 只保留纯色和高斯+HDR两种模式，默认纯色
   const [bgPanorama, setBgPanorama] = useState<string | null>('/360background_7.hdr'); // 用于环境光照
   const [bgPanoramaBrightness, setBgPanoramaBrightness] = useState<number>(1.0);
   const [useHDREnvironment, setUseHDREnvironment] = useState<boolean>(true);
@@ -558,8 +559,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     };
     loadWorldScenes();
   }, []);
-  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 0, position: { x: 3, y: 5, z: 2 } });
-  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0 });
+  // 纯色背景默认灯光：平行光1，环境光0.5，半球光0
+  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } });
+  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.5 });
   const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0 });
   const [autoKey, setAutoKey] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -5613,6 +5615,116 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return structure;
   };
 
+  // 辅助函数：对焦到整个模型（用于生成缩略图）
+  const focusOnEntireModel = (): Promise<void> => {
+    return new Promise((resolve) => {
+      const model = modelRootRef.current;
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
+      
+      if (!model || !camera || !controls) {
+        resolve();
+        return;
+      }
+      
+      // 计算模型的包围盒
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      
+      // 计算合适的相机距离
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = (camera as THREE.PerspectiveCamera).fov * (Math.PI / 180);
+      const cameraDistance = maxDim / (2 * Math.tan(fov / 2)) * 1.5;
+      
+      // 设置等轴测视角（斜上方45度）
+      const angle = Math.PI / 4; // 45度
+      const elevation = Math.PI / 6; // 30度仰角
+      const newPos = new THREE.Vector3(
+        center.x + cameraDistance * Math.cos(elevation) * Math.sin(angle),
+        center.y + cameraDistance * Math.sin(elevation),
+        center.z + cameraDistance * Math.cos(elevation) * Math.cos(angle)
+      );
+      
+      camera.position.copy(newPos);
+      camera.lookAt(center);
+      controls.target.copy(center);
+      controls.update();
+      
+      // 等待一帧确保渲染完成
+      requestAnimationFrame(() => {
+        const renderer = rendererRef.current;
+        const scene = sceneRef.current;
+        if (renderer && scene && camera) {
+          renderer.render(scene, camera);
+        }
+        resolve();
+      });
+    });
+  };
+
+  // 辅助函数：生成缩略图（使用当前编辑器视角，不强制对焦）
+  const generateThumbnail = async (): Promise<string | null> => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    
+    if (!renderer || !scene || !camera || !modelRootRef.current) {
+      return null;
+    }
+    
+    try {
+      // 直接使用当前编辑器视角，确保渲染最新画面
+      renderer.render(scene, camera);
+      
+      // 截图
+      return new Promise((resolve) => {
+        renderer.domElement.toBlob(async (blob) => {
+          if (!blob) {
+            resolve(null);
+            return;
+          }
+          
+          try {
+            // 上传缩略图 - 使用通用文件上传接口
+            const formData = new FormData();
+            formData.append('file', blob, `thumbnail-${coursewareId}.png`);
+            
+            const baseUrl = getAPI_URL();
+            const token = (typeof getToken === 'function' ? getToken() : localStorage.getItem('token')) as string | null;
+            
+            const uploadResponse = await fetch(`${baseUrl}/api/files/upload`, {
+              method: 'POST',
+              body: formData,
+              headers: token ? { 'Authorization': `Bearer ${token}` } : undefined
+            });
+            
+            if (uploadResponse.ok) {
+              const result = await uploadResponse.json();
+              // 使用公开的缩略图访问接口，不需要认证
+              const fileId = result.file?._id || result.downloadUrl?.match(/\/files\/([^\/]+)\//)?.[1];
+              const thumbnailUrl = fileId ? `/api/files/thumbnail/${fileId}` : (result.downloadUrl || result.url);
+              console.log('✅ 缩略图上传成功:', thumbnailUrl);
+              resolve(thumbnailUrl);
+            } else {
+              const errorText = await uploadResponse.text();
+              console.warn('⚠️ 缩略图上传失败:', errorText);
+              resolve(null);
+            }
+          } catch (e) {
+            console.warn('⚠️ 缩略图处理失败:', e);
+            resolve(null);
+          }
+        }, 'image/png', 0.85);
+      });
+    } catch (e) {
+      console.warn('⚠️ 生成缩略图失败:', e);
+      return null;
+    }
+  };
+
   // 保存课件到后端
   const saveCourseware = async () => {
     if (!coursewareId) {
@@ -5625,6 +5737,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 确保标注几何存在，便于保存时反推偏移
       try { refreshMarkers(); } catch {}
       let modifiedModelUrl = null;
+      
+      // 🖼️ 生成缩略图（如果模型已加载且没有现有缩略图或模型有变化）
+      let thumbnailUrl: string | null = null;
+      const existingThumbnail = coursewareData?.thumbnail;
+      const shouldGenerateThumbnail = modelRootRef.current && (!existingThumbnail || needsGLBExport());
+      
+      if (shouldGenerateThumbnail) {
+        console.log('📸 开始生成缩略图...', existingThumbnail ? '(更新)' : '(新建)');
+        thumbnailUrl = await generateThumbnail();
+        if (thumbnailUrl) {
+          console.log('✅ 缩略图生成成功');
+        }
+      }
       
       // 🚀 如果模型结构或动画有变化，导出新的完整GLB文件
       if (modelRootRef.current && needsGLBExport()) {
@@ -5921,7 +6046,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         // 保存模型结构信息（重命名、可见性等）
         modelStructure: buildModelStructure(),
         // 如果有修改后的模型文件，保存其URL
-        ...(modifiedModelUrl && { modifiedModelUrl })
+        ...(modifiedModelUrl && { modifiedModelUrl }),
+        // 🖼️ 缩略图URL
+        ...(thumbnailUrl && { thumbnail: thumbnailUrl })
       };
       
       console.log('最终保存数据大小:', JSON.stringify(saveData).length, '字符');
@@ -6293,8 +6420,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           console.log('⚠️ [Settings/Load] 未找到背景颜色，使用默认值');
         }
         
-        // 确保backgroundType被正确读取（如果没有则使用默认值'panorama'）
-        const bgTypeValue = settings.backgroundType || 'panorama';
+        // 确保backgroundType被正确读取（如果没有则使用默认值'color'纯色背景）
+        const bgTypeValue = settings.backgroundType || 'color';
         console.log('✅ [Settings/Load] 设置背景类型:', bgTypeValue, '(原始值:', settings.backgroundType, ')');
         setBgType(bgTypeValue);
         
@@ -6389,18 +6516,21 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           console.log('⚠️ [Settings/Load] 未找到灯光设置，使用默认值');
         }
       } else {
-        // 如果没有settings，使用默认值
+        // 如果没有settings，使用默认值（纯色背景）
         console.log('⚠️ [Settings/Load] 课件数据中没有settings对象，使用默认值');
         console.log('⚠️ [Settings/Load] 默认设置:', {
-          bgType: 'splat',
-          bgPanorama: '/360background_7.hdr',
-          bgPanoramaBrightness: 1.0,
-          useHDREnvironment: true
+          bgType: 'color',
+          bgColor: '#919191',
+          dirLight: { intensity: 1 },
+          ambLight: { intensity: 0.5 },
+          hemiLight: { intensity: 0 }
         });
-        setBgType('splat');
-        setBgPanorama('/360background_7.hdr');
-        setBgPanoramaBrightness(1.0);
-        setUseHDREnvironment(true);
+        setBgType('color');
+        setBgColor('#919191');
+        // 纯色背景默认灯光：平行光1，环境光0.5，半球光0
+        setDirLight({ color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } });
+        setAmbLight({ color: '#ffffff', intensity: 0.5 });
+        setHemiLight({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0 });
       }
       
       console.log('✅ [Settings/Load-Complete] 设置加载完成');
@@ -6413,8 +6543,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   }, [coursewareData]);
 
-  // 设置弹窗
-  const SettingsModal = () => (
+  // 设置弹窗 - 直接渲染JSX而非函数组件，避免每次渲染重新创建导致刷新问题
+  const settingsModalContent = (
     <Modal title="系统设置" open={settingsOpen} maskClosable onCancel={()=>setSettingsOpen(false)} footer={null} width={600} zIndex={1000}>
       <Flex vertical gap={12}>
         <div style={{ fontWeight: 600 }}>背景</div>
@@ -6431,6 +6561,18 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   value={pendingSettings?.bgType ?? bgType} 
                   style={{ width: 160 }} 
                   onChange={(v)=>{ 
+                    // 根据背景类型设置默认灯光值
+                    // 纯色背景：平行光1，环境光0.5，半球光0
+                    // 高斯+HDR：灯光都为0，使用HDR提供的光照信息
+                    const defaultLights = v === 'color' ? {
+                      dirLight: { color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } },
+                      ambLight: { color: '#ffffff', intensity: 0.5 },
+                      hemiLight: { skyColor: '#ffffff', groundColor: '#404040', intensity: 0 }
+                    } : {
+                      dirLight: { color: '#ffffff', intensity: 0, position: { x: 3, y: 5, z: 2 } },
+                      ambLight: { color: '#ffffff', intensity: 0 },
+                      hemiLight: { skyColor: '#ffffff', groundColor: '#404040', intensity: 0 }
+                    };
                     setPendingSettings(prev => ({
                       bgType: v,
                       bgColor: prev?.bgColor ?? bgColor,
@@ -6440,9 +6582,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                       splatPosition: prev?.splatPosition ?? splatPosition,
                       splatRotation: prev?.splatRotation ?? splatRotation,
                       splatScale: prev?.splatScale ?? splatScale,
-                      dirLight: prev?.dirLight ?? dirLight,
-                      ambLight: prev?.ambLight ?? ambLight,
-                      hemiLight: prev?.hemiLight ?? hemiLight,
+                      // 切换背景类型时自动设置默认灯光值
+                      dirLight: defaultLights.dirLight,
+                      ambLight: defaultLights.ambLight,
+                      hemiLight: defaultLights.hemiLight,
                     }));
                   }}
                   options={[
@@ -7374,8 +7517,70 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                   </Select>
                                 )}
                                 
-                                <div style={{ fontSize: '12px', color: '#666' }}>
-                                  类型: {materialType}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                  <span style={{ fontSize: '12px' }}>类型</span>
+                                  <Select
+                                    size="small"
+                                    value={materialType}
+                                    style={{ width: '100%' }}
+                                    onChange={(newType) => {
+                                      // 保存当前材质属性
+                                      const oldColor = (material as any).color?.clone();
+                                      const oldOpacity = material.opacity;
+                                      const oldTransparent = material.transparent;
+                                      const oldSide = material.side;
+                                      
+                                      // 创建新材质
+                                      let newMaterial: THREE.Material;
+                                      const commonProps = {
+                                        color: oldColor || new THREE.Color(0xffffff),
+                                        opacity: oldOpacity,
+                                        transparent: oldTransparent,
+                                        side: oldSide,
+                                      };
+                                      
+                                      switch (newType) {
+                                        case 'MeshBasicMaterial':
+                                          newMaterial = new THREE.MeshBasicMaterial(commonProps);
+                                          break;
+                                        case 'MeshLambertMaterial':
+                                          newMaterial = new THREE.MeshLambertMaterial(commonProps);
+                                          break;
+                                        case 'MeshPhongMaterial':
+                                          newMaterial = new THREE.MeshPhongMaterial({ ...commonProps, shininess: 30 });
+                                          break;
+                                        case 'MeshStandardMaterial':
+                                        default:
+                                          newMaterial = new THREE.MeshStandardMaterial({ ...commonProps, metalness: 0.1, roughness: 0.8 });
+                                          break;
+                                      }
+                                      
+                                      // 替换材质
+                                      if (Array.isArray(targetMesh.material)) {
+                                        targetMesh.material[materialIndex] = newMaterial;
+                                      } else {
+                                        targetMesh.material = newMaterial;
+                                      }
+                                      
+                                      // 释放旧材质
+                                      material.dispose();
+                                      
+                                      materialModifiedRef.current = true;
+                                      setMaterialPropsKey(k => k + 1);
+                                      
+                                      const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                      if (r && s && c) { 
+                                        const comp = composerRef.current; 
+                                        if (comp) comp.render(); 
+                                        else r.render(s, c); 
+                                      }
+                                    }}
+                                  >
+                                    <Select.Option value="MeshBasicMaterial">Basic (无光照)</Select.Option>
+                                    <Select.Option value="MeshLambertMaterial">Lambert (漫反射)</Select.Option>
+                                    <Select.Option value="MeshPhongMaterial">Phong (高光)</Select.Option>
+                                    <Select.Option value="MeshStandardMaterial">Standard (PBR)</Select.Option>
+                                  </Select>
                                 </div>
                                 
                                 {/* 所有材质共有属性 */}
@@ -7409,9 +7614,20 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     checked={material.transparent}
                                     onChange={(checked) => {
                                       material.transparent = checked;
+                                      // 开启透明时，设置合理的初始透明度和渲染设置
+                                      if (checked) {
+                                        if (material.opacity >= 1) {
+                                          material.opacity = 0.7; // 设置一个可见的透明效果
+                                        }
+                                        material.depthWrite = false; // 透明物体通常需要关闭深度写入
+                                      } else {
+                                        material.opacity = 1;
+                                        material.depthWrite = true;
+                                      }
                                       material.needsUpdate = true;
-                                      materialModifiedRef.current = true; // 标记材质已修改
-                                      // 立即渲染更新
+                                      materialModifiedRef.current = true;
+                                      // 触发重新渲染以显示/隐藏透明度滑块
+                                      setMaterialPropsKey(k => k + 1);
                                       const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
                                       if (r && s && c) { 
                                         const comp = composerRef.current; 
@@ -7426,16 +7642,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
                                       <span style={{ fontSize: '12px', minWidth: 60 }}>透明度</span>
                                       <Slider
+                                        key={`opacity-${materialIndex}-${materialPropsKey}`}
                                         style={{ minWidth: 100 }}
                                         min={0}
                                         max={1}
                                         step={0.01}
-                                        value={material.opacity}
+                                        defaultValue={material.opacity}
                                         onChange={(value: number) => {
                                           material.opacity = value;
                                           material.needsUpdate = true;
-                                          materialModifiedRef.current = true; // 标记材质已修改
-                                          // 立即渲染更新
+                                          materialModifiedRef.current = true;
                                           const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
                                           if (r && s && c) { 
                                             const comp = composerRef.current; 
@@ -7443,6 +7659,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                             else r.render(s, c); 
                                           }
                                         }}
+                                        onChangeComplete={() => setMaterialPropsKey(k => k + 1)}
                                       />
                                     </div>
                                 )}
@@ -7470,43 +7687,43 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
                                       <span style={{ fontSize: '12px', minWidth: 60 }}>金属度</span>
                                       <Slider
-                                        key={`metalness-${materialPropsKey}-${materialIndex}`}
+                                        key={`metalness-${materialIndex}-${materialPropsKey}`}
                                         style={{ minWidth: 100 }}
                                         min={0}
                                         max={1}
                                         step={0.01}
-                                        value={Number((material as THREE.MeshStandardMaterial).metalness) || 0}
+                                        defaultValue={Number((material as THREE.MeshStandardMaterial).metalness) || 0}
                                         onChange={(val) => {
                                           const value = typeof val === 'number' ? val : Number(val);
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).metalness = value;
                                             material.needsUpdate = true;
-                                            materialModifiedRef.current = true; // 标记材质已修改
-                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            materialModifiedRef.current = true;
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
                                         }}
+                                        onChangeComplete={() => setMaterialPropsKey(k => k + 1)}
                                       />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
                                       <span style={{ fontSize: '12px', minWidth: 60 }}>粗糙度</span>
                                       <Slider
-                                        key={`roughness-${materialPropsKey}-${materialIndex}`}
+                                        key={`roughness-${materialIndex}-${materialPropsKey}`}
                                         style={{ minWidth: 100 }}
                                         min={0}
                                         max={1}
                                         step={0.01}
-                                        value={Number((material as THREE.MeshStandardMaterial).roughness) || 0}
+                                        defaultValue={Number((material as THREE.MeshStandardMaterial).roughness) || 0}
                                         onChange={(val) => {
                                           const value = typeof val === 'number' ? val : Number(val);
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).roughness = value;
                                             material.needsUpdate = true;
-                                            materialModifiedRef.current = true; // 标记材质已修改
-                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            materialModifiedRef.current = true;
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
                                         }}
+                                        onChangeComplete={() => setMaterialPropsKey(k => k + 1)}
                                       />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
@@ -7532,22 +7749,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
                                       <span style={{ fontSize: '12px', minWidth: 60 }}>自发光强度</span>
                                       <Slider
-                                        key={`emissiveIntensity-${materialPropsKey}-${materialIndex}`}
+                                        key={`emissiveIntensity-${materialIndex}-${materialPropsKey}`}
                                         style={{ minWidth: 100 }}
                                         min={0}
                                         max={10}
                                         step={0.1}
-                                        value={Number((material as THREE.MeshStandardMaterial).emissiveIntensity) || 0}
+                                        defaultValue={Number((material as THREE.MeshStandardMaterial).emissiveIntensity) || 0}
                                         onChange={(val) => {
                                           const value = typeof val === 'number' ? val : Number(val);
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).emissiveIntensity = value;
                                             material.needsUpdate = true;
-                                            materialModifiedRef.current = true; // 标记材质已修改
-                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            materialModifiedRef.current = true;
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
                                         }}
+                                        onChangeComplete={() => setMaterialPropsKey(k => k + 1)}
                                       />
                                     </div>
                                   </>
@@ -7571,21 +7788,22 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
                                       <span style={{ fontSize: '12px', minWidth: 60 }}>光泽度</span>
                                       <Slider
-                                        key={`shininess-${materialPropsKey}-${materialIndex}`}
+                                        key={`shininess-${materialIndex}-${materialPropsKey}`}
                                         style={{ minWidth: 100 }}
                                         min={0}
                                         max={100}
                                         step={1}
-                                        value={Number((material as THREE.MeshPhongMaterial).shininess) || 0}
+                                        defaultValue={Number((material as THREE.MeshPhongMaterial).shininess) || 0}
                                         onChange={(val) => {
                                           const value = typeof val === 'number' ? val : Number(val);
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshPhongMaterial).shininess = value;
                                             material.needsUpdate = true;
-                                            setMaterialPropsKey(k => k + 1); // 强制更新
+                                            materialModifiedRef.current = true;
                                             const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
                                           }
                                         }}
+                                        onChangeComplete={() => setMaterialPropsKey(k => k + 1)}
                                       />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
@@ -7991,7 +8209,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           </div>
       </Card>
       <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} onDelete={(id)=>{ setAnnotations(prev=>prev.filter(a=>a.id!==id)); setEditingAnno(null); }} />
-      <SettingsModal />
+      {settingsModalContent}
       <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
         <Form layout="vertical" form={renameForm} preserve={false}>
           <Form.Item name="name" label="名称" rules={[{ required:true, message:'请输入名称' }]}>
