@@ -89,6 +89,9 @@ export interface IModelStructure {
   deletedUUIDs: string[];
 }
 
+// 审核状态类型
+export type ReviewStatus = 'draft' | 'pending' | 'approved' | 'rejected';
+
 // 三维课件数据结构
 export interface ICourseware extends Document {
   name: string;
@@ -108,6 +111,14 @@ export interface ICourseware extends Document {
   createdBy: Types.ObjectId; // 创建者
   updatedBy: Types.ObjectId; // 最后修改者
   version: number; // 版本号
+  // 统计字段
+  viewCount: number; // 学习次数
+  // 审核相关字段
+  reviewStatus: ReviewStatus; // 审核状态
+  reviewedBy?: Types.ObjectId; // 审核人
+  reviewedAt?: Date; // 审核时间
+  reviewComment?: string; // 审核意见
+  submittedAt?: Date; // 提交审核时间
 }
 
 // MongoDB Schema 定义
@@ -246,7 +257,15 @@ const CoursewareSchema = new Schema<ICourseware>(
     modelStructure: { type: Schema.Types.Mixed }, // 支持新旧格式
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    version: { type: Number, default: 1 }
+    version: { type: Number, default: 1 },
+    // 统计字段
+    viewCount: { type: Number, default: 0 },
+    // 审核相关字段
+    reviewStatus: { type: String, enum: ['draft', 'pending', 'approved', 'rejected'], default: 'draft' },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: { type: Date },
+    reviewComment: { type: String },
+    submittedAt: { type: Date }
   },
   { timestamps: true }
 );

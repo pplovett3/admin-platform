@@ -117,6 +117,8 @@ export async function publishCourse(req: Request, res: Response) {
       originalCourseId: new Types.ObjectId(courseId),
       title: aiCourse.title,
       description: aiCourse.theme,
+      // 发布页封面：优先使用 AI 课件自身缩略图，其次回退到关联三维课件缩略图
+      thumbnail: aiCourse.thumbnail || courseware.thumbnail,
       status: 'active' as const,
       publishConfig: {
         isPublic: true,
@@ -402,6 +404,7 @@ export async function getPublicCourse(req: Request, res: Response) {
 
     const responseData = {
       id: publishedCourse._id.toString(),
+      originalCourseId: publishedCourse.originalCourseId?.toString() || '', // 原始 AICourse ID，用于考试成绩提交
       title: publishedCourse.title,
       description: publishedCourse.description,
       publishConfig: publishedCourse.publishConfig,

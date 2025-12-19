@@ -3170,7 +3170,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
       getInteractableObjects
     }));
 
-    // 初始化和清理
+    // 初始化和清理（只在组件挂载时执行一次）
     useEffect(() => {
       // 检查WebGL支持
       if (!checkWebGLSupport()) {
@@ -3215,7 +3215,7 @@ const PublicThreeDViewer = forwardRef<PublicThreeDViewerControls, PublicThreeDVi
           mixerRef.current.stopAllAction();
         }
       };
-    }, [width, height]);
+    }, []); // 只在挂载时初始化，尺寸变化由下面的 useEffect 处理
 
     // 监听尺寸变化，更新渲染器和相机
     useEffect(() => {

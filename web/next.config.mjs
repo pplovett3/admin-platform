@@ -13,6 +13,12 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  // 增加 SWC 内存限制，解决大文件解析问题
+  experimental: {
+    workerThreads: false,
+    cpus: 1,
+  },
+  swcMinify: true,
   webpack: (config, { isServer }) => {
     // 临时绕过 ModuleConcatenationPlugin 报错
     if (config.optimization) {

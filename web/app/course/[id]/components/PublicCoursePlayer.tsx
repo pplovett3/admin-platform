@@ -105,6 +105,7 @@ export default function PublicCoursePlayer({
   const [viewerImageSrc, setViewerImageSrc] = useState('');
   const [showMobileAudioButton, setShowMobileAudioButton] = useState(false);
   const playbackTimerRef = useRef<NodeJS.Timeout>();
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null); // 当前播放的音频引用
   const [totalItems, setTotalItems] = useState(0);
   const [currentItemNumber, setCurrentItemNumber] = useState(0);
   const [modelLoaded, setModelLoaded] = useState(false);
@@ -257,7 +258,7 @@ export default function PublicCoursePlayer({
     }
     
     audio.src = processedUrl;
-    playbackState.currentAudio = audio;
+    currentAudioRef.current = audio;
     
     audio.onended = onEnded;
     audio.onerror = () => onError(estimatedDuration);
@@ -510,8 +511,8 @@ export default function PublicCoursePlayer({
       clearTimeout(playbackTimerRef.current);
     }
     
-    if (playbackState.currentAudio) {
-      playbackState.currentAudio.pause();
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
     }
     
     setCurrentSubtitle('');
@@ -567,7 +568,7 @@ export default function PublicCoursePlayer({
         }
         
         audio.src = audioUrl;
-        playbackState.currentAudio = audio;
+        currentAudioRef.current = audio;
         
         audio.onended = () => {
           setCurrentSubtitle('');
@@ -599,7 +600,7 @@ export default function PublicCoursePlayer({
           if (error.name === 'NotAllowedError') {
             // console.log('需要用户交互才能播放音频，显示文本替代');
             // 设置音频为预备状态，等待用户交互后播放
-            playbackState.currentAudio = audio;
+            currentAudioRef.current = audio;
             // 显示提示用户点击播放
             if (typeof window !== 'undefined') {
               // 尝试在下次用户交互时播放
@@ -717,7 +718,7 @@ export default function PublicCoursePlayer({
         }
         
         audio.src = audioUrl;
-        playbackState.currentAudio = audio;
+        currentAudioRef.current = audio;
         
         audio.onended = () => {
           setCurrentSubtitle('');
@@ -827,7 +828,7 @@ export default function PublicCoursePlayer({
         }
         
         audio.src = audioUrl;
-        playbackState.currentAudio = audio;
+        currentAudioRef.current = audio;
         
         let audioEnded = false;
         let animationEnded = false;
@@ -1053,10 +1054,17 @@ export default function PublicCoursePlayer({
 
   // 跳转到指定段落和项目
   const jumpToItem = (segmentIndex: number, itemIndex: number) => {
-    // 停止当前播放
-    if (playbackState.currentAudio) {
-      playbackState.currentAudio.pause();
-      playbackState.currentAudio.src = '';
+    // 停止当前播放的音频
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.src = '';
+      currentAudioRef.current = null;
+    }
+    
+    // 清除播放定时器
+    if (playbackTimerRef.current) {
+      clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = undefined;
     }
     
     // 设置新的播放位置

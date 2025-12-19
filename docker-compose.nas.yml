@@ -51,6 +51,12 @@ services:
       - MINIMAX_BASE_URL=https://api.minimaxi.com
       - AZURE_SPEECH_KEY=7d4ffd0999c5467aa2dc8c1b4467ace6
       - AZURE_SPEECH_REGION=eastasia
+      # 豆包API配置（AI智能标注识别）
+      - DOUBAO_API_KEY=d7eba3fb-f58c-4cc7-8921-ca5227be4f96
+      - DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+      # 通义千问VL配置（AI智能标注整理）
+      - QWEN_VL_API_KEY=sk-c49e7cf4276e492a8f1d1aa204a45fc5
+      - QWEN_VL_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
       # 前端端口配置
       - FRONTEND_PORT=3001
     volumes:

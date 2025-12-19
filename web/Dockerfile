@@ -7,6 +7,9 @@ COPY package*.json ./
 # 注意：此时不设置 NODE_ENV=production，确保 devDependencies 被安装
 RUN npm ci --legacy-peer-deps
 
+# 安装 SWC Alpine Linux 特定二进制文件（解决跨平台编译问题）
+RUN npm install --save-dev @swc/core-linux-musl-x64 @swc/core-linux-musl-arm64 2>/dev/null || true
+
 # 验证 TypeScript 已安装
 RUN ls -la node_modules/typescript 2>/dev/null && echo "✓ TypeScript installed" || (echo "✗ TypeScript NOT installed, installing..." && npm install --legacy-peer-deps --save-dev typescript@^5 @types/react@^18 @types/node@^20 @types/react-dom@^18 @types/three@^0.179.0)
 
@@ -15,6 +18,12 @@ ARG CACHEBUST=1
 RUN echo "Cache bust: $CACHEBUST"
 
 COPY . .
+
+# 安装 dos2unix 并转换文件换行符（解决 Windows CRLF 到 Linux LF 问题）
+RUN apk add --no-cache dos2unix && \
+    find app -name "*.tsx" -o -name "*.ts" | xargs dos2unix 2>/dev/null || true && \
+    dos2unix next.config.mjs tsconfig.json 2>/dev/null || true && \
+    apk del dos2unix
 
 # 现在设置生产环境变量
 ENV NODE_ENV=production
@@ -43,7 +52,8 @@ RUN chmod -R 644 app/**/*.ts app/**/*.tsx 2>/dev/null || true
 # 清理可能存在的旧构建缓存，确保使用最新代码
 RUN rm -rf .next 2>/dev/null || true
 
-# 运行构建
+# 运行构建（增加 Node.js 内存限制以处理大文件）
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
 
 EXPOSE 3000

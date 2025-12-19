@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import { CoursewareModel } from '../models/Courseware';
 import { AICourseModel } from '../models/AICourse';
-import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, getAzureVoices, generateQuestionsWithDeepSeek } from '../utils/ai-services';
+import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, getAzureVoices, generateQuestionsWithDeepSeek, organizeModelStructureWithQwenVL, identifySinglePartWithQwenVL, generateAnnotationSummaryWithAI, ModelStructureNode, PartImageData } from '../utils/ai-services';
 
 // 生成AI课程
 export async function generateCourse(req: Request, res: Response) {
@@ -454,6 +454,131 @@ export async function updateQuestions(req: Request, res: Response) {
   } catch (error) {
     console.error('Update questions error:', error);
     const message = (error as any)?.message || 'Internal server error';
+    res.status(500).json({ message });
+  }
+}
+
+// AI智能整理模型结构
+export async function organizeModelStructure(req: Request, res: Response) {
+  try {
+    const { structureData, globalImage, partImages } = req.body || {};
+    
+    // 验证结构数据
+    if (!structureData || !structureData.tree || !Array.isArray(structureData.tree)) {
+      return res.status(400).json({ message: '结构数据格式不正确，需要包含tree数组' });
+    }
+
+    // 验证全局截图
+    if (!globalImage || typeof globalImage !== 'string') {
+      return res.status(400).json({ message: '需要提供全局截图（base64格式）' });
+    }
+
+    // 验证部件截图（可选，但如果提供需要是数组）
+    const validPartImages: PartImageData[] = [];
+    if (partImages && Array.isArray(partImages)) {
+      for (const part of partImages) {
+        if (part.path && part.imageBase64) {
+          validPartImages.push({
+            path: part.path,
+            imageBase64: part.imageBase64
+          });
+        }
+      }
+    }
+
+    console.log(`[AI整理] 收到请求: ${structureData.tree.length} 个根节点, ${validPartImages.length} 张部件截图`);
+
+    // 调用通义千问VL服务
+    const result = await organizeModelStructureWithQwenVL({
+      structureData: {
+        tree: structureData.tree as ModelStructureNode[]
+      },
+      globalImageBase64: globalImage,
+      partImages: validPartImages
+    });
+
+    console.log(`[AI整理] 完成: 返回 ${result.nodes.length} 个根节点`);
+
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    console.error('Organize model structure error:', error);
+    const message = (error as any)?.message || '模型结构整理失败';
+    res.status(500).json({ message });
+  }
+}
+
+// AI识别单个部件
+export async function identifySinglePart(req: Request, res: Response) {
+  try {
+    const { path, imageBase64, focusImageBase64, coursewareName } = req.body || {};
+    
+    // 验证必要参数
+    if (!path || typeof path !== 'string') {
+      return res.status(400).json({ message: '需要提供部件路径(path)' });
+    }
+    
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+      return res.status(400).json({ message: '需要提供位置图(imageBase64)' });
+    }
+
+    console.log(`[AI识别] 单个部件: ${path}${coursewareName ? ` (课件: ${coursewareName})` : ''}`);
+
+    // 调用AI识别服务
+    const result = await identifySinglePartWithQwenVL({
+      path,
+      imageBase64,
+      focusImageBase64,
+      coursewareName
+    });
+
+    console.log(`[AI识别] 完成: ${path} -> ${result.new_name} (${result.confidence})`);
+
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    console.error('Identify single part error:', error);
+    const message = (error as any)?.message || '部件识别失败';
+    res.status(500).json({ message });
+  }
+}
+
+// AI生成标注简介
+export async function generateAnnotationSummary(req: Request, res: Response) {
+  try {
+    const { coursewareName, annotationTitle, imageBase64 } = req.body || {};
+    
+    // 验证必要参数
+    if (!coursewareName || typeof coursewareName !== 'string') {
+      return res.status(400).json({ message: '需要提供课件名称(coursewareName)' });
+    }
+    
+    if (!annotationTitle || typeof annotationTitle !== 'string') {
+      return res.status(400).json({ message: '需要提供标注标题(annotationTitle)' });
+    }
+
+    console.log(`[AI简介] 课件: ${coursewareName}, 标注: ${annotationTitle}`);
+
+    // 调用AI生成简介服务
+    const result = await generateAnnotationSummaryWithAI({
+      coursewareName,
+      annotationTitle,
+      imageBase64
+    });
+
+    console.log(`[AI简介] 完成: ${result.summary.substring(0, 50)}...`);
+
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    console.error('Generate annotation summary error:', error);
+    const message = (error as any)?.message || '生成简介失败';
     res.status(500).json({ message });
   }
 }

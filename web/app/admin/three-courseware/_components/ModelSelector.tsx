@@ -204,14 +204,51 @@ export default function ModelSelector({ open, onCancel, onSelect }: ModelSelecto
     return await res.json();
   };
 
+  // STEP 文件上传（带转换）
+  const uploadStepFile = async (file: File) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('未登录');
+    }
+
+    setUploadStatus('上传 STEP 文件中...');
+    setUploadProgress(30);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch('/api/files/upload-step', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    setUploadProgress(60);
+    setUploadStatus('正在转换为 GLB 格式...');
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || 'STEP 转换失败');
+    }
+
+    setUploadProgress(100);
+    return await res.json();
+  };
+
   // 自定义上传处理
   const handleCustomUpload = async (file: File) => {
     // 验证文件类型
-    const isModel = ['.glb', '.fbx', '.obj', '.stl'].some(ext => 
+    const isGlbModel = ['.glb', '.fbx', '.obj', '.stl'].some(ext => 
       file.name.toLowerCase().endsWith(ext)
     );
-    if (!isModel) {
-      message.error('只支持 GLB、FBX、OBJ、STL 格式的模型文件');
+    const isStepFile = ['.step', '.stp'].some(ext => 
+      file.name.toLowerCase().endsWith(ext)
+    );
+    
+    if (!isGlbModel && !isStepFile) {
+      message.error('只支持 GLB、FBX、OBJ、STL、STEP/STP 格式的模型文件');
       return;
     }
 
@@ -229,20 +266,35 @@ export default function ModelSelector({ open, onCancel, onSelect }: ModelSelecto
     try {
       let result;
       
-      // 大于 80MB 使用分块上传（留一些余量）
-      if (file.size > 80 * 1024 * 1024) {
-        result = await uploadWithChunks(file);
+      // STEP 文件使用专门的转换接口
+      if (isStepFile) {
+        setUploadStatus('上传并转换 STEP 文件...');
+        result = await uploadStepFile(file);
+        
+        if (result?.ok && result?.downloadUrl) {
+          const glbName = result.convertedGlbFile || file.name.replace(/\.(step|stp)$/i, '.glb');
+          message.success(`STEP 文件转换成功：${result.meshInfo?.vertexCount || 0} 顶点，${result.meshInfo?.faceCount || 0} 面`);
+          onSelect(result.downloadUrl, glbName);
+        } else {
+          message.error('STEP 转换失败');
+        }
       } else {
-        setUploadStatus('上传中...');
-        result = await uploadNormal(file);
-        setUploadProgress(100);
-      }
+        // 普通模型文件
+        // 大于 80MB 使用分块上传（留一些余量）
+        if (file.size > 80 * 1024 * 1024) {
+          result = await uploadWithChunks(file);
+        } else {
+          setUploadStatus('上传中...');
+          result = await uploadNormal(file);
+          setUploadProgress(100);
+        }
 
-      if (result?.ok && result?.downloadUrl) {
-        message.success('模型上传成功');
-        onSelect(result.downloadUrl, file.name);
-      } else {
-        message.error('上传失败');
+        if (result?.ok && result?.downloadUrl) {
+          message.success('模型上传成功');
+          onSelect(result.downloadUrl, file.name);
+        } else {
+          message.error('上传失败');
+        }
       }
     } catch (error: any) {
       if (error.message !== '上传已取消') {
@@ -267,7 +319,7 @@ export default function ModelSelector({ open, onCancel, onSelect }: ModelSelecto
   // 上传配置（用于拖拽区域触发）
   const uploadProps: UploadProps = {
     name: 'file',
-    accept: '.glb,.fbx,.obj,.stl',
+    accept: '.glb,.fbx,.obj,.stl,.step,.stp',
     showUploadList: false,
     beforeUpload: (file) => {
       handleCustomUpload(file);
@@ -456,6 +508,9 @@ export default function ModelSelector({ open, onCancel, onSelect }: ModelSelecto
                 </div>
                 <div style={{ marginTop: 8, color: '#999' }}>
                   支持 GLB、FBX、OBJ、STL 格式，单个文件不超过 500MB
+                </div>
+                <div style={{ marginTop: 4, color: '#52c41a', fontSize: 13, fontWeight: 500 }}>
+                  🆕 支持 STEP/STP 格式（CAD 文件将自动转换为 GLB）
                 </div>
                 <div style={{ marginTop: 4, color: '#666', fontSize: 12 }}>
                   大文件将自动分块上传，支持断点续传

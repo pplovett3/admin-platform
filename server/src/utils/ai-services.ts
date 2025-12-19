@@ -1073,3 +1073,776 @@ export async function batchGenerateTTSForCourse(
 
   return results;
 }
+
+// ==========================================
+// 通义千问VL多模态服务（用于AI智能标注整理）
+// ==========================================
+
+// 模型结构节点接口
+export interface ModelStructureNode {
+  path: string;
+  original_name: string;
+  children?: ModelStructureNode[];
+}
+
+// AI整理后的节点接口
+export interface OrganizedNode {
+  original_path?: string;
+  new_name: string;
+  children?: OrganizedNode[];
+}
+
+// 部件图片数据接口
+export interface PartImageData {
+  path: string;
+  imageBase64: string; // 位置图（含整体上下文、蓝色高亮）
+  focusImageBase64?: string; // 聚焦隔离图（只显示该对象/更易识别）
+}
+
+// 整理请求参数
+export interface OrganizeStructureParams {
+  structureData: {
+    tree: ModelStructureNode[];
+  };
+  globalImageBase64: string;
+  partImages: PartImageData[];
+}
+
+// 整理结果接口
+export interface OrganizeStructureResult {
+  nodes: OrganizedNode[];
+}
+
+// 单对象识别请求参数
+export interface IdentifySinglePartParams {
+  path: string;
+  imageBase64: string; // 位置图
+  focusImageBase64?: string; // 聚焦图
+  coursewareName?: string; // 课件名称（帮助AI理解上下文）
+}
+
+// 单对象识别结果
+export interface IdentifySinglePartResult {
+  path: string;
+  new_name: string;
+  confidence?: string; // 识别置信度描述
+}
+
+/**
+ * 使用豆包Seed 1.6识别单个部件
+ * 每次只识别一个对象，减少上下文干扰，提高识别准确率
+ */
+export async function identifySinglePartWithQwenVL(
+  params: IdentifySinglePartParams
+): Promise<IdentifySinglePartResult> {
+  const { path, imageBase64, focusImageBase64, coursewareName } = params;
+
+  // 构建提示词，如果有课件名称则加入上下文
+  const contextHint = coursewareName 
+    ? `这是一个【${coursewareName}】的3D模型。` 
+    : '';
+  const promptText = `${contextHint}图1是整体位置（蓝色边框标识目标），图2是该部件的隔离图。请识别这是什么部件，只返回JSON：{"new_name": "部件名称"}`;
+
+  // 构建豆包API请求内容（OpenAI兼容格式）
+  const userContent: any[] = [];
+
+  // 图1：整体位置图（蓝色边框标识目标部件）
+  userContent.push({
+    type: 'image_url',
+    image_url: {
+      url: imageBase64.startsWith('data:') 
+        ? imageBase64 
+        : `data:image/png;base64,${imageBase64}`
+    }
+  });
+
+  // 图2：部件隔离图（只显示目标部件）
+  if (focusImageBase64) {
+    userContent.push({
+      type: 'image_url',
+      image_url: {
+        url: focusImageBase64.startsWith('data:') 
+          ? focusImageBase64 
+          : `data:image/png;base64,${focusImageBase64}`
+      }
+    });
+  }
+
+  userContent.push({
+    type: 'text',
+    text: promptText
+  });
+
+  try {
+    // 优先使用豆包API（OpenAI兼容模式）
+    if (config.doubaoApiKey && config.doubaoApiKey !== '') {
+      console.log(`[豆包识别] 开始识别: ${path}`);
+      
+      const response = await fetch(`${config.doubaoBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.doubaoApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'ep-m-20251216144152-z7xk2', // Doubao-Seed-1.6-lite
+          messages: [
+            {
+              role: 'user',
+              content: userContent
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('豆包API错误:', response.status, errorText);
+        throw new Error(`豆包API错误: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log(`[豆包识别] 原始返回:`, JSON.stringify(data, null, 2));
+      
+      // 豆包 chat/completions API 返回格式解析（OpenAI兼容格式）
+      let content = '';
+      if (data.choices?.[0]?.message?.content) {
+        content = data.choices[0].message.content;
+      }
+
+      console.log(`[豆包识别] 解析内容: ${content}`);
+
+      if (!content) {
+        throw new Error('豆包API返回内容为空');
+      }
+
+      // 解析JSON
+      let cleaned = content.trim();
+      cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '');
+      cleaned = cleaned.replace(/\n?```\s*$/i, '');
+
+      try {
+        const result = JSON.parse(cleaned);
+        return {
+          path,
+          new_name: result.new_name || path.split('/').pop() || path,
+          confidence: '高'
+        };
+      } catch (parseError) {
+        // 尝试从文本中提取名称
+        const nameMatch = content.match(/"new_name"\s*:\s*"([^"]+)"/);
+        if (nameMatch) {
+          return {
+            path,
+            new_name: nameMatch[1],
+            confidence: '中'
+          };
+        }
+        // 如果返回的是纯文本名称，直接使用
+        if (cleaned && !cleaned.includes('{') && cleaned.length < 50) {
+          return {
+            path,
+            new_name: cleaned,
+            confidence: '中'
+          };
+        }
+        console.error('解析豆包返回失败:', content);
+        // 解析失败，返回原始路径
+        return {
+          path,
+          new_name: path.split('/').pop() || path,
+          confidence: '低'
+        };
+      }
+    }
+    
+    // 回退到通义千问
+    if (config.qwenVLApiKey && config.qwenVLApiKey !== '') {
+      console.log(`[千问识别] 回退使用千问: ${path}`);
+      
+      const qwenContent: any[] = [];
+      qwenContent.push({
+        type: 'image_url',
+        image_url: {
+          url: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`
+        }
+      });
+      if (focusImageBase64) {
+        qwenContent.push({
+          type: 'image_url',
+          image_url: {
+            url: focusImageBase64.startsWith('data:') ? focusImageBase64 : `data:image/png;base64,${focusImageBase64}`
+          }
+        });
+      }
+      qwenContent.push({
+        type: 'text',
+        text: promptText
+      });
+
+      const response = await fetch(`${config.qwenVLBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.qwenVLApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'qwen-vl-plus',
+          messages: [
+            { role: 'user', content: qwenContent }
+          ],
+          temperature: 0.2,
+          max_tokens: 500
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+        console.log(`[千问识别] 返回内容: ${content}`);
+        if (content) {
+          let cleaned = content.trim().replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+          try {
+            const result = JSON.parse(cleaned);
+            return { path, new_name: result.new_name || path.split('/').pop() || path, confidence: '中' };
+          } catch {
+            const nameMatch = content.match(/"new_name"\s*:\s*"([^"]+)"/);
+            if (nameMatch) return { path, new_name: nameMatch[1], confidence: '低' };
+          }
+        }
+      }
+    }
+
+    console.warn('没有可用的AI API配置');
+    return {
+      path,
+      new_name: path.split('/').pop() || path,
+      confidence: '低'
+    };
+  } catch (error) {
+    console.error('识别部件错误:', error);
+    return {
+      path,
+      new_name: path.split('/').pop() || path,
+      confidence: '低'
+    };
+  }
+}
+
+/**
+ * 使用通义千问VL-Plus多模态模型整理模型结构树
+ * @param params 包含结构树JSON、全局截图和部件截图的参数
+ * @returns 整理后的结构树
+ */
+export async function organizeModelStructureWithQwenVL(
+  params: OrganizeStructureParams
+): Promise<OrganizeStructureResult> {
+  const { structureData, globalImageBase64, partImages } = params;
+
+  // 统计输入节点数量
+  const countNodes = (nodes: ModelStructureNode[]): number => {
+    let count = 0;
+    for (const node of nodes) {
+      count++;
+      if (node.children) {
+        count += countNodes(node.children);
+      }
+    }
+    return count;
+  };
+  const totalInputNodes = countNodes(structureData.tree);
+  console.log(`[AI整理] 输入节点总数: ${totalInputNodes}`);
+
+  // 转换结构树，只保留path，移除original_name避免干扰AI识别
+  const stripNames = (nodes: ModelStructureNode[]): Array<{path: string; children?: any[]}> => {
+    return nodes.map(node => ({
+      path: node.path,
+      children: node.children ? stripNames(node.children) : undefined
+    }));
+  };
+  const strippedTree = stripNames(structureData.tree);
+
+  // 构建Prompt - 强调必须返回所有节点
+  const systemPrompt = `你是一个专业的3D模型结构分析专家。你的任务是分析用户提供的3D模型结构树和相关截图，对模型的层级结构和命名进行优化整理。
+
+## 重要要求（必须严格遵守）：
+1. **必须处理所有节点**：输入中有 ${totalInputNodes} 个节点，你必须在输出中包含所有这 ${totalInputNodes} 个节点，一个都不能遗漏！
+2. **保持original_path不变**：每个原始节点的 original_path 必须与输入的 path 完全一致
+3. **完整输出**：即使JSON很长，也必须输出完整，不能截断
+
+## 你的任务：
+1. **看图识别**：仔细观察每张部件截图中**蓝色高亮边框**标识的对象，根据其**实际形状和外观**识别是什么部件
+2. **中文命名**：为每个部件取一个准确的中文名称
+3. **整理层级**：根据部件功能创建逻辑分组
+4. **保留路径**：必须保留 original_path 字段，这是前端定位对象的唯一标识
+
+## 输入数据说明：
+- 结构树：只包含 path（唯一路径），需要你根据截图来识别并命名
+- 全局截图：展示模型整体外观
+- 部件截图：每个部件会给你**两张图作为一组**：
+  - 图A（位置图）：显示该对象在整体中的位置（其他对象半透明），蓝色高亮边框标识当前对象
+  - 图B（聚焦图）：只显示该对象（或对该对象强制对焦），用于看清细节与形状
+  你必须综合A+B来识别该对象是什么部件
+
+## ⚠️ 核心规则
+1. **只看图片**：完全根据图A/图B中蓝色高亮对象的形状来识别
+2. **准确对应**：每组图片后面标注的path就是该对象的唯一标识，确保命名正确对应
+
+
+## 输出格式：
+返回纯JSON对象（不要包含markdown代码块标记）：
+{
+  "nodes": [
+    {
+      "original_path": "原始路径（必须与输入的path完全一致）",
+      "new_name": "优化后的中文名称",
+      "children": [...]
+    }
+  ]
+}
+
+## 关键注意事项：
+- ⚠️ 输入有 ${totalInputNodes} 个节点，输出也必须有 ${totalInputNodes} 个带有 original_path 的节点
+- 新创建的逻辑分组节点不需要 original_path 字段
+- 如果无法从截图识别某个部件，根据其名称特征推测合理的中文名称
+- 命名要专业、准确、简洁`;
+
+  // 构建用户消息内容（多模态）
+  const userContent: any[] = [];
+
+  // 添加文本说明 - 只发送path结构，不发送原始名称
+  userContent.push({
+    type: 'text',
+    text: `请分析以下3D模型并为每个部件命名。
+
+## 模型结构（只有path，需要你根据截图识别并命名）：
+${JSON.stringify(strippedTree, null, 2)}
+
+## 以下是模型截图，请根据截图识别每个部件：`
+  });
+
+  // 添加全局截图
+  userContent.push({
+    type: 'image_url',
+    image_url: {
+      url: globalImageBase64.startsWith('data:') 
+        ? globalImageBase64 
+        : `data:image/png;base64,${globalImageBase64}`
+    }
+  });
+  userContent.push({
+    type: 'text',
+    text: '（以上是模型全局截图）'
+  });
+
+  // 添加部件截图（限制数量，避免请求过大）
+  // 注意：通义千问VL对图片数量有限制；由于每个部件要发送2张图，这里按“部件组”限制，默认最多25组（约50张图）
+  const maxPartPairs = Math.min(partImages.length, 25);
+  if (partImages.length > maxPartPairs) {
+    userContent.push({
+      type: 'text',
+      text: `\n注意：由于图片数量限制，以下只展示 ${maxPartPairs} 组代表性部件截图（每组2张：位置图+聚焦图）。结构树仍包含所有 ${totalInputNodes} 个节点。\n`
+    });
+  }
+  
+  for (let i = 0; i < maxPartPairs; i++) {
+    const part = partImages[i];
+    // 图A：位置图
+    userContent.push({
+      type: 'image_url',
+      image_url: {
+        url: part.imageBase64.startsWith('data:') 
+          ? part.imageBase64 
+          : `data:image/png;base64,${part.imageBase64}`
+      }
+    });
+    // 图B：聚焦图（可选，但前端会尽量提供）
+    if (part.focusImageBase64) {
+      userContent.push({
+        type: 'image_url',
+        image_url: {
+          url: part.focusImageBase64.startsWith('data:')
+            ? part.focusImageBase64
+            : `data:image/png;base64,${part.focusImageBase64}`
+        }
+      });
+    }
+    userContent.push({
+      type: 'text',
+      text: `【路径: ${part.path}】上面两张图为同一对象：图A=位置图（整体上下文），图B=聚焦图（细节）。请综合两图识别蓝色高亮对象是什么部件，并为该path指定准确中文名称。`
+    });
+  }
+
+  // 添加最终指令 - 强调完整返回
+  userContent.push({
+    type: 'text',
+    text: `
+
+## 最终指令
+请根据以上截图（每个对象两张图：位置图+聚焦图），识别每个蓝色高亮部件是什么，并返回整理后的结构JSON。
+
+⚠️ 关键要求：
+1. **只根据图A/图B中蓝色高亮对象的形状来命名**
+2. 每组图片后面标注的path就是该对象的标识符
+3. 必须返回纯JSON，不要包含\`\`\`json标记
+4. 必须包含所有 ${totalInputNodes} 个节点（通过original_path标识）
+5. original_path的值必须与输入的path完全一致
+6. 可以创建新的分组节点来组织层级，新分组节点不需要original_path
+
+请开始输出完整的JSON：`
+  });
+
+  try {
+    // 检查API Key配置
+    if (!config.doubaoApiKey || config.doubaoApiKey === '') {
+      console.warn('豆包API Key未配置，返回模拟数据');
+      // 返回模拟数据：直接将原始结构返回，名称不变
+      const mockResult: OrganizeStructureResult = {
+        nodes: structureData.tree.map(node => convertToOrganizedNode(node))
+      };
+      return mockResult;
+    }
+
+    // 调用豆包API（OpenAI兼容模式）
+    const response = await fetch(`${config.doubaoBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.doubaoApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'ep-m-20251216144152-z7xk2', // Doubao-Seed-1.6-lite
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: userContent
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('豆包API错误:', response.status, errorText);
+      throw new Error(`豆包API错误: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    // 豆包API返回格式（OpenAI兼容）
+    const content = data.choices?.[0]?.message?.content || '';
+
+    if (!content) {
+      throw new Error('豆包API返回内容为空');
+    }
+
+    console.log('豆包API返回长度:', content.length);
+    console.log('豆包API返回预览:', content.substring(0, 1000) + '...');
+
+    // 统计返回的节点数量
+    const countReturnedNodes = (nodes: OrganizedNode[]): number => {
+      let count = 0;
+      for (const node of nodes) {
+        if (node.original_path) count++; // 只统计有original_path的节点
+        if (node.children) {
+          count += countReturnedNodes(node.children);
+        }
+      }
+      return count;
+    };
+
+    /**
+     * 尝试修复被截断的JSON
+     * 主要处理数组或对象未正确闭合的情况
+     */
+    const tryFixTruncatedJSON = (jsonStr: string): string => {
+      let fixed = jsonStr.trim();
+      
+      // 统计括号
+      let braceCount = 0;  // {}
+      let bracketCount = 0; // []
+      let inString = false;
+      let escape = false;
+      
+      for (const char of fixed) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+        
+        if (char === '{') braceCount++;
+        else if (char === '}') braceCount--;
+        else if (char === '[') bracketCount++;
+        else if (char === ']') bracketCount--;
+      }
+      
+      // 如果在字符串中被截断，先闭合字符串
+      if (inString) {
+        fixed += '"';
+      }
+      
+      // 移除末尾的不完整部分（如逗号后没有内容）
+      fixed = fixed.replace(/,\s*$/, '');
+      
+      // 补充缺失的括号
+      while (bracketCount > 0) {
+        fixed += ']';
+        bracketCount--;
+      }
+      while (braceCount > 0) {
+        fixed += '}';
+        braceCount--;
+      }
+      
+      return fixed;
+    };
+
+    /**
+     * 去除markdown代码块标记
+     */
+    const removeMarkdownCodeBlock = (str: string): string => {
+      let cleaned = str.trim();
+      // 去除开头的 ```json 或 ```
+      cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '');
+      // 去除结尾的 ```
+      cleaned = cleaned.replace(/\n?```\s*$/i, '');
+      return cleaned.trim();
+    };
+
+    // 解析JSON（带修复功能）
+    const parseWithFix = (jsonStr: string): any => {
+      // 首先去除markdown代码块标记
+      let cleaned = removeMarkdownCodeBlock(jsonStr);
+      
+      try {
+        return JSON.parse(cleaned);
+      } catch (e) {
+        // 尝试修复被截断的JSON
+        console.log('[AI整理] JSON解析失败，尝试修复...');
+        const fixed = tryFixTruncatedJSON(cleaned);
+        console.log('[AI整理] 修复后JSON长度:', fixed.length);
+        return JSON.parse(fixed);
+      }
+    };
+
+    try {
+      const result = parseWithFix(content);
+      if (result.nodes && Array.isArray(result.nodes)) {
+        const returnedCount = countReturnedNodes(result.nodes);
+        console.log(`[AI整理] 返回节点数: ${returnedCount}, 输入节点数: ${totalInputNodes}`);
+        
+        if (returnedCount < totalInputNodes) {
+          console.warn(`[AI整理] 警告：AI只返回了 ${returnedCount}/${totalInputNodes} 个节点，可能有遗漏`);
+        }
+        
+        return result as OrganizeStructureResult;
+      }
+      throw new Error('返回格式不正确：缺少nodes数组');
+    } catch (parseError) {
+      // 尝试提取JSON部分
+      console.log('[AI整理] 尝试从响应中提取JSON部分...');
+      const jsonMatch = content.match(/\{[\s\S]*"nodes"[\s\S]*/);
+      if (jsonMatch) {
+        try {
+          const result = parseWithFix(jsonMatch[0]);
+          if (result.nodes && Array.isArray(result.nodes)) {
+            const returnedCount = countReturnedNodes(result.nodes);
+            console.log(`[AI整理] 返回节点数: ${returnedCount}, 输入节点数: ${totalInputNodes}`);
+            
+            if (returnedCount < totalInputNodes) {
+              console.warn(`[AI整理] 警告：AI只返回了 ${returnedCount}/${totalInputNodes} 个节点，可能有遗漏`);
+            }
+            
+            return result as OrganizeStructureResult;
+          }
+        } catch (e) {
+          console.error('[AI整理] 修复后仍无法解析:', e);
+        }
+      }
+      console.error('解析豆包返回失败:', parseError);
+      console.error('原始内容(末尾500字符):', content.slice(-500));
+      throw new Error(`解析豆包返回的JSON失败: ${(parseError as Error).message}`);
+    }
+  } catch (error) {
+    console.error('豆包API错误:', error);
+    throw error;
+  }
+}
+
+/**
+ * 辅助函数：将输入节点转换为整理后的节点格式（用于mock数据）
+ */
+function convertToOrganizedNode(node: ModelStructureNode): OrganizedNode {
+  return {
+    original_path: node.path,
+    new_name: node.original_name,
+    children: node.children?.map(child => convertToOrganizedNode(child)) || []
+  };
+}
+
+// 生成标注简介请求参数
+export interface GenerateAnnotationSummaryParams {
+  coursewareName: string;  // 课件名称
+  annotationTitle: string; // 标注标题
+  imageBase64?: string;    // 可选：标注位置截图
+}
+
+// 生成标注简介结果
+export interface GenerateAnnotationSummaryResult {
+  summary: string;
+}
+
+/**
+ * 使用AI生成标注简介
+ * 根据课件名称和标注标题，生成专业的简介描述
+ */
+export async function generateAnnotationSummaryWithAI(
+  params: GenerateAnnotationSummaryParams
+): Promise<GenerateAnnotationSummaryResult> {
+  const { coursewareName, annotationTitle, imageBase64 } = params;
+
+  // 构建提示词
+  const promptText = `你是一个专业的工业/机械设备教学专家。请根据以下信息生成一段简洁专业的标注简介（50-150字）：
+
+课件名称：${coursewareName}
+标注标题：${annotationTitle}
+
+要求：
+1. 简介应描述该部件/组件的功能、作用或重要性
+2. 使用专业但易懂的语言
+3. 适合教学场景使用
+4. 不要使用"这是"、"它是"等开头
+5. 只返回简介文本，不要其他内容`;
+
+  try {
+    // 优先使用豆包API（OpenAI兼容模式）
+    if (config.doubaoApiKey && config.doubaoApiKey !== '') {
+      console.log(`[AI简介生成] 课件: ${coursewareName}, 标注: ${annotationTitle}`);
+      
+      const userContent: any[] = [];
+      
+      // 如果有图片，添加图片
+      if (imageBase64) {
+        userContent.push({
+          type: 'image_url',
+          image_url: {
+            url: imageBase64.startsWith('data:') 
+              ? imageBase64 
+              : `data:image/png;base64,${imageBase64}`
+          }
+        });
+      }
+      
+      userContent.push({
+        type: 'text',
+        text: promptText
+      });
+
+      const response = await fetch(`${config.doubaoBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.doubaoApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'ep-m-20251216144152-z7xk2', // Doubao-Seed-1.6-lite
+          messages: [
+            {
+              role: 'user',
+              content: userContent
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('豆包API错误:', response.status, errorText);
+        throw new Error(`豆包API错误: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // 解析返回内容（OpenAI兼容格式）
+      const content = data.choices?.[0]?.message?.content || '';
+
+      if (!content) {
+        throw new Error('AI返回内容为空');
+      }
+
+      // 清理返回的文本
+      let summary = content.trim();
+      // 移除可能的引号
+      if ((summary.startsWith('"') && summary.endsWith('"')) || 
+          (summary.startsWith("'") && summary.endsWith("'"))) {
+        summary = summary.slice(1, -1);
+      }
+
+      console.log(`[AI简介生成] 完成: ${summary.substring(0, 50)}...`);
+
+      return { summary };
+    }
+
+    // 回退到DeepSeek API
+    if (config.deepseekApiKey && config.deepseekApiKey !== '') {
+      console.log(`[AI简介生成] 使用DeepSeek: ${annotationTitle}`);
+      
+      const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.deepseekApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            {
+              role: 'user',
+              content: promptText
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 300
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('DeepSeek API错误:', response.status, errorText);
+        throw new Error(`DeepSeek API错误: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || '';
+      
+      if (!content) {
+        throw new Error('DeepSeek返回内容为空');
+      }
+
+      let summary = content.trim();
+      if ((summary.startsWith('"') && summary.endsWith('"')) || 
+          (summary.startsWith("'") && summary.endsWith("'"))) {
+        summary = summary.slice(1, -1);
+      }
+
+      return { summary };
+    }
+
+    throw new Error('未配置可用的AI服务（需要豆包或DeepSeek API密钥）');
+  } catch (error) {
+    console.error('AI简介生成失败:', error);
+    throw error;
+  }
+}

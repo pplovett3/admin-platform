@@ -9,6 +9,7 @@ import { config } from '../config/env';
 import { FileModel, FileVisibility, FileKind } from '../models/File';
 import mongoose from 'mongoose';
 import os from 'os';
+import { convertStepToGlb, isStepFile } from '../services/step-converter';
 
 const router = Router();
 const tempDir = path.join(os.tmpdir(), 'uploads');
@@ -64,6 +65,8 @@ function detectKindByExt(ext: string): FileKind {
     case '.fbx':
     case '.obj':
     case '.stl':
+    case '.step':
+    case '.stp':
       return 'model';
     default:
       return 'other';
@@ -284,7 +287,7 @@ const handleDownload = async (req: any, res: any) => {
 router.get('/:id/download/:filename', authenticate as any, handleDownload);
 router.get('/:id/download', authenticate as any, handleDownload);
 
-// 公开的缩略图访问接口（不需要认证）- 仅限缩略图文件
+// 公开的缩略图/图片访问接口（不需要认证）- 仅限图片文件
 router.get('/thumbnail/:id', async (req: any, res: any) => {
   try {
     const id = req.params.id;
@@ -293,10 +296,12 @@ router.get('/thumbnail/:id', async (req: any, res: any) => {
     const doc = await FileModel.findById(id).lean();
     if (!doc) return res.status(404).json({ message: 'Not found' });
     
-    // 安全检查：只允许访问缩略图文件
+    // 安全检查：只允许访问图片文件
     const filename = (doc as any).originalName || '';
-    if (!filename.startsWith('thumbnail-') || !filename.endsWith('.png')) {
-      return res.status(403).json({ message: 'Access denied - only thumbnails allowed' });
+    const ext = path.extname(filename).toLowerCase();
+    const allowedImageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+    if (!allowedImageExts.includes(ext)) {
+      return res.status(403).json({ message: 'Access denied - only images allowed' });
     }
     
     const rel = (doc as any).storageRelPath;
@@ -306,13 +311,171 @@ router.get('/thumbnail/:id', async (req: any, res: any) => {
     if (!fs.existsSync(abs)) return res.status(404).json({ message: 'File not found on disk' });
     
     const stat = fs.statSync(abs);
-    res.setHeader('Content-Type', 'image/png');
+    const contentTypes: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+    };
+    res.setHeader('Content-Type', contentTypes[ext] || 'image/png');
     res.setHeader('Content-Length', String(stat.size));
     res.setHeader('Cache-Control', 'public, max-age=31536000'); // 缓存1年
     fs.createReadStream(abs).pipe(res);
   } catch (e: any) {
     console.error('Thumbnail access error:', e);
     res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// 公开的模型文件下载接口（不需要认证）- 仅限已审核通过课件的模型
+router.get('/public-model/:id', async (req: any, res: any) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+    
+    const doc = await FileModel.findById(id).lean();
+    if (!doc) return res.status(404).json({ message: 'Not found' });
+    
+    // 安全检查：只允许访问模型文件
+    const filename = (doc as any).originalName || '';
+    const ext = path.extname(filename).toLowerCase();
+    const allowedModelExts = ['.glb', '.gltf', '.fbx', '.obj'];
+    if (!allowedModelExts.includes(ext)) {
+      return res.status(403).json({ message: 'Access denied - only model files allowed' });
+    }
+    
+    const rel = (doc as any).storageRelPath;
+    if (!rel) return res.status(404).json({ message: 'File path not found' });
+    
+    const abs = path.join(config.storageRoot, rel);
+    if (!fs.existsSync(abs)) return res.status(404).json({ message: 'File not found on disk' });
+    
+    const stat = fs.statSync(abs);
+    const contentTypes: Record<string, string> = {
+      '.glb': 'model/gltf-binary',
+      '.gltf': 'model/gltf+json',
+      '.fbx': 'application/octet-stream',
+      '.obj': 'text/plain',
+    };
+    res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // 缓存1天
+    fs.createReadStream(abs).pipe(res);
+  } catch (e: any) {
+    console.error('Public model access error:', e);
+    res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// STEP 文件上传并转换为 GLB
+router.post('/upload-step', authenticate as any, upload.single('file'), async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string; role: string };
+    const file = (req as any).file as any;
+    if (!file) return res.status(400).json({ message: 'file is required' });
+
+    const decodedName = decodeOriginalName(file.originalname as string);
+    const ext = path.extname(decodedName).toLowerCase();
+    
+    if (ext !== '.step' && ext !== '.stp') {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({ message: 'Only STEP/STP files are supported' });
+    }
+
+    console.log(`[STEP Converter] Starting conversion for: ${decodedName}`);
+
+    // 转换 STEP 为 GLB
+    const glbFileName = decodedName.replace(/\.(step|stp)$/i, '.glb');
+    const glbTempPath = path.join(tempDir, `converted_${Date.now()}_${glbFileName}`);
+    
+    const result = await convertStepToGlb(file.path, glbTempPath);
+    
+    // 清理原始 STEP 文件
+    fs.unlinkSync(file.path);
+
+    if (!result.success || !result.glbPath) {
+      return res.status(400).json({ 
+        message: 'STEP conversion failed', 
+        error: result.error 
+      });
+    }
+
+    console.log(`[STEP Converter] Conversion successful: ${result.meshInfo?.vertexCount} vertices, ${result.meshInfo?.faceCount} faces`);
+
+    // 计算 GLB 文件的 SHA256
+    const glbBuffer = fs.readFileSync(glbTempPath);
+    const sha256 = crypto.createHash('sha256').update(glbBuffer).digest('hex');
+    const glbSize = glbBuffer.length;
+
+    // 存储 GLB 文件
+    let visibility: FileVisibility = 'private';
+    const v = (req.body?.visibility || '').toString();
+    if (v === 'public') {
+      if (current.role !== 'superadmin') {
+        fs.unlinkSync(glbTempPath);
+        return res.status(403).json({ message: 'only superadmin can upload public resource' });
+      }
+      visibility = 'public';
+    }
+
+    const now = new Date();
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const id = new mongoose.Types.ObjectId().toString();
+    const rel = visibility === 'public'
+      ? path.posix.join('public', yyyy, mm, id, glbFileName)
+      : path.posix.join('users', current.userId, yyyy, mm, id, glbFileName);
+
+    const relDir = path.posix.dirname(rel);
+    const targetDir = path.join(config.storageRoot, relDir);
+    try { ensureNestedDir(config.storageRoot, relDir); } catch (mkErr: any) {
+      console.error('ensure dir failed:', targetDir, mkErr?.message);
+      throw mkErr;
+    }
+    const finalPath = path.join(config.storageRoot, rel);
+
+    // 移动文件到最终位置
+    await new Promise<void>((resolve, reject) => {
+      const rs = fs.createReadStream(glbTempPath);
+      const ws = fs.createWriteStream(finalPath, { flags: 'w' });
+      rs.on('error', reject);
+      ws.on('error', reject);
+      ws.on('finish', () => resolve());
+      rs.pipe(ws);
+    });
+    fs.unlinkSync(glbTempPath);
+
+    // 保存到数据库
+    const saved = await FileModel.create({
+      ownerUserId: new mongoose.Types.ObjectId(current.userId),
+      ownerRole: current.role as any,
+      visibility,
+      type: 'model' as FileKind,
+      originalName: glbFileName,
+      originalNameSaved: glbFileName,
+      ext: '.glb',
+      size: glbSize,
+      sha256,
+      storageRelPath: rel.replace(/\\/g, '/'),
+      storageDir: relDir.replace(/\\/g, '/'),
+    } as any);
+
+    const savedId = ((saved as any)._id || '').toString();
+    const downloadUrl = `/api/files/${savedId}/download/${encodeURIComponent(glbFileName)}`;
+    
+    return res.json({ 
+      ok: true, 
+      file: saved, 
+      downloadUrl,
+      originalStepFile: decodedName,
+      convertedGlbFile: glbFileName,
+      meshInfo: result.meshInfo,
+    });
+  } catch (e: any) {
+    console.error('STEP upload/convert failed:', e);
+    return res.status(500).json({ message: e?.message || 'STEP conversion failed' });
   }
 });
 
@@ -324,7 +487,7 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
 
     const decodedName = decodeOriginalName(file.originalname as string);
     const ext = path.extname(decodedName).toLowerCase();
-    const allowed = ['.mp4','.jpg','.jpeg','.png','.pdf','.ppt','.pptx','.doc','.docx','.glb','.fbx','.obj','.stl'];
+    const allowed = ['.mp4','.jpg','.jpeg','.png','.pdf','.ppt','.pptx','.doc','.docx','.glb','.fbx','.obj','.stl','.step','.stp'];
     if (!allowed.includes(ext)) {
       fs.unlinkSync(file.path);
       return res.status(400).json({ message: 'unsupported file type' });

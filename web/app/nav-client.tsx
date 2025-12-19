@@ -14,8 +14,14 @@ import {
 	KeyOutlined,
 	UnorderedListOutlined,
 	TrophyOutlined,
+	BarChartOutlined,
+	AuditOutlined,
+	AppstoreOutlined,
 } from '@ant-design/icons';
 import { usePathname } from 'next/navigation';
+import type { MenuProps } from 'antd';
+
+type MenuItem = Required<MenuProps>['items'][number];
 
 export default function ClientNav() {
 	const [role, setRole] = useState<Role | undefined>(undefined);
@@ -30,41 +36,129 @@ export default function ClientNav() {
 	}, []);
 
 	const items = useMemo(() => {
-		const list: any[] = [];
+		const list: MenuItem[] = [];
 
+		// ========== 数据分析模块 ==========
 		if (role === 'superadmin') {
-			list.push({ key: '/admin/analytics', icon: <ExperimentOutlined />, label: <Link href="/admin/analytics">数据总览</Link> });
+			list.push({
+				key: 'analytics-group',
+				label: '数据分析',
+				type: 'group',
+				children: [
+					{ key: '/admin/analytics', icon: <BarChartOutlined />, label: <Link href="/admin/analytics">数据总览</Link> },
+				],
+			});
 		}
-		if (role === 'schoolAdmin' || role === 'teacher' || role === 'student') {
-			list.push({ key: '/analytics', icon: <ExperimentOutlined />, label: <Link href="/analytics">数据总览</Link> });
+		if (role === 'schoolAdmin' || role === 'teacher') {
+			list.push({
+				key: 'analytics-group',
+				label: '数据分析',
+				type: 'group',
+				children: [
+					{ key: '/analytics', icon: <BarChartOutlined />, label: <Link href="/analytics">数据总览</Link> },
+					{ key: '/scores', icon: <ExperimentOutlined />, label: <Link href="/scores">成绩查看</Link> },
+				],
+			});
 		}
 
-		list.push({ key: '/activate', icon: <KeyOutlined />, label: <Link href="/activate">激活课程</Link> });
-
-		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
-			list.push({ key: '/users', icon: <TeamOutlined />, label: <Link href="/users">用户管理</Link> });
+		// ========== 用户管理模块 ==========
+		const userManagementItems: MenuItem[] = [];
+		
+		// 组织管理
+		if (role === 'superadmin') {
+			userManagementItems.push(
+				{ key: '/admin/schools', icon: <CrownOutlined />, label: <Link href="/admin/schools">学校管理</Link> }
+			);
 		}
-		list.push({ key: '/scores', icon: <ExperimentOutlined />, label: <Link href="/scores">成绩查看</Link> });
 		if (role === 'superadmin' || role === 'schoolAdmin') {
-			list.push({ key: '/admin/classes', icon: <ApartmentOutlined />, label: <Link href="/admin/classes">班级管理</Link> });
+			userManagementItems.push(
+				{ key: '/admin/classes', icon: <ApartmentOutlined />, label: <Link href="/admin/classes">班级管理</Link> }
+			);
 		}
-		if (role === 'superadmin') {
-			list.push({ key: '/admin/schools', icon: <CrownOutlined />, label: <Link href="/admin/schools">学校管理</Link> });
-			list.push({ key: '/admin/courses', icon: <ReadOutlined />, label: <Link href="/admin/courses">课程管理</Link> });
-			list.push({ key: '/admin/three-courseware', icon: <FileOutlined />, label: <Link href="/admin/three-courseware">三维课件</Link> });
-			list.push({ key: '/admin/ai-course', icon: <ReadOutlined />, label: <Link href="/admin/ai-course">AI课程编辑</Link> });
-			list.push({ key: '/metaverse/authorize', icon: <SafetyOutlined />, label: <Link href="/metaverse/authorize">元宇宙大厅授权</Link> });
-		}
-		if (role === 'superadmin' || metaverseAllowed) {
-			list.push({ key: '/resources', icon: <FileOutlined />, label: <Link href="/resources">资源管理</Link> });
-		}
+		
+		// 人员管理
 		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
-			list.push({ key: '/admin/quiz-records', icon: <TrophyOutlined />, label: <Link href="/admin/quiz-records">成绩管理</Link> });
+			userManagementItems.push(
+				{ key: '/users', icon: <TeamOutlined />, label: <Link href="/users">人员管理</Link> }
+			);
 		}
+		
+		if (userManagementItems.length > 0) {
+			list.push({
+				key: 'user-group',
+				label: '用户管理',
+				type: 'group',
+				children: userManagementItems,
+			});
+		}
+
+		// ========== 课程管理模块 ==========
+		const courseManagementItems: MenuItem[] = [];
+
+		if (role === 'superadmin' || role === 'schoolAdmin') {
+			courseManagementItems.push(
+				{ key: '/admin/courses', icon: <ReadOutlined />, label: <Link href="/admin/courses">虚拟仿真课程</Link> },
+				{ key: '/admin/course-review', icon: <AuditOutlined />, label: <Link href="/admin/course-review">课件审核</Link> }
+			);
+		}
+
+		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
+			courseManagementItems.push(
+				{ key: '/admin/quiz-records', icon: <TrophyOutlined />, label: <Link href="/admin/quiz-records">成绩管理</Link> }
+			);
+		}
+
+		if (courseManagementItems.length > 0) {
+			list.push({
+				key: 'course-group',
+				label: '课程管理',
+				type: 'group',
+				children: courseManagementItems,
+			});
+		}
+
+		// ========== 课程授权模块 (仅超管) ==========
 		if (role === 'superadmin') {
-			list.push({ key: '/admin/activation-codes', icon: <KeyOutlined />, label: <Link href="/admin/activation-codes">激活码管理</Link> });
-			list.push({ key: '/admin/activations', icon: <UnorderedListOutlined />, label: <Link href="/admin/activations">激活记录</Link> });
+			list.push({
+				key: 'auth-group',
+				label: '课程授权',
+				type: 'group',
+				children: [
+					{ key: '/admin/activation-codes', icon: <KeyOutlined />, label: <Link href="/admin/activation-codes">激活码管理</Link> },
+					{ key: '/admin/activations', icon: <UnorderedListOutlined />, label: <Link href="/admin/activations">激活记录</Link> },
+					{ key: '/metaverse/authorize', icon: <SafetyOutlined />, label: <Link href="/metaverse/authorize">元宇宙大厅授权</Link> },
+				],
+			});
 		}
+
+		// ========== 快捷入口 ==========
+		const quickAccessItems: MenuItem[] = [];
+		
+		quickAccessItems.push(
+			{ key: '/activate', icon: <KeyOutlined />, label: <Link href="/activate">激活课程</Link> }
+		);
+
+		if (role === 'superadmin' || role === 'schoolAdmin' || role === 'teacher') {
+			quickAccessItems.push(
+				{ key: '/editor', icon: <AppstoreOutlined />, label: <Link href="/editor">三维编辑器</Link> }
+			);
+		}
+
+		if (role === 'superadmin' || metaverseAllowed) {
+			quickAccessItems.push(
+				{ key: '/resources', icon: <FileOutlined />, label: <Link href="/resources">资源管理</Link> }
+			);
+		}
+
+		if (quickAccessItems.length > 0) {
+			list.push({
+				key: 'quick-group',
+				label: '快捷入口',
+				type: 'group',
+				children: quickAccessItems,
+			});
+		}
+
 		return list;
 	}, [role, metaverseAllowed]);
 
@@ -109,7 +203,7 @@ export default function ClientNav() {
 					marginTop: 4,
 					letterSpacing: 0.5
 				}}>
-					内容管理系统
+					管理后台 · {role === 'superadmin' ? '超级管理员' : role === 'schoolAdmin' ? '校级管理员' : '教师'}
 				</div>
 			</div>
 			
@@ -121,7 +215,8 @@ export default function ClientNav() {
 					borderRight: 0, 
 					flex: 1, 
 					background: 'transparent',
-					padding: '8px 0'
+					padding: '8px 0',
+					overflowY: 'auto',
 				}}
 				selectedKeys={[pathname || '/']}
 			/>

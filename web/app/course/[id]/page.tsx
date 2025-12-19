@@ -6,6 +6,12 @@ import { PlayCircleOutlined, PauseCircleOutlined, ShareAltOutlined, FullscreenOu
 import PublicCoursePlayer from './components/PublicCoursePlayer';
 import ModelExplorer from './components/ModelExplorer';
 import QuizPlayer from './components/QuizPlayer';
+import dynamic from 'next/dynamic';
+
+const ParticleBackground = dynamic(
+  () => import('@/app/_components/ParticleBackground'),
+  { ssr: false }
+);
 
 const { Title, Text } = Typography;
 
@@ -14,6 +20,7 @@ type ViewMode = 'select' | 'learn' | 'explore' | 'quiz';
 
 interface PublishedCourseData {
   id: string;
+  originalCourseId?: string; // 原始 AICourse ID，用于考试成绩提交
   title: string;
   description?: string;
   publishConfig: {
@@ -346,49 +353,54 @@ export default function PublicCoursePage() {
 
   if (loading) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        flexDirection: 'column',
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)',
-        color: 'white'
-      }}>
-        <div style={{ textAlign: 'center', maxWidth: '300px', padding: '20px' }}>
-          <div style={{ 
-            fontSize: '18px', 
-            fontWeight: 'bold', 
-            marginBottom: '20px',
-            color: 'white'
+      <div style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
+        <ParticleBackground theme="green" />
+        <div style={{
+          position: 'relative',
+          zIndex: 1,
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+          background: 'radial-gradient(ellipse at center, rgba(10, 26, 24, 0.55) 0%, rgba(5, 13, 16, 0.75) 55%, rgba(2, 8, 5, 0.88) 100%)',
+        }}>
+          <div style={{
+            width: 420,
+            maxWidth: '92vw',
+            padding: 28,
+            borderRadius: 22,
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)',
+            border: '1px solid rgba(16, 185, 129, 0.22)',
+            backdropFilter: 'blur(24px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(24px) saturate(160%)',
+            boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+            color: '#fff',
+            textAlign: 'center',
           }}>
-            {loadingMessage}
-          </div>
-          
-          {/* 简洁进度条 */}
-          <div style={{ 
-            width: '100%', 
-            height: '4px', 
-            backgroundColor: 'rgba(255,255,255,0.2)', 
-            borderRadius: '2px',
-            overflow: 'hidden',
-            marginBottom: '16px'
-          }}>
-            <div style={{ 
-              width: `${loadingProgress}%`, 
-              height: '100%', 
-              backgroundColor: '#1890ff',
-              borderRadius: '2px',
-              transition: 'width 0.3s ease'
-            }} />
-          </div>
-          
-          <div style={{ 
-            fontSize: '14px', 
-            opacity: 0.8,
-            color: 'white'
-          }}>
-            {loadingProgress}%
+            <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: 2, marginBottom: 18 }}>
+              {loadingMessage}
+            </div>
+            <div style={{
+              width: '100%',
+              height: 6,
+              background: 'rgba(255,255,255,0.10)',
+              borderRadius: 6,
+              overflow: 'hidden',
+              marginBottom: 14,
+              border: '1px solid rgba(255,255,255,0.06)'
+            }}>
+              <div style={{
+                width: `${loadingProgress}%`,
+                height: '100%',
+                background: 'linear-gradient(135deg, #34d399 0%, #10b981 50%, #059669 100%)',
+                borderRadius: 6,
+                transition: 'width 0.25s ease'
+              }} />
+            </div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)' }}>
+              {loadingProgress}%
+            </div>
           </div>
         </div>
       </div>
@@ -397,25 +409,38 @@ export default function PublicCoursePage() {
 
   if (error) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        background: '#f5f5f5',
-        padding: 20
-      }}>
-        <Alert
-          message="加载失败"
-          description={error}
-          type="error"
-          showIcon
-          action={
-            <Button size="small" onClick={loadCourseData}>
-              重试
-            </Button>
-          }
-        />
+      <div style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
+        <ParticleBackground theme="green" interactive={false} />
+        <div style={{
+          position: 'relative',
+          zIndex: 1,
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+          background: 'radial-gradient(ellipse at center, rgba(10, 26, 24, 0.55) 0%, rgba(5, 13, 16, 0.75) 55%, rgba(2, 8, 5, 0.88) 100%)',
+        }}>
+          <Alert
+            message={<span style={{ color: '#fff' }}>加载失败</span>}
+            description={<span style={{ color: 'rgba(255,255,255,0.75)' }}>{error}</span>}
+            type="error"
+            showIcon
+            style={{
+              width: 520,
+              maxWidth: '92vw',
+              background: 'rgba(10, 26, 24, 0.75)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              backdropFilter: 'blur(18px)',
+              WebkitBackdropFilter: 'blur(18px)',
+            }}
+            action={
+              <Button size="small" onClick={loadCourseData}>
+                重试
+              </Button>
+            }
+          />
+        </div>
       </div>
     );
   }
@@ -447,8 +472,11 @@ export default function PublicCoursePage() {
     <div style={{
       width: '100%',
       height: '100vh',
-      background: '#000'
+      background: '#000',
+      position: 'relative',
+      overflow: 'hidden'
     }}>
+      <ParticleBackground theme="green" />
       {/* 学习模式 */}
       {viewMode === 'learn' && (
         <PublicCoursePlayer
@@ -471,7 +499,7 @@ export default function PublicCoursePage() {
       {/* 答题模式 */}
       {viewMode === 'quiz' && courseData && (
         <QuizPlayer
-          courseId={courseData.id}
+          courseId={courseData.originalCourseId || courseData.id}
           publishId={params?.id as string}
           courseData={courseData}
           onBack={handleBackToSelect}
@@ -493,11 +521,11 @@ export default function PublicCoursePage() {
             background: 'rgba(0, 0, 0, 0.6)'
           },
           content: {
-            background: 'rgba(15, 23, 42, 0.9)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
+            background: 'linear-gradient(135deg, rgba(10, 26, 24, 0.86) 0%, rgba(5, 13, 16, 0.84) 100%)',
+            backdropFilter: 'blur(24px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(24px) saturate(160%)',
             borderRadius: '24px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.22)',
             boxShadow: '0 25px 50px rgba(0, 0, 0, 0.5)'
           }
         }}
@@ -525,96 +553,109 @@ export default function PublicCoursePage() {
             请选择您想要的学习方式
           </div>
           
-          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          {(() => {
+            const cardBase: React.CSSProperties = {
+              width: '140px',
+              padding: '22px 16px',
+              borderRadius: '18px',
+              cursor: 'pointer',
+              transition: 'all 0.25s ease',
+              boxShadow: '0 10px 34px rgba(0,0,0,0.35)',
+              border: '1px solid rgba(255,255,255,0.10)',
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 100%)',
+              backdropFilter: 'blur(18px) saturate(160%)',
+              WebkitBackdropFilter: 'blur(18px) saturate(160%)',
+              position: 'relative',
+              overflow: 'hidden',
+            };
+            const accentBar = (from: string, to: string): React.CSSProperties => ({
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 4,
+              background: `linear-gradient(90deg, ${from}, ${to})`,
+              opacity: 0.9,
+            });
+            const hoverOn = (e: any) => {
+              e.currentTarget.style.transform = 'translateY(-6px) scale(1.02)';
+              e.currentTarget.style.boxShadow = '0 18px 46px rgba(0,0,0,0.48)';
+              e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+            };
+            const hoverOff = (e: any) => {
+              e.currentTarget.style.transform = 'translateY(0) scale(1)';
+              e.currentTarget.style.boxShadow = '0 10px 34px rgba(0,0,0,0.35)';
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)';
+            };
+            const iconWrap = (bg: string): React.CSSProperties => ({
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 14px',
+              background: bg,
+              boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.25)',
+            });
+            return (
+              <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
             {/* 开始学习 */}
             <div 
               onClick={() => handleModeSelect('learn')}
-              style={{
-                width: '130px',
-                padding: '24px 16px',
-                borderRadius: '16px',
-                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                cursor: 'pointer',
-                transition: 'all 0.25s ease',
-                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.4)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-6px) scale(1.02)';
-                e.currentTarget.style.boxShadow = '0 12px 30px rgba(99, 102, 241, 0.5)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                e.currentTarget.style.boxShadow = '0 4px 20px rgba(99, 102, 241, 0.4)';
-              }}
+              style={cardBase}
+              onMouseEnter={hoverOn}
+              onMouseLeave={hoverOff}
             >
-              <PlayCircleOutlined style={{ fontSize: '36px', color: 'white', marginBottom: '14px', display: 'block' }} />
-              <div style={{ color: 'white', fontWeight: 600, fontSize: '15px' }}>开始学习</div>
-              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginTop: '6px' }}>跟随AI讲解</div>
+              <div style={accentBar('#34d399', '#10b981')} />
+              <div style={iconWrap('linear-gradient(135deg, rgba(52, 211, 153, 0.95) 0%, rgba(16, 185, 129, 0.95) 100%)')}>
+                <PlayCircleOutlined style={{ fontSize: '28px', color: 'white' }} />
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.95)', fontWeight: 700, fontSize: '15px' }}>开始学习</div>
+              <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', marginTop: '6px' }}>跟随AI讲解</div>
             </div>
 
             {/* 模型查看 */}
             <div 
               onClick={() => handleModeSelect('explore')}
-              style={{
-                width: '130px',
-                padding: '24px 16px',
-                borderRadius: '16px',
-                background: 'linear-gradient(135deg, #06b6d4 0%, #10b981 100%)',
-                cursor: 'pointer',
-                transition: 'all 0.25s ease',
-                boxShadow: '0 4px 20px rgba(6, 182, 212, 0.4)'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-6px) scale(1.02)';
-                e.currentTarget.style.boxShadow = '0 12px 30px rgba(6, 182, 212, 0.5)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                e.currentTarget.style.boxShadow = '0 4px 20px rgba(6, 182, 212, 0.4)';
-              }}
+              style={cardBase}
+              onMouseEnter={hoverOn}
+              onMouseLeave={hoverOff}
             >
-              <EyeOutlined style={{ fontSize: '36px', color: 'white', marginBottom: '14px', display: 'block' }} />
-              <div style={{ color: 'white', fontWeight: 600, fontSize: '15px' }}>模型查看</div>
-              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginTop: '6px' }}>自由探索模型</div>
+              <div style={accentBar('#10b981', '#14b8a6')} />
+              <div style={iconWrap('linear-gradient(135deg, rgba(16, 185, 129, 0.95) 0%, rgba(20, 184, 166, 0.95) 100%)')}>
+                <EyeOutlined style={{ fontSize: '28px', color: 'white' }} />
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.95)', fontWeight: 700, fontSize: '15px' }}>模型查看</div>
+              <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', marginTop: '6px' }}>自由探索模型</div>
             </div>
 
             {/* 开始答题 */}
             <div 
               onClick={() => hasQuestions ? handleModeSelect('quiz') : message.info('暂无考题')}
               style={{
-                width: '130px',
-                padding: '24px 16px',
-                borderRadius: '16px',
-                background: hasQuestions 
-                  ? 'linear-gradient(135deg, #ec4899 0%, #f97316 100%)'
-                  : 'linear-gradient(135deg, #4b5563 0%, #6b7280 100%)',
+                ...cardBase,
                 cursor: hasQuestions ? 'pointer' : 'not-allowed',
-                transition: 'all 0.25s ease',
-                boxShadow: hasQuestions 
-                  ? '0 4px 20px rgba(236, 72, 153, 0.4)'
-                  : '0 4px 20px rgba(75, 85, 99, 0.3)',
-                opacity: hasQuestions ? 1 : 0.6
+                opacity: hasQuestions ? 1 : 0.55,
               }}
-              onMouseEnter={(e) => {
-                if (hasQuestions) {
-                  e.currentTarget.style.transform = 'translateY(-6px) scale(1.02)';
-                  e.currentTarget.style.boxShadow = '0 12px 30px rgba(236, 72, 153, 0.5)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (hasQuestions) {
-                  e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                  e.currentTarget.style.boxShadow = '0 4px 20px rgba(236, 72, 153, 0.4)';
-                }
-              }}
+              onMouseEnter={(e) => { if (hasQuestions) hoverOn(e); }}
+              onMouseLeave={(e) => { if (hasQuestions) hoverOff(e); }}
             >
-              <FormOutlined style={{ fontSize: '36px', color: 'white', marginBottom: '14px', display: 'block' }} />
-              <div style={{ color: 'white', fontWeight: 600, fontSize: '15px' }}>开始答题</div>
-              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginTop: '6px' }}>
+              <div style={accentBar(hasQuestions ? '#f59e0b' : 'rgba(148,163,184,0.4)', hasQuestions ? '#10b981' : 'rgba(148,163,184,0.2)')} />
+              <div style={iconWrap(hasQuestions
+                ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.95) 0%, rgba(16, 185, 129, 0.95) 100%)'
+                : 'linear-gradient(135deg, rgba(100, 116, 139, 0.75) 0%, rgba(71, 85, 105, 0.75) 100%)'
+              )}>
+                <FormOutlined style={{ fontSize: '28px', color: 'white' }} />
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.95)', fontWeight: 700, fontSize: '15px' }}>开始答题</div>
+              <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', marginTop: '6px' }}>
                 {hasQuestions ? `${courseData?.courseData?.questions?.length}道题` : '暂无考题'}
               </div>
             </div>
           </div>
+            );
+          })()}
           
           {typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && (
             <div style={{ 
@@ -721,10 +762,10 @@ export default function PublicCoursePage() {
             background: 'rgba(0, 0, 0, 0.6)'
           },
           content: {
-            background: 'rgba(15, 23, 42, 0.95)',
-            backdropFilter: 'blur(20px)',
+            background: 'linear-gradient(135deg, rgba(10, 26, 24, 0.90) 0%, rgba(5, 13, 16, 0.88) 100%)',
+            backdropFilter: 'blur(24px) saturate(160%)',
             borderRadius: '20px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.22)',
             boxShadow: '0 25px 50px rgba(0, 0, 0, 0.5)'
           }
         }}
@@ -795,7 +836,7 @@ export default function PublicCoursePage() {
                 size="large"
                 style={{
                   height: '44px',
-                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                  background: 'linear-gradient(135deg, #34d399 0%, #10b981 55%, #059669 100%)',
                   border: 'none',
                   borderRadius: '10px',
                   fontWeight: 600

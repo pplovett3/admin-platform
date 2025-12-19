@@ -316,8 +316,8 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
-import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch, Dropdown, Segmented, Tooltip, Divider } from 'antd';
-import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined, SaveOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slider, InputNumber, Select, Tabs, Switch, Dropdown, Segmented, Tooltip, Divider, Image, Empty } from 'antd';
+import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined, SaveOutlined, ClockCircleOutlined, PlusOutlined, MoreOutlined, RobotOutlined, LoadingOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { getToken, getAPI_URL } from '@/app/_lib/api';
 import { apiPut, apiGet } from '@/app/_utils/api';
 import type { UploadProps } from 'antd';
@@ -326,6 +326,23 @@ type TreeNode = {
   title: string;
   key: string;
   children?: TreeNode[];
+};
+
+// AI智能整理相关类型
+type AIStructureNode = {
+  path: string;
+  original_name: string;
+  children?: AIStructureNode[];
+};
+
+type AIOrganizedNode = {
+  original_path?: string;
+  new_name: string;
+  children?: AIOrganizedNode[];
+};
+
+type AIOrganizeResult = {
+  nodes: AIOrganizedNode[];
 };
 
 type Annotation = {
@@ -440,16 +457,58 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const pointer = useMemo(() => new THREE.Vector2(), []);
+  
+  // 飞行模式相机控制（右键+WASDQE）
+  const flyModeRef = useRef<{
+    active: boolean;
+    keys: Set<string>;
+    mouseX: number;
+    mouseY: number;
+    lastMouseX: number;
+    lastMouseY: number;
+    euler: { x: number; y: number };
+  }>({
+    active: false,
+    keys: new Set(),
+    mouseX: 0,
+    mouseY: 0,
+    lastMouseX: 0,
+    lastMouseY: 0,
+    euler: { x: 0, y: 0 }
+  });
+  const [flySpeed, setFlySpeed] = useState<number>(1); // 飞行速度（类似Unity默认速度）
+  const flySpeedRef = useRef<number>(1); // 用于 animate 函数访问最新值
+  const [rotateSpeed, setRotateSpeed] = useState<number>(1); // 旋转速度
+  const rotateSpeedRef = useRef<number>(1); // 用于 OrbitControls 访问最新值
   const { message } = App.useApp();
+  
+  // 同步速度设置到 ref（让 animate 函数能访问最新值）
+  useEffect(() => { flySpeedRef.current = flySpeed; }, [flySpeed]);
+  useEffect(() => { 
+    rotateSpeedRef.current = rotateSpeed;
+    // 同步更新 OrbitControls 的旋转速度
+    if (controlsRef.current) {
+      controlsRef.current.rotateSpeed = rotateSpeed;
+    }
+  }, [rotateSpeed]);
 
   const [urlForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
+  const selectedKeyRef = useRef<string | undefined>(undefined);
+  useEffect(() => { selectedKeyRef.current = selectedKey; }, [selectedKey]);
   const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set());
   const selectedSetRef = useRef<Set<string>>(new Set());
   useEffect(() => { selectedSetRef.current = selectedSet; }, [selectedSet]);
   const [treeFilter, setTreeFilter] = useState<string>('');
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  const treeContainerRef = useRef<HTMLDivElement | null>(null);
+  
+  // 多层级选择支持 - 双击下钻
+  const lastClickTimeRef = useRef<number>(0);
+  const lastClickObjectRef = useRef<THREE.Object3D | null>(null);
+  const selectionDepthRef = useRef<Map<string, THREE.Object3D>>(new Map()); // 记录每个根对象的当前选中深度
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnno, setEditingAnno] = useState<Annotation | null>(null);
@@ -464,6 +523,28 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const lastBackgroundSphereCheckRef = useRef<number>(0);
   const lastCameraDistanceRef = useRef<number>(0);
   const materialModifiedRef = useRef<boolean>(false); // 跟踪材质是否被用户修改
+
+  // 材质库系统
+  interface SceneMaterial {
+    id: string;
+    name: string;
+    material: THREE.Material;
+    usedBy: Set<string>; // 使用该材质的对象 key 列表
+  }
+  const [sceneMaterials, setSceneMaterials] = useState<SceneMaterial[]>([]);
+  const [materialLibTab, setMaterialLibTab] = useState<'tree' | 'materials'>('tree'); // 左侧面板切换
+  const [draggingMaterialId, setDraggingMaterialId] = useState<string | null>(null);
+  const [renamingMaterialId, setRenamingMaterialId] = useState<string | null>(null);
+  const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null); // 正在编辑的材质ID
+  const [renamingMaterialName, setRenamingMaterialName] = useState<string>('');
+
+  // AI智能整理状态
+  const [aiOrganizing, setAiOrganizing] = useState<boolean>(false);
+  const [aiOrganizeResult, setAiOrganizeResult] = useState<AIOrganizeResult | null>(null);
+  const [aiOrganizeModalVisible, setAiOrganizeModalVisible] = useState<boolean>(false);
+  const [aiPartScreenshots, setAiPartScreenshots] = useState<Map<string, { context: string; focus: string }>>(new Map()); // path -> 两张截图
+  const [showAIScreenshots, setShowAIScreenshots] = useState<boolean>(true); // 是否显示截图对照
+
   const [cameraKeyEasing, setCameraKeyEasing] = useState<'linear'|'easeInOut'>('easeInOut');
   const [highlightMode, setHighlightMode] = useState<'outline'|'emissive'>('outline');
   const [gizmoMode, setGizmoMode] = useState<'translate'|'rotate'|'scale'>('translate');
@@ -471,7 +552,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [gizmoSnap, setGizmoSnap] = useState<{ t?: number; r?: number; s?: number }>({ t: undefined, r: undefined, s: undefined });
   const [bgTransparent, setBgTransparent] = useState<boolean>(false);
   const [bgColor, setBgColor] = useState<string>('#919191');
-  const [bgType, setBgType] = useState<'color' | 'splat'>('color'); // 只保留纯色和高斯+HDR两种模式，默认纯色
+  const [bgType, setBgType] = useState<'color' | 'splat' | 'hdr'>('color'); // 纯色/高斯+HDR/仅HDR光照三种模式
   const [bgPanorama, setBgPanorama] = useState<string | null>('/360background_7.hdr'); // 用于环境光照
   const [bgPanoramaBrightness, setBgPanoramaBrightness] = useState<number>(1.0);
   const [useHDREnvironment, setUseHDREnvironment] = useState<boolean>(true);
@@ -485,7 +566,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   
   // 待应用的设置（点击"应用"按钮才生效）
   const [pendingSettings, setPendingSettings] = useState<{
-    bgType: 'color' | 'splat';
+    bgType: 'color' | 'splat' | 'hdr';
     bgColor: string;
     bgSplat: string;
     bgPanorama: string | null;
@@ -588,6 +669,29 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const trsUndoStack = useRef<TRSSnapshot[]>([]);
   const trsRedoStack = useRef<TRSSnapshot[]>([]);
   const trsTransformStartState = useRef<TRSSnapshot | null>(null);
+
+  // 材质撤销/重做系统
+  interface MaterialSnapshot {
+    objectKey: string;
+    materialIndex: number;
+    type: string;
+    color: number;
+    opacity: number;
+    transparent: boolean;
+    metalness?: number;
+    roughness?: number;
+    emissive?: number;
+    emissiveIntensity?: number;
+    wireframe?: boolean;
+  }
+  const materialUndoStack = useRef<MaterialSnapshot[]>([]);
+  const materialRedoStack = useRef<MaterialSnapshot[]>([]);
+
+  // 通用操作历史栈（记录操作类型顺序）
+  type OperationType = 'trs' | 'material';
+  const operationUndoStack = useRef<OperationType[]>([]);
+  const operationRedoStack = useRef<OperationType[]>([]);
+
   const [materialIndex, setMaterialIndex] = useState(0);
   const [materialPropsKey, setMaterialPropsKey] = useState(0); // 用于强制更新材质属性滑块
   const [modelName, setModelName] = useState<string>('未加载模型');
@@ -1211,7 +1315,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     initRenderer();
     animate();
     const handleResize = () => resize();
+    const handleMouseUp = () => resetMaterialEditState(); // 重置材质编辑状态
     window.addEventListener('resize', handleResize);
+    window.addEventListener('mouseup', handleMouseUp);
     // 热键：1/2/3 切换 gizmo 模式；L 切换局部/世界；Ctrl/Shift+Z 撤销/重做；Delete 删除选中关键帧
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -1262,6 +1368,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('keydown', onKey);
       if (rendererRef.current) {
         rendererRef.current.dispose();
@@ -1376,6 +1483,110 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (bgTransparent) {
       scene.background = null;
       cleanupSplatViewer();
+    } else if (bgType === 'hdr' && bgSplat) {
+      // 仅HDR光照模式 - 使用高斯场景配套的HDR作为光照和背景（不加载高斯模型）
+      cleanupSplatViewer(); // 清理高斯模型
+      
+      // 判断是world场景路径还是直接splat文件
+      const isWorldScene = bgSplat.startsWith('/world/');
+      const hdrPath = isWorldScene
+        ? `${bgSplat}/${bgSplat.split('/').pop()}.hdr`  // /world/world_1 -> /world/world_1/world_1.hdr
+        : bgPanorama;
+      
+      console.log('🌞 [Background/HDR] HDR全景背景+光照模式:', { hdrPath });
+      
+      // 加载HDR作为环境光照和全景背景
+      if (hdrPath && (hdrPath.toLowerCase().endsWith('.hdr') || hdrPath.toLowerCase().endsWith('.exr'))) {
+        const envLoader = hdrPath.toLowerCase().endsWith('.hdr') ? new RGBELoader() : new EXRLoader();
+        envLoader.load(hdrPath, (texture) => {
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+          const pmremGenerator = pmremGeneratorRef.current;
+          if (pmremGenerator) {
+            const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+            scene.environment = envMap;
+            // 应用 HDR 亮度到渲染器曝光度
+            const renderer = rendererRef.current;
+            if (renderer) {
+              renderer.toneMappingExposure = bgPanoramaBrightness;
+            }
+            // 应用到材质环境贴图强度
+            updateMaterialsEnvMap(envMap, bgPanoramaBrightness);
+            console.log('✅ [Background/HDR] HDR环境光照已应用:', hdrPath, '亮度:', bgPanoramaBrightness);
+            
+            // 创建全景背景球体显示 HDR 图片
+            const camera = cameraRef.current;
+            if (camera) {
+              const cameraDistance = camera.position.length();
+              const minRadiusForCamera = cameraDistance * 2;
+              const maxRadiusForFar = camera.far * 0.95;
+              const sphereRadius = Math.max(10000, Math.max(minRadiusForCamera, maxRadiusForFar));
+              
+              // 创建背景材质
+              const material = new THREE.ShaderMaterial({
+                uniforms: {
+                  tBackground: { value: texture },
+                  uBrightness: { value: bgPanoramaBrightness }
+                },
+                vertexShader: `
+                  varying vec2 vUv;
+                  void main() {
+                    vUv = uv;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    gl_Position.z = gl_Position.w * 0.999999;
+                  }
+                `,
+                fragmentShader: `
+                  uniform sampler2D tBackground;
+                  uniform float uBrightness;
+                  varying vec2 vUv;
+                  void main() {
+                    vec4 texColor = texture2D(tBackground, vUv);
+                    gl_FragColor = vec4(texColor.rgb * uBrightness, 1.0);
+                  }
+                `,
+                side: THREE.BackSide,
+                depthWrite: false,
+                depthTest: true
+              });
+              
+              const geometry = new THREE.SphereGeometry(sphereRadius, 64, 64);
+              const sphere = new THREE.Mesh(geometry, material);
+              sphere.name = '__background_sphere__';
+              sphere.renderOrder = Infinity;
+              sphere.frustumCulled = false;
+              sphere.position.set(0, 0, 0);
+              
+              // 移除旧的背景球体
+              const oldSphere = scene.getObjectByName('__background_sphere__');
+              if (oldSphere) scene.remove(oldSphere);
+              
+              scene.add(sphere);
+              scene.background = null; // 使用球体作为背景
+              console.log('✅ [Background/HDR] HDR全景背景球体已创建:', sphereRadius.toFixed(0));
+            }
+            
+            // 重新渲染
+            const r = rendererRef.current; const c = cameraRef.current;
+            if (r && c) {
+              const composer = composerRef.current;
+              if (composer) composer.render();
+              else r.render(scene, c);
+            }
+          }
+        }, undefined, (error) => {
+          console.warn('⚠️ [Background/HDR] 加载HDR环境光照失败:', error);
+          // 加载失败时使用纯色背景
+          const oldSphere = scene.getObjectByName('__background_sphere__');
+          if (oldSphere) scene.remove(oldSphere);
+          scene.background = new THREE.Color(bgColor);
+        });
+      } else {
+        // 没有 HDR 路径时使用纯色背景
+        const oldSphere = scene.getObjectByName('__background_sphere__');
+        if (oldSphere) scene.remove(oldSphere);
+        scene.background = new THREE.Color(bgColor);
+      }
     } else if (bgType === 'splat' && bgSplat) {
       // 高斯泼溅背景 + HDR环境光照
       // 判断是world场景路径还是直接splat文件
@@ -1857,6 +2068,13 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    controls.rotateSpeed = rotateSpeedRef.current; // 旋转速度
+    // 鼠标按钮配置：右键旋转，左键平移（类似Unity操作习惯）
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.PAN,      // 左键平移
+      MIDDLE: THREE.MOUSE.DOLLY,  // 中键缩放
+      RIGHT: THREE.MOUSE.ROTATE   // 右键旋转
+    };
     controlsRef.current = controls;
     // 自动相机关键帧：用户结束相机交互时落帧/写回
     controls.addEventListener('end', () => {
@@ -1884,10 +2102,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         prevPivotWorldRef.current = (multiPivotRef.current||tcontrols.object)?.matrixWorld.clone() || null; 
         pushHistory();
         
-        // 记录TRS变换开始时的状态
+        // 记录TRS变换开始时的状态（使用 ref 获取最新的 selectedKey）
         const obj = tcontrols.object as THREE.Object3D | null;
-        if (obj && selectedKey) {
-          const snapshot = trsSaveSnapshot(selectedKey);
+        const currentSelectedKey = selectedKeyRef.current;
+        if (obj && currentSelectedKey) {
+          const snapshot = trsSaveSnapshot(currentSelectedKey);
           if (snapshot) {
             trsTransformStartState.current = snapshot;
           }
@@ -1897,7 +2116,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         if (trsTransformStartState.current) {
           // 保存到TRS撤销栈
           trsUndoStack.current.push(trsTransformStartState.current);
-          trsRedoStack.current = []; // 清空重做栈
+          operationUndoStack.current.push('trs'); // 记录操作类型
+          // 清空重做栈
+          trsRedoStack.current = [];
+          materialRedoStack.current = [];
+          operationRedoStack.current = [];
           trsTransformStartState.current = null;
         }
       }
@@ -1957,6 +2180,28 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const onUp=()=>{ (controls as any).enabled = true; window.removeEventListener('pointerup', onUp); };
       window.addEventListener('pointerup', onUp);
     });
+    
+    // WSADQE 键盘飞行移动（独立于鼠标操作，类似 Unity）
+    const handleFlyModeKeyDown = (ev: KeyboardEvent) => {
+      const key = ev.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'q', 'e'].includes(key)) {
+        flyModeRef.current.keys.add(key);
+      }
+    };
+    
+    const handleFlyModeKeyUp = (ev: KeyboardEvent) => {
+      const key = ev.key.toLowerCase();
+      flyModeRef.current.keys.delete(key);
+    };
+    
+    // 禁用右键菜单（让 OrbitControls 右键旋转正常工作）
+    const handleContextMenu = (ev: Event) => {
+      ev.preventDefault();
+    };
+    
+    renderer.domElement.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleFlyModeKeyDown);
+    window.addEventListener('keyup', handleFlyModeKeyUp);
 
     // markers container
     const markers = new THREE.Group();
@@ -2013,6 +2258,39 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     const controls = controlsRef.current;
     if (!renderer || !scene || !camera) return;
     requestAnimationFrame(animate);
+    
+    // 键盘飞行移动（WSADQE，类似 Unity Scene 视图）
+    if (flyModeRef.current.keys.size > 0) {
+      const speed = flySpeedRef.current * 0.016; // 60fps下每帧移动距离
+      const keys = flyModeRef.current.keys;
+      
+      // 获取相机的前向、右向和上向
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      const right = new THREE.Vector3();
+      right.crossVectors(forward, camera.up).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      
+      // 移动向量
+      const moveDir = new THREE.Vector3();
+      
+      if (keys.has('w')) moveDir.add(forward);
+      if (keys.has('s')) moveDir.sub(forward);
+      if (keys.has('d')) moveDir.add(right);
+      if (keys.has('a')) moveDir.sub(right);
+      if (keys.has('e')) moveDir.add(up);
+      if (keys.has('q')) moveDir.sub(up);
+      
+      if (moveDir.length() > 0) {
+        moveDir.normalize().multiplyScalar(speed);
+        camera.position.add(moveDir);
+        // 同步更新OrbitControls的target
+        if (controls) {
+          controls.target.add(moveDir);
+        }
+      }
+    }
+    
     // timeline playback
     const now = performance.now();
     const dt = Math.min(0.1, (now - lastTickRef.current) / 1000);
@@ -2564,6 +2842,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           
           // 构建节点映射
           rebuildTree();
+          
+          // 收集场景材质
+          setTimeout(() => collectSceneMaterials(), 100);
           
           // 验证树结构是否正确构建（通过keyToObject检查）
           const rootKey = root.uuid;
@@ -3771,9 +4052,62 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     if (root) root.traverse(o => { const m = o as THREE.Mesh; if ((m as any).isMesh && (o as any).visible !== false) meshes.push(m); });
     const hits = raycaster.intersectObjects(meshes, true);
     if (hits.length > 0) {
-      const obj = hits[0].object as THREE.Object3D;
+      const hitMesh = hits[0].object as THREE.Object3D;
       const add = event.ctrlKey || event.metaKey;
-      selectObject(obj, add);
+      
+      // 多层级选择逻辑 - 类似Unity：单击选外层，双击下钻
+      const now = performance.now();
+      const timeSinceLastClick = now - lastClickTimeRef.current;
+      const isDoubleClick = timeSinceLastClick < 350; // 350ms 双击阈值
+      
+      // 获取从 hitMesh 到模型根节点的祖先链（不包括场景和模型根）
+      const getAncestorChain = (obj: THREE.Object3D): THREE.Object3D[] => {
+        const chain: THREE.Object3D[] = [obj];
+        let current = obj.parent;
+        while (current && current !== sceneRef.current && current !== root) {
+          chain.push(current);
+          current = current.parent;
+        }
+        return chain.reverse(); // 从根到叶
+      };
+      
+      const ancestorChain = getAncestorChain(hitMesh);
+      
+      // 查找根对象的 key（用于记录选择深度）
+      const rootAncestorKey = ancestorChain.length > 0 ? ancestorChain[0].uuid : hitMesh.uuid;
+      
+      let targetObject: THREE.Object3D;
+      
+      if (isDoubleClick && lastClickObjectRef.current) {
+        // 双击：下钻到更深层级
+        const currentDepth = selectionDepthRef.current.get(rootAncestorKey);
+        if (currentDepth) {
+          // 找到当前选中对象在祖先链中的位置
+          const currentIndex = ancestorChain.findIndex(o => o.uuid === currentDepth.uuid);
+          if (currentIndex >= 0 && currentIndex < ancestorChain.length - 1) {
+            // 下钻到下一层
+            targetObject = ancestorChain[currentIndex + 1];
+          } else {
+            // 已经是最深层，选中最终的mesh
+            targetObject = hitMesh;
+          }
+        } else {
+          // 从第二层开始（跳过第一层）
+          targetObject = ancestorChain.length > 1 ? ancestorChain[1] : hitMesh;
+        }
+      } else {
+        // 单击：选择最外层（祖先链的第一个）
+        targetObject = ancestorChain.length > 0 ? ancestorChain[0] : hitMesh;
+        // 重置选择深度
+        selectionDepthRef.current.clear();
+      }
+      
+      // 记录选择深度
+      selectionDepthRef.current.set(rootAncestorKey, targetObject);
+      lastClickTimeRef.current = now;
+      lastClickObjectRef.current = targetObject;
+      
+      selectObject(targetObject, add);
       return;
     }
     
@@ -3862,6 +4196,35 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   }
 
+  // 获取对象的所有祖先uuid路径（用于展开树）
+  function getAncestorKeys(obj: THREE.Object3D): string[] {
+    const keys: string[] = [];
+    let current = obj.parent;
+    while (current && current !== sceneRef.current) {
+      keys.unshift(current.uuid);
+      current = current.parent;
+    }
+    return keys;
+  }
+  
+  // 滚动树到选中的节点
+  function scrollTreeToNode(nodeKey: string) {
+    setTimeout(() => {
+      const container = treeContainerRef.current;
+      if (!container) return;
+      const nodeElement = container.querySelector(`[data-tree-node-key="${nodeKey}"]`) as HTMLElement;
+      if (nodeElement) {
+        nodeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        // 备用方法：查找 ant-tree-treenode-selected
+        const selectedNode = container.querySelector('.ant-tree-treenode-selected') as HTMLElement;
+        if (selectedNode) {
+          selectedNode.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }, 100); // 等待树展开动画
+  }
+
   function selectObject(obj: THREE.Object3D, addToSelection: boolean = false) {
     const scene = sceneRef.current!;
     if (boxHelperRef.current) { scene.remove(boxHelperRef.current); boxHelperRef.current = null; }
@@ -3883,6 +4246,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     // outline highlight
     syncHighlight();
     setPrsTick(v=>v+1);
+    
+    // 自动展开树到选中对象并滚动
+    const ancestorKeys = getAncestorKeys(obj);
+    if (ancestorKeys.length > 0) {
+      setExpandedKeys(prev => {
+        const newKeys = new Set(prev);
+        ancestorKeys.forEach(k => newKeys.add(k));
+        return Array.from(newKeys);
+      });
+    }
+    scrollTreeToNode(obj.uuid);
   }
 
   // --- 层级编辑工具 ---
@@ -3976,9 +4350,85 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
 
   function handleNodeAction(action: string, key: string) {
     if (action === 'rename') { const obj = keyToObject.current.get(key); if (!obj) return; setRenameOpen(true); renameForm.setFieldsValue({ name: obj.name || '' }); (window as any).__renameKey = key; return; }
+    if (action === 'ai-rename') { handleAIRename(key); return; }
     if (action === 'group') { const ids = selectedSet.size>0 ? Array.from(selectedSet) : [key]; groupNodes(ids); return; }
     if (action === 'ungroup') { ungroupNode(key); return; }
     if (action === 'delete') { deleteNode(key); return; }
+  }
+
+  // AI重命名单个对象
+  async function handleAIRename(key: string) {
+    const obj = keyToObject.current.get(key);
+    if (!obj) {
+      message.error('对象不存在');
+      return;
+    }
+
+    message.loading({ content: `AI正在识别 "${obj.name || '未命名对象'}"...`, key: 'ai-rename', duration: 0 });
+
+    try {
+      // 1. 获取部件截图
+      const contextShot = await capturePartContextScreenshot(key);
+      const focusShot = await capturePartFocusScreenshot(key);
+      
+      if (!contextShot || !focusShot) {
+        throw new Error('无法获取部件截图');
+      }
+
+      // 2. 调用AI识别API
+      const token = getToken();
+      const apiUrl = getAPI_URL();
+      const cwName = coursewareData?.name || '';
+      
+      const response = await fetch(`${apiUrl}/api/ai/identify-part`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          path: key,
+          imageBase64: contextShot,
+          focusImageBase64: focusShot,
+          coursewareName: cwName
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `请求失败: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data.success || !data.result?.new_name) {
+        throw new Error('AI返回数据格式不正确');
+      }
+
+      const newName = data.result.new_name;
+      const oldName = obj.name || '未命名';
+
+      // 3. 应用重命名
+      obj.name = newName;
+      setPrsTick(x => x + 1);
+
+      // 重建树结构
+      const root = modelRootRef.current!;
+      const nodes: TreeNode[] = [];
+      const map = keyToObject.current;
+      map.clear();
+      const makeNode = (o: THREE.Object3D): TreeNode => {
+        const k = o.uuid;
+        map.set(k, o);
+        return { title: o.name || o.type || k.slice(0, 8), key: k, children: o.children?.map(makeNode) };
+      };
+      nodes.push(makeNode(root));
+      setTreeData(nodes);
+
+      message.success({ content: `AI重命名完成: "${oldName}" → "${newName}"`, key: 'ai-rename' });
+    } catch (error) {
+      console.error('AI重命名失败:', error);
+      message.error({ content: `AI重命名失败: ${(error as Error).message}`, key: 'ai-rename' });
+    }
   }
 
   // 更新高亮框位置（拖动时调用）
@@ -4198,6 +4648,782 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     root.traverse(o => { (o as any).visible = true; });
     setHiddenKeys(new Set());
   };
+
+  // ==================== AI智能整理功能 ====================
+
+  /**
+   * 将treeData转换为AI整理需要的结构格式
+   */
+  const prepareStructureData = useCallback((): AIStructureNode[] => {
+    const convert = (nodes: TreeNode[], parentPath: string = ''): AIStructureNode[] => {
+      return nodes.map(node => {
+        const path = parentPath ? `${parentPath}/${node.title}` : node.title;
+        return {
+          path: node.key, // 使用key作为唯一路径标识
+          original_name: node.title,
+          children: node.children ? convert(node.children, path) : undefined
+        };
+      });
+    };
+    return convert(treeData);
+  }, [treeData]);
+
+
+  /**
+   * 隐藏所有辅助对象（坐标轴、边界框等）用于干净截图
+   */
+  const hideHelperObjects = useCallback((): Map<THREE.Object3D, boolean> => {
+    const helperVisibility = new Map<THREE.Object3D, boolean>();
+    
+    // 隐藏TransformControls
+    if (tcontrolsRef.current) {
+      const tcObj = tcontrolsRef.current as unknown as THREE.Object3D;
+      helperVisibility.set(tcObj, (tcontrolsRef.current as any).visible);
+      (tcontrolsRef.current as any).visible = false;
+    }
+    
+    // 隐藏BoxHelper
+    if (boxHelperRef.current) {
+      helperVisibility.set(boxHelperRef.current, boxHelperRef.current.visible);
+      boxHelperRef.current.visible = false;
+    }
+    
+    // 隐藏标注组
+    if (markersGroupRef.current) {
+      helperVisibility.set(markersGroupRef.current, markersGroupRef.current.visible);
+      markersGroupRef.current.visible = false;
+    }
+    
+    // 隐藏场景中其他辅助对象
+    const scene = sceneRef.current;
+    if (scene) {
+      scene.traverse(obj => {
+        if (obj instanceof THREE.AxesHelper || 
+            obj instanceof THREE.GridHelper ||
+            obj instanceof THREE.BoxHelper ||
+            obj instanceof THREE.ArrowHelper ||
+            obj.name === 'TransformControlsGizmo' ||
+            obj.name === 'TransformControlsPlane') {
+          helperVisibility.set(obj, obj.visible);
+          obj.visible = false;
+        }
+      });
+    }
+    
+    return helperVisibility;
+  }, []);
+
+  /**
+   * 恢复辅助对象可见性
+   */
+  const restoreHelperObjects = useCallback((helperVisibility: Map<THREE.Object3D, boolean>) => {
+    helperVisibility.forEach((wasVisible, obj) => {
+      obj.visible = wasVisible;
+    });
+  }, []);
+
+
+  /**
+   * 对当前3D场景进行全局截图
+   */
+  const captureGlobalScreenshot = useCallback(async (): Promise<string> => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera) {
+      throw new Error('渲染器未初始化');
+    }
+
+    // 隐藏辅助对象（坐标轴等）
+    const helperVisibility = hideHelperObjects();
+
+    // 确保所有模型对象可见
+    const root = modelRootRef.current;
+    const originalVisibility = new Map<THREE.Object3D, boolean>();
+    if (root) {
+      root.traverse(o => {
+        originalVisibility.set(o, o.visible);
+        o.visible = true;
+      });
+    }
+
+    // 渲染一帧
+    renderer.render(scene, camera);
+
+    // 获取截图
+    return new Promise((resolve, reject) => {
+      renderer.domElement.toBlob((blob) => {
+        // 恢复原始可见性
+        if (root) {
+          root.traverse(o => {
+            const originalVis = originalVisibility.get(o);
+            if (originalVis !== undefined) {
+              o.visible = originalVis;
+            }
+          });
+        }
+        
+        // 恢复辅助对象
+        restoreHelperObjects(helperVisibility);
+
+        if (!blob) {
+          reject(new Error('截图失败'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = reader.result as string;
+          resolve(base64);
+        };
+        reader.onerror = () => reject(new Error('读取截图数据失败'));
+        reader.readAsDataURL(blob);
+      }, 'image/png', 0.8);
+    });
+  }, [hideHelperObjects, restoreHelperObjects]);
+
+  /**
+   * 部件截图（位置图）
+   * - 使用和编辑器一样的 OutlinePass 高亮效果
+   * - 其他对象：半透明显示
+   * - 背景：黑色
+   */
+  const capturePartContextScreenshot = useCallback(async (objectKey: string): Promise<string | null> => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const root = modelRootRef.current;
+    const composer = composerRef.current;
+    const outlinePass = outlineRef.current;
+    if (!renderer || !scene || !camera || !root) return null;
+
+    const targetObj = keyToObject.current.get(objectKey);
+    if (!targetObj) return null;
+
+    // 隐藏辅助对象（坐标轴等）
+    const helperVisibility = hideHelperObjects();
+
+    // 保存原始场景状态
+    const originalBackground = scene.background;
+    const originalAmbIntensity = ambLightRef.current?.intensity;
+    const originalHemiIntensity = hemiLightRef.current?.intensity;
+    
+    // 保存原始 OutlinePass 选中对象
+    const originalOutlineObjects = outlinePass ? [...outlinePass.selectedObjects] : [];
+    
+    // 保存原始材质（用于非目标对象的透明处理）
+    const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+    const transparentMaterials: THREE.Material[] = [];
+    
+    // 设置黑色背景
+    scene.background = new THREE.Color(0x000000);
+    
+    // 增强光照
+    if (ambLightRef.current) ambLightRef.current.intensity = 1.5;
+    if (hemiLightRef.current) hemiLightRef.current.intensity = 1.5;
+
+    // 收集目标对象及其子对象的所有 Mesh
+    const targetMeshes: THREE.Object3D[] = [];
+    targetObj.traverse(o => {
+      if (o instanceof THREE.Mesh) {
+        targetMeshes.push(o);
+      }
+    });
+
+    // 设置 OutlinePass 高亮目标对象（和编辑器选中效果一样）
+    if (outlinePass) {
+      outlinePass.selectedObjects = targetMeshes;
+    }
+
+    // 其他对象设置为半透明
+    root.traverse(o => {
+      if (o instanceof THREE.Mesh && o.material) {
+        // 检查是否是目标对象的一部分
+        let isTarget = false;
+        targetObj.traverse(t => { if (t === o) isTarget = true; });
+        
+        if (!isTarget) {
+          originalMaterials.set(o, o.material);
+          const transparentMat = new THREE.MeshStandardMaterial({
+            color: 0x888888,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false,
+            roughness: 1,
+            metalness: 0
+          });
+          transparentMaterials.push(transparentMat);
+          o.material = transparentMat;
+        }
+      }
+    });
+
+    // 确保所有对象可见
+    const originalVisibility = new Map<THREE.Object3D, boolean>();
+    root.traverse(o => {
+      originalVisibility.set(o, o.visible);
+      o.visible = true;
+    });
+
+    // 使用 EffectComposer 渲染（包含 OutlinePass 效果）
+    if (composer) {
+      composer.render();
+    } else {
+      renderer.render(scene, camera);
+    }
+
+    // 获取截图
+    return new Promise((resolve) => {
+      renderer.domElement.toBlob((blob) => {
+        // 恢复原始材质
+        originalMaterials.forEach((mat, mesh) => {
+          mesh.material = mat;
+        });
+        
+        // 清理临时材质
+        transparentMaterials.forEach(mat => mat.dispose());
+        
+        // 恢复 OutlinePass 原始选中对象
+        if (outlinePass) {
+          outlinePass.selectedObjects = originalOutlineObjects;
+        }
+        
+        // 恢复原始可见性
+        root.traverse(o => {
+          const originalVis = originalVisibility.get(o);
+          if (originalVis !== undefined) {
+            o.visible = originalVis;
+          }
+        });
+        
+        // 恢复场景状态
+        scene.background = originalBackground;
+        if (ambLightRef.current && originalAmbIntensity !== undefined) {
+          ambLightRef.current.intensity = originalAmbIntensity;
+        }
+        if (hemiLightRef.current && originalHemiIntensity !== undefined) {
+          hemiLightRef.current.intensity = originalHemiIntensity;
+        }
+        
+        // 恢复辅助对象
+        restoreHelperObjects(helperVisibility);
+
+        if (!blob) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = reader.result as string;
+          resolve(base64);
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      }, 'image/png', 0.9);
+    });
+  }, [hideHelperObjects, restoreHelperObjects]);
+
+  /**
+   * 部件截图（聚焦隔离图）
+   * - 只显示目标对象及其子对象
+   * - 自动将相机对焦到目标包围盒
+   * - 使用和编辑器一样的 OutlinePass 高亮效果
+   * - 背景：黑色，增强光照
+   */
+  const capturePartFocusScreenshot = useCallback(async (objectKey: string): Promise<string | null> => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const root = modelRootRef.current;
+    const composer = composerRef.current;
+    const outlinePass = outlineRef.current;
+    if (!renderer || !scene || !camera || !root) return null;
+
+    const targetObj = keyToObject.current.get(objectKey);
+    if (!targetObj) return null;
+
+    // 隐藏辅助对象（坐标轴等）
+    const helperVisibility = hideHelperObjects();
+
+    // 保存原始场景状态
+    const originalBackground = scene.background;
+    const originalAmbIntensity = ambLightRef.current?.intensity;
+    const originalHemiIntensity = hemiLightRef.current?.intensity;
+
+    // 保存相机状态
+    const originalCamPos = camera.position.clone();
+    const originalCamQuat = camera.quaternion.clone();
+    
+    // 保存原始 OutlinePass 选中对象
+    const originalOutlineObjects = outlinePass ? [...outlinePass.selectedObjects] : [];
+
+    // 设置黑色背景 + 增强光照
+    scene.background = new THREE.Color(0x000000);
+    if (ambLightRef.current) ambLightRef.current.intensity = 1.5;
+    if (hemiLightRef.current) hemiLightRef.current.intensity = 1.5;
+
+    // 隔离显示：只显示目标对象及其子对象，其他完全隐藏
+    const targetObjects = new Set<THREE.Object3D>();
+    targetObj.traverse(o => targetObjects.add(o));
+    
+    // 收集目标对象的所有 Mesh（用于 OutlinePass）
+    const targetMeshes: THREE.Object3D[] = [];
+    targetObj.traverse(o => {
+      if (o instanceof THREE.Mesh) {
+        targetMeshes.push(o);
+      }
+    });
+    
+    // 设置 OutlinePass 高亮目标对象（和编辑器选中效果一样）
+    if (outlinePass) {
+      outlinePass.selectedObjects = targetMeshes;
+    }
+    
+    // 收集从root到目标对象的父级链，确保它们可见（但不渲染）
+    const parentChain = new Set<THREE.Object3D>();
+    let currentParent: THREE.Object3D | null = targetObj.parent;
+    while (currentParent) {
+      parentChain.add(currentParent);
+      currentParent = currentParent.parent;
+    }
+
+    const originalVisibility = new Map<THREE.Object3D, boolean>();
+    root.traverse(o => {
+      originalVisibility.set(o, o.visible);
+      // 只有目标对象及其子对象可见，父级链保持可见但不渲染mesh
+      if (targetObjects.has(o)) {
+        o.visible = true;
+      } else if (parentChain.has(o)) {
+        // 父级链需要可见才能让子对象渲染，但如果是mesh则隐藏
+        o.visible = !(o instanceof THREE.Mesh);
+      } else {
+        // 其他对象完全隐藏
+        o.visible = false;
+      }
+    });
+
+    // 计算包围盒并对焦相机
+    try {
+      const box = new THREE.Box3().setFromObject(targetObj);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      // 若包围盒异常则跳过对焦
+      if (isFinite(size.x) && isFinite(size.y) && isFinite(size.z) && size.length() > 1e-6) {
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = (camera as THREE.PerspectiveCamera).fov ?? 50;
+        const dist = (maxDim / (2 * Math.tan(THREE.MathUtils.degToRad(fov / 2)))) * 1.25;
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        // 相机朝向保持不变，只移动到目标前方
+        camera.position.copy(center.clone().add(dir.multiplyScalar(-dist)));
+        camera.lookAt(center);
+        camera.updateProjectionMatrix?.();
+      }
+    } catch {
+      // ignore focus errors
+    }
+
+    // 使用 EffectComposer 渲染（包含 OutlinePass 效果）
+    if (composer) {
+      composer.render();
+    } else {
+      renderer.render(scene, camera);
+    }
+
+    return new Promise((resolve) => {
+      renderer.domElement.toBlob((blob) => {
+        // 恢复 OutlinePass 原始选中对象
+        if (outlinePass) {
+          outlinePass.selectedObjects = originalOutlineObjects;
+        }
+        
+        // 恢复可见性
+        root.traverse(o => {
+          const vis = originalVisibility.get(o);
+          if (vis !== undefined) o.visible = vis;
+        });
+
+        // 恢复相机
+        camera.position.copy(originalCamPos);
+        camera.quaternion.copy(originalCamQuat);
+        camera.updateProjectionMatrix?.();
+
+        // 恢复场景状态
+        scene.background = originalBackground;
+        if (ambLightRef.current && originalAmbIntensity !== undefined) ambLightRef.current.intensity = originalAmbIntensity;
+        if (hemiLightRef.current && originalHemiIntensity !== undefined) hemiLightRef.current.intensity = originalHemiIntensity;
+
+        // 恢复辅助对象
+        restoreHelperObjects(helperVisibility);
+
+        if (!blob) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      }, 'image/png', 0.95);
+    });
+  }, [hideHelperObjects, restoreHelperObjects]);
+
+  /**
+   * 收集关键部件进行截图（限制数量，默认200个）
+   */
+  const capturePartScreenshots = useCallback(async (maxParts: number = 200): Promise<Array<{ path: string; imageBase64: string; focusImageBase64: string }>> => {
+    const partImages: Array<{ path: string; imageBase64: string; focusImageBase64: string }> = [];
+    
+    // 收集所有叶子节点和重要的中间节点
+    const collectNodes = (nodes: TreeNode[], depth: number = 0): TreeNode[] => {
+      const result: TreeNode[] = [];
+      for (const node of nodes) {
+        // 优先选择叶子节点
+        if (!node.children || node.children.length === 0) {
+          result.push(node);
+        } else {
+          // 对于有子节点的，如果深度不太深也加入
+          if (depth < 3) {
+            result.push(node);
+          }
+          result.push(...collectNodes(node.children, depth + 1));
+        }
+      }
+      return result;
+    };
+
+    const allNodes = collectNodes(treeData);
+    const nodesToCapture = allNodes.slice(0, maxParts);
+
+    message.loading({ content: `正在生成${nodesToCapture.length}组部件截图（位置图+聚焦图）...`, key: 'ai-screenshots', duration: 0 });
+
+    for (let i = 0; i < nodesToCapture.length; i++) {
+      const node = nodesToCapture[i];
+      try {
+        const contextShot = await capturePartContextScreenshot(node.key);
+        const focusShot = await capturePartFocusScreenshot(node.key);
+        if (contextShot && focusShot) {
+          partImages.push({
+            path: node.key,
+            imageBase64: contextShot,
+            focusImageBase64: focusShot
+          });
+        }
+      } catch (e) {
+        console.warn(`部件 ${node.title} 截图失败:`, e);
+      }
+
+      // 更新进度
+      if (i % 10 === 0) {
+        message.loading({ content: `正在生成部件截图... (${i + 1}/${nodesToCapture.length})`, key: 'ai-screenshots', duration: 0 });
+      }
+    }
+
+    message.destroy('ai-screenshots');
+    return partImages;
+  }, [treeData, capturePartContextScreenshot, capturePartFocusScreenshot, message]);
+
+  /**
+   * 调用后端AI整理API
+   */
+  const callAIOrganizeAPI = useCallback(async (
+    structureData: AIStructureNode[],
+    globalImage: string,
+    partImages: Array<{ path: string; imageBase64: string; focusImageBase64: string }>
+  ): Promise<AIOrganizeResult> => {
+    const token = getToken();
+    const apiUrl = getAPI_URL();
+    
+    const response = await fetch(`${apiUrl}/api/ai/organize-structure`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        structureData: { tree: structureData },
+        globalImage,
+        partImages
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `请求失败: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.result) {
+      throw new Error('AI返回数据格式不正确');
+    }
+
+    return data.result as AIOrganizeResult;
+  }, []);
+
+  /**
+   * 调用单对象识别API
+   */
+  const callIdentifySinglePartAPI = useCallback(async (
+    path: string,
+    imageBase64: string,
+    focusImageBase64: string,
+    coursewareName?: string
+  ): Promise<{ path: string; new_name: string; confidence?: string }> => {
+    const token = getToken();
+    const apiUrl = getAPI_URL();
+    
+    const response = await fetch(`${apiUrl}/api/ai/identify-part`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        path,
+        imageBase64,
+        focusImageBase64,
+        coursewareName
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `请求失败: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.result) {
+      throw new Error('AI返回数据格式不正确');
+    }
+
+    return data.result;
+  }, []);
+
+  /**
+   * 逐个识别所有部件并汇总结果
+   */
+  const identifyPartsOneByOne = useCallback(async (
+    partImages: Array<{ path: string; imageBase64: string; focusImageBase64: string }>,
+    structureData: AIStructureNode[],
+    coursewareName?: string
+  ): Promise<AIOrganizeResult> => {
+    const identifiedParts = new Map<string, string>();
+    const totalParts = partImages.length;
+    
+    // 逐个调用识别API
+    for (let i = 0; i < partImages.length; i++) {
+      const part = partImages[i];
+      message.loading({ 
+        content: `AI正在识别部件 (${i + 1}/${totalParts}): ${part.path.split('/').pop()}...`, 
+        key: 'ai-organize', 
+        duration: 0 
+      });
+      
+      try {
+        const result = await callIdentifySinglePartAPI(
+          part.path,
+          part.imageBase64,
+          part.focusImageBase64,
+          coursewareName
+        );
+        identifiedParts.set(part.path, result.new_name);
+        console.log(`[AI识别] ${part.path} -> ${result.new_name} (${result.confidence})`);
+      } catch (error) {
+        console.warn(`识别失败: ${part.path}`, error);
+        // 识别失败时使用原始名称
+        identifiedParts.set(part.path, part.path.split('/').pop() || part.path);
+      }
+    }
+
+    // 将识别结果汇总为 AIOrganizeResult 格式
+    const buildResultNodes = (nodes: AIStructureNode[]): AIOrganizedNode[] => {
+      return nodes.map(node => {
+        const identifiedName = identifiedParts.get(node.path);
+        return {
+          original_path: node.path,
+          new_name: identifiedName || node.original_name || node.path.split('/').pop() || node.path,
+          children: node.children ? buildResultNodes(node.children) : []
+        };
+      });
+    };
+
+    return {
+      nodes: buildResultNodes(structureData)
+    };
+  }, [callIdentifySinglePartAPI, message]);
+
+  /**
+   * 开始AI智能整理流程（逐个对象识别模式）
+   */
+  const onStartAIOrganize = useCallback(async () => {
+    if (!modelRootRef.current || treeData.length === 0) {
+      message.warning('请先加载模型');
+      return;
+    }
+
+    setAiOrganizing(true);
+    message.loading({ content: 'AI正在分析模型结构，请稍候...', key: 'ai-organize', duration: 0 });
+
+    try {
+      // 1. 准备结构数据
+      const structureData = prepareStructureData();
+      
+      // 2. 全局截图
+      message.loading({ content: '正在生成全局截图...', key: 'ai-organize', duration: 0 });
+      const globalImage = await captureGlobalScreenshot();
+      
+      // 3. 部件截图（限制数量，最多200个）
+      const partImages = await capturePartScreenshots(200);
+      
+      // 保存截图到状态，用于调试对照显示
+      const screenshotMap = new Map<string, { context: string; focus: string }>();
+      for (const part of partImages) {
+        screenshotMap.set(part.path, { context: part.imageBase64, focus: part.focusImageBase64 });
+      }
+      setAiPartScreenshots(screenshotMap);
+      
+      // 4. 逐个调用AI识别API（每次只识别一个对象，提高准确率）
+      // 传递课件名称帮助AI更精准识别
+      const cwName = coursewareData?.name || '';
+      message.loading({ content: 'AI正在逐个识别部件...', key: 'ai-organize', duration: 0 });
+      const result = await identifyPartsOneByOne(partImages, structureData, cwName);
+      
+      // 5. 显示结果预览
+      setAiOrganizeResult(result);
+      setAiOrganizeModalVisible(true);
+      message.success({ content: 'AI整理完成，请预览结果', key: 'ai-organize' });
+    } catch (error) {
+      console.error('AI整理失败:', error);
+      message.error({ content: `AI整理失败: ${(error as Error).message}`, key: 'ai-organize' });
+    } finally {
+      setAiOrganizing(false);
+    }
+  }, [treeData, prepareStructureData, captureGlobalScreenshot, capturePartScreenshots, identifyPartsOneByOne, message, coursewareData]);
+
+  /**
+   * 应用AI整理结果到结构树（支持创建新层级和空父对象）
+   */
+  const applyAIOrganizeResult = useCallback(() => {
+    if (!aiOrganizeResult) return;
+
+    const root = modelRootRef.current;
+    if (!root) {
+      message.error('模型未加载');
+      return;
+    }
+
+    let renameCount = 0;
+    let newGroupCount = 0;
+
+    // 递归处理AI返回的层级结构
+    const processOrganizedNodes = (
+      aiNodes: AIOrganizedNode[], 
+      parentTreeNode: TreeNode | null,
+      parentThreeObj: THREE.Object3D
+    ): TreeNode[] => {
+      const newTreeNodes: TreeNode[] = [];
+
+      for (const aiNode of aiNodes) {
+        if (aiNode.original_path) {
+          // 这是一个现有对象，需要重命名和可能重新挂载
+          const existingObj = keyToObject.current.get(aiNode.original_path);
+          if (existingObj) {
+            // 重命名
+            if (existingObj.name !== aiNode.new_name) {
+              existingObj.name = aiNode.new_name;
+              renameCount++;
+            }
+
+            // 检查是否需要移动到新父节点
+            if (existingObj.parent !== parentThreeObj && parentThreeObj !== root) {
+              // 保存世界变换
+              const worldMatrix = existingObj.matrixWorld.clone();
+              // 从旧父节点移除
+              existingObj.removeFromParent();
+              // 添加到新父节点
+              parentThreeObj.add(existingObj);
+              // 恢复世界变换（转换为相对于新父节点的局部变换）
+              const parentInverse = parentThreeObj.matrixWorld.clone().invert();
+              existingObj.matrix.copy(parentInverse.multiply(worldMatrix));
+              existingObj.matrix.decompose(existingObj.position, existingObj.quaternion, existingObj.scale);
+            }
+
+            // 创建对应的TreeNode
+            const newKey = aiNode.original_path; // 保持原key不变
+            const childTreeNodes = aiNode.children 
+              ? processOrganizedNodes(aiNode.children, null, existingObj)
+              : undefined;
+
+            newTreeNodes.push({
+              title: aiNode.new_name,
+              key: newKey,
+              children: childTreeNodes
+            });
+          }
+        } else {
+          // 这是AI创建的新逻辑分组（没有original_path），需要创建空的Group对象
+          const newGroup = new THREE.Group();
+          newGroup.name = aiNode.new_name;
+          parentThreeObj.add(newGroup);
+          newGroupCount++;
+
+          // 生成新的唯一key
+          const newKey = `ai-group-${generateUuid()}`;
+          keyToObject.current.set(newKey, newGroup);
+
+          // 递归处理子节点
+          const childTreeNodes = aiNode.children 
+            ? processOrganizedNodes(aiNode.children, null, newGroup)
+            : undefined;
+
+          newTreeNodes.push({
+            title: aiNode.new_name,
+            key: newKey,
+            children: childTreeNodes
+          });
+        }
+      }
+
+      return newTreeNodes;
+    };
+
+    // 处理AI返回的根节点列表
+    const newTreeData = processOrganizedNodes(aiOrganizeResult.nodes, null, root);
+    
+    // 更新treeData
+    setTreeData(newTreeData);
+
+    // 重新构建keyToObject映射（包含新创建的Group）
+    const rebuildKeyToObject = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        // keyToObject已经在processOrganizedNodes中更新了
+        if (node.children) {
+          rebuildKeyToObject(node.children);
+        }
+      }
+    };
+    rebuildKeyToObject(newTreeData);
+
+    setAiOrganizeModalVisible(false);
+    setAiOrganizeResult(null);
+    
+    const msg = [];
+    if (renameCount > 0) msg.push(`重命名了 ${renameCount} 个节点`);
+    if (newGroupCount > 0) msg.push(`创建了 ${newGroupCount} 个新分组`);
+    message.success(`已应用AI整理结果：${msg.join('，') || '无变更'}`);
+  }, [aiOrganizeResult, message]);
+
+  /**
+   * 取消AI整理
+   */
+  const cancelAIOrganize = useCallback(() => {
+    setAiOrganizeModalVisible(false);
+    setAiOrganizeResult(null);
+  }, []);
+
+  // ==================== AI智能整理功能结束 ====================
 
   function ensureMarkers() {
     const scene = sceneRef.current!;
@@ -6024,10 +7250,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           } : undefined,
           background: bgColor,
           backgroundType: bgType,
-          // 保存HDR环境光照路径（用于splat模式的环境光照）
-          backgroundPanorama: bgType === 'splat' ? (bgPanorama || '/360background_7.hdr') : null,
-          // 保存高斯泼溅模型路径和变换（如果bgType是splat）
-          backgroundSplat: bgType === 'splat' ? (bgSplat || '/world/world_1') : null,
+          // 保存HDR环境光照路径（用于splat或hdr模式的环境光照）
+          backgroundPanorama: (bgType === 'splat' || bgType === 'hdr') ? (bgPanorama || '/360background_7.hdr') : null,
+          // 保存高斯泼溅模型路径和变换（如果bgType是splat或hdr，hdr模式也需要路径来找到HDR文件）
+          backgroundSplat: (bgType === 'splat' || bgType === 'hdr') ? (bgSplat || '/world/world_1') : null,
           splatTransform: bgType === 'splat' ? {
             position: splatPosition,
             rotation: splatRotation,
@@ -6149,10 +7375,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         } : currentCourseware.settings?.cameraTarget,
         background: bgColor,
         backgroundType: bgType,
-        // 保存HDR环境光照路径（用于splat模式的环境光照）
-        backgroundPanorama: bgType === 'splat' ? (bgPanorama || '/360background_7.hdr') : null,
-        // 保存高斯泼溅模型路径和变换（如果bgType是splat）
-        backgroundSplat: bgType === 'splat' ? (bgSplat || '/world/world_1') : null,
+        // 保存HDR环境光照路径（用于splat或hdr模式的环境光照）
+        backgroundPanorama: (bgType === 'splat' || bgType === 'hdr') ? (bgPanorama || '/360background_7.hdr') : null,
+        // 保存高斯泼溅模型路径和变换（如果bgType是splat或hdr，hdr模式也需要路径来找到HDR文件）
+        backgroundSplat: (bgType === 'splat' || bgType === 'hdr') ? (bgSplat || '/world/world_1') : null,
         splatTransform: bgType === 'splat' ? {
           position: splatPosition,
           rotation: splatRotation,
@@ -6438,17 +7664,17 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           setBgPanorama('/360background_7.hdr'); // 即使不是panorama类型，也保持默认值以便切换时使用
         }
         
-        // 确保backgroundSplat被正确读取
-        if (bgTypeValue === 'splat') {
+        // 确保backgroundSplat被正确读取（splat和hdr模式都需要）
+        if (bgTypeValue === 'splat' || bgTypeValue === 'hdr') {
           const splatValue = settings.backgroundSplat && settings.backgroundSplat.trim() !== ''
             ? settings.backgroundSplat
             : '/world/world_1'; // 默认使用第一个 world 场景
-          console.log('✅ [Settings/Load] 设置高斯泼溅模型:', splatValue, '(原始值:', settings.backgroundSplat, ')');
+          console.log('✅ [Settings/Load] 设置场景路径:', splatValue, '(原始值:', settings.backgroundSplat, ', 模式:', bgTypeValue, ')');
           setBgSplat(splatValue);
           savedSettingsLoadedRef.current = true; // 标记已加载保存的设置
           
-          // 加载高斯泼溅变换参数
-          if (settings.splatTransform) {
+          // 加载高斯泼溅变换参数（仅splat模式需要）
+          if (bgTypeValue === 'splat' && settings.splatTransform) {
             const transform = settings.splatTransform;
             if (transform.position) {
               setSplatPosition(transform.position);
@@ -6464,7 +7690,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             }
           }
         } else {
-          console.log('✅ [Settings/Load] 背景类型不是splat，设置默认高斯泼溅模型');
+          console.log('✅ [Settings/Load] 背景类型不是splat/hdr，设置默认场景路径');
           setBgSplat('/world/world_1'); // 保持默认值以便切换时使用
         }
         
@@ -6563,7 +7789,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   onChange={(v)=>{ 
                     // 根据背景类型设置默认灯光值
                     // 纯色背景：平行光1，环境光0.5，半球光0
-                    // 高斯+HDR：灯光都为0，使用HDR提供的光照信息
+                    // 高斯+HDR / 仅HDR：灯光都为0，使用HDR提供的光照信息
                     const defaultLights = v === 'color' ? {
                       dirLight: { color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } },
                       ambLight: { color: '#ffffff', intensity: 0.5 },
@@ -6590,6 +7816,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   }}
                   options={[
                     { label: '纯色背景', value: 'color' },
+                    { label: 'HDR光照', value: 'hdr' },
                     { label: '高斯场景+HDR光照', value: 'splat' }
                   ]} 
                 />
@@ -6606,6 +7833,54 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                       bgColor: e.target.value
                     }))} 
                   />
+                </Space>
+              ) : (pendingSettings?.bgType ?? bgType) === 'hdr' ? (
+                /* HDR光照模式 - 只选HDR，不加载高斯 */
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Space>
+                    <span>背景颜色：</span>
+                    <Input 
+                      size="small" 
+                      type="color" 
+                      value={pendingSettings?.bgColor ?? bgColor} 
+                      onChange={(e) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        bgColor: e.target.value
+                      }))} 
+                    />
+                  </Space>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <span>选择HDR环境光照：</span>
+                    <Select 
+                      size="small" 
+                      value={pendingSettings?.bgSplat ?? bgSplat} 
+                      style={{ width: '100%' }} 
+                      onChange={(v) => {
+                        setPendingSettings(prev => ({
+                          ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                          bgSplat: v,
+                        }));
+                      }}
+                      options={worldScenes.map(s => ({ label: s.name, value: s.path }))} 
+                    />
+                  </Space>
+                  <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
+                    <span>HDR 亮度：</span>
+                    <Slider
+                      min={0}
+                      max={3}
+                      step={0.1}
+                      value={pendingSettings?.bgPanoramaBrightness ?? bgPanoramaBrightness}
+                      onChange={(v) => setPendingSettings(prev => ({
+                        ...(prev ?? { bgType, bgColor, bgSplat, bgPanorama, bgPanoramaBrightness, splatPosition, splatRotation, splatScale, dirLight, ambLight, hemiLight }),
+                        bgPanoramaBrightness: v
+                      }))}
+                      marks={{ 0: '0', 1: '1', 2: '2', 3: '3' }}
+                    />
+                  </Space>
+                  <div style={{ fontSize: '12px', color: '#999', paddingLeft: 8, marginTop: 8 }}>
+                    💡 仅使用HDR环境光照，不加载高斯场景模型，适合性能较差的设备。
+                  </div>
                 </Space>
               ) : (
                 <Space direction="vertical" style={{ width: '100%' }}>
@@ -6852,6 +8127,45 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
           />
           <span>{labelScale.toFixed(1)}x</span>
         </Space>
+        
+        <Divider style={{ margin: '12px 0' }} />
+        <div style={{ fontWeight: 600 }}>摄像机控制</div>
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+            操作说明：右键拖动旋转，左键拖动平移，滚轮缩放，WSADQE 键飞行移动（类似 Unity）
+          </div>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Space style={{ width: '100%' }}>
+              <span style={{ whiteSpace: 'nowrap', minWidth: 70 }}>移动速度：</span>
+              <Slider 
+                style={{ flex: 1, minWidth: 180 }}
+                min={0.1} 
+                max={10} 
+                step={0.1} 
+                value={flySpeed} 
+                onChange={(value: number) => {
+                  setFlySpeed(value);
+                }} 
+              />
+              <span style={{ minWidth: 40 }}>{flySpeed.toFixed(1)}</span>
+            </Space>
+            <Space style={{ width: '100%' }}>
+              <span style={{ whiteSpace: 'nowrap', minWidth: 70 }}>旋转速度：</span>
+              <Slider 
+                style={{ flex: 1, minWidth: 180 }}
+                min={0.1} 
+                max={3} 
+                step={0.1} 
+                value={rotateSpeed} 
+                onChange={(value: number) => {
+                  setRotateSpeed(value);
+                }} 
+              />
+              <span style={{ minWidth: 40 }}>{rotateSpeed.toFixed(1)}</span>
+            </Space>
+          </Space>
+        </Space>
+        
         <Divider style={{ margin: '16px 0' }} />
         <Flex justify="flex-end" gap={8}>
           <Button onClick={() => setSettingsOpen(false)}>取消</Button>
@@ -6877,12 +8191,34 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     redoStack.current = [];
   };
   const undo = () => {
-    // 优先检查TRS撤销栈
-    if (trsUndoStack.current.length > 0) {
-      trsUndo();
+    // 优先按操作顺序撤销
+    const lastOp = operationUndoStack.current.pop();
+    if (lastOp === 'trs') {
+      const last = trsUndoStack.current.pop();
+      if (last) {
+        const current = trsSaveSnapshot(last.objectKey);
+        if (current) {
+          trsRedoStack.current.push(current);
+          operationRedoStack.current.push('trs');
+        }
+        trsApplySnapshot(last);
+      }
+      return;
+    }
+    if (lastOp === 'material') {
+      const last = materialUndoStack.current.pop();
+      if (last) {
+        const current = materialSaveSnapshot(last.objectKey, last.materialIndex);
+        if (current) {
+          materialRedoStack.current.push(current);
+          operationRedoStack.current.push('material');
+        }
+        materialApplySnapshot(last);
+      }
       return;
     }
     
+    // 兼容旧的 timeline 撤销
     console.log('Undo called, stack size:', undoStack.current.length); // Debug
     const last = undoStack.current.pop();
     if (!last) {
@@ -6895,12 +8231,34 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     console.log('Undo applied'); // Debug
   };
   const redo = () => {
-    // 优先检查TRS重做栈
-    if (trsRedoStack.current.length > 0) {
-      trsRedo();
+    // 优先按操作顺序重做
+    const lastOp = operationRedoStack.current.pop();
+    if (lastOp === 'trs') {
+      const last = trsRedoStack.current.pop();
+      if (last) {
+        const current = trsSaveSnapshot(last.objectKey);
+        if (current) {
+          trsUndoStack.current.push(current);
+          operationUndoStack.current.push('trs');
+        }
+        trsApplySnapshot(last);
+      }
+      return;
+    }
+    if (lastOp === 'material') {
+      const last = materialRedoStack.current.pop();
+      if (last) {
+        const current = materialSaveSnapshot(last.objectKey, last.materialIndex);
+        if (current) {
+          materialUndoStack.current.push(current);
+          operationUndoStack.current.push('material');
+        }
+        materialApplySnapshot(last);
+      }
       return;
     }
     
+    // 兼容旧的 timeline 重做
     console.log('Redo called, stack size:', redoStack.current.length); // Debug
     const last = redoStack.current.pop();
     if (!last) {
@@ -6933,6 +8291,90 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     obj.position.set(...snapshot.position);
     obj.rotation.set(...snapshot.rotation);
     obj.scale.set(...snapshot.scale);
+    setPrsTick(v => v + 1); // 触发 UI 更新
+  };
+
+  // 材质快照保存函数
+  const materialSaveSnapshot = (objectKey: string, matIndex: number): MaterialSnapshot | null => {
+    const obj = keyToObject.current.get(objectKey);
+    if (!obj || !(obj as THREE.Mesh).isMesh) return null;
+    
+    const mesh = obj as THREE.Mesh;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const mat = materials[matIndex];
+    if (!mat) return null;
+    
+    const snapshot: MaterialSnapshot = {
+      objectKey,
+      materialIndex: matIndex,
+      type: mat.type,
+      color: (mat as any).color?.getHex?.() ?? 0xffffff,
+      opacity: mat.opacity ?? 1,
+      transparent: mat.transparent ?? false,
+    };
+    
+    if ('metalness' in mat) snapshot.metalness = (mat as any).metalness;
+    if ('roughness' in mat) snapshot.roughness = (mat as any).roughness;
+    if ('emissive' in mat) snapshot.emissive = (mat as any).emissive?.getHex?.() ?? 0;
+    if ('emissiveIntensity' in mat) snapshot.emissiveIntensity = (mat as any).emissiveIntensity;
+    if ('wireframe' in mat) snapshot.wireframe = (mat as any).wireframe;
+    
+    return snapshot;
+  };
+
+  // 材质快照应用函数
+  const materialApplySnapshot = (snapshot: MaterialSnapshot) => {
+    const obj = keyToObject.current.get(snapshot.objectKey);
+    if (!obj || !(obj as THREE.Mesh).isMesh) return;
+    
+    const mesh = obj as THREE.Mesh;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const mat = materials[snapshot.materialIndex];
+    if (!mat) return;
+    
+    if ((mat as any).color) (mat as any).color.setHex(snapshot.color);
+    mat.opacity = snapshot.opacity;
+    mat.transparent = snapshot.transparent;
+    if (snapshot.metalness !== undefined && 'metalness' in mat) (mat as any).metalness = snapshot.metalness;
+    if (snapshot.roughness !== undefined && 'roughness' in mat) (mat as any).roughness = snapshot.roughness;
+    if (snapshot.emissive !== undefined && 'emissive' in mat) (mat as any).emissive?.setHex?.(snapshot.emissive);
+    if (snapshot.emissiveIntensity !== undefined && 'emissiveIntensity' in mat) (mat as any).emissiveIntensity = snapshot.emissiveIntensity;
+    if (snapshot.wireframe !== undefined && 'wireframe' in mat) (mat as any).wireframe = snapshot.wireframe;
+    
+    mat.needsUpdate = true;
+    setMaterialPropsKey(k => k + 1); // 触发 UI 更新
+    
+    // 重新渲染
+    const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current;
+    if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+  };
+
+  // 保存材质修改到撤销栈
+  const materialEditingRef = useRef<{ key: string; index: number; saved: boolean } | null>(null);
+  
+  const pushMaterialUndo = (objectKey: string, matIndex: number) => {
+    // 防止同一次编辑操作重复保存
+    if (materialEditingRef.current?.key === objectKey && 
+        materialEditingRef.current?.index === matIndex && 
+        materialEditingRef.current?.saved) {
+      return; // 已经保存过了
+    }
+    
+    const snapshot = materialSaveSnapshot(objectKey, matIndex);
+    if (snapshot) {
+      materialUndoStack.current.push(snapshot);
+      operationUndoStack.current.push('material');
+      // 清空重做栈
+      materialRedoStack.current = [];
+      operationRedoStack.current = [];
+      // 标记已保存
+      materialEditingRef.current = { key: objectKey, index: matIndex, saved: true };
+    }
+  };
+  
+  // 重置材质编辑状态（在 mouseup 时调用）
+  const resetMaterialEditState = () => {
+    materialEditingRef.current = null;
   };
 
   const trsUndo = () => {
@@ -6961,6 +8403,173 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     
     // 应用重做状态
     trsApplySnapshot(last);
+  };
+
+  // ======== 材质库功能 ========
+  
+  // 收集场景中所有材质
+  const collectSceneMaterials = useCallback(() => {
+    const root = modelRootRef.current;
+    if (!root) return;
+    
+    const materialMap = new Map<THREE.Material, SceneMaterial>();
+    let materialCounter = 1;
+    
+    root.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const objKey = keyToObject.current.get(obj.uuid) ? obj.uuid : buildPath(obj);
+        
+        mats.forEach((mat) => {
+          if (!mat) return;
+          if (materialMap.has(mat)) {
+            materialMap.get(mat)!.usedBy.add(objKey);
+          } else {
+            materialMap.set(mat, {
+              id: mat.uuid,
+              name: mat.name || `材质 ${materialCounter++}`,
+              material: mat,
+              usedBy: new Set([objKey]),
+            });
+          }
+        });
+      }
+    });
+    
+    setSceneMaterials(Array.from(materialMap.values()));
+  }, []);
+  
+  // 克隆材质为独立材质（给当前对象）
+  const cloneMaterialForObject = (objectKey: string, matIndex: number) => {
+    const obj = keyToObject.current.get(objectKey);
+    if (!obj || !(obj as THREE.Mesh).isMesh) return;
+    
+    const mesh = obj as THREE.Mesh;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const oldMat = materials[matIndex];
+    if (!oldMat) return;
+    
+    // 保存撤销快照
+    if (selectedKey) pushMaterialUndo(selectedKey, matIndex);
+    
+    // 克隆材质
+    const newMat = oldMat.clone();
+    newMat.name = `${oldMat.name || '材质'} (独立)`;
+    
+    // 应用到当前对象
+    if (Array.isArray(mesh.material)) {
+      mesh.material[matIndex] = newMat;
+    } else {
+      mesh.material = newMat;
+    }
+    
+    materialModifiedRef.current = true;
+    setMaterialPropsKey(k => k + 1);
+    collectSceneMaterials(); // 刷新材质库
+    message.success('已创建独立材质');
+  };
+  
+  // 获取使用相同材质的对象数量
+  const getMaterialUsageCount = (mat: THREE.Material): number => {
+    let count = 0;
+    const root = modelRootRef.current;
+    if (!root) return 0;
+    
+    root.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        if (mats.includes(mat)) count++;
+      }
+    });
+    return count;
+  };
+  
+  // 应用材质到对象
+  const applyMaterialToObject = (materialId: string, objectKey: string) => {
+    const sceneMat = sceneMaterials.find(m => m.id === materialId);
+    if (!sceneMat) return;
+    
+    const obj = keyToObject.current.get(objectKey);
+    if (!obj || !(obj as THREE.Mesh).isMesh) return;
+    
+    const mesh = obj as THREE.Mesh;
+    
+    // 保存撤销快照
+    if (selectedKey) pushMaterialUndo(selectedKey, 0);
+    
+    // 应用材质
+    mesh.material = sceneMat.material;
+    
+    materialModifiedRef.current = true;
+    setMaterialPropsKey(k => k + 1);
+    collectSceneMaterials();
+    message.success(`已应用材质: ${sceneMat.name}`);
+  };
+  
+  // 新建材质
+  const createNewMaterial = () => {
+    const newMat = new THREE.MeshStandardMaterial({
+      color: 0xcccccc,
+      metalness: 0.1,
+      roughness: 0.8,
+    });
+    newMat.name = `新材质 ${sceneMaterials.length + 1}`;
+    
+    setSceneMaterials(prev => [...prev, {
+      id: newMat.uuid,
+      name: newMat.name,
+      material: newMat,
+      usedBy: new Set(),
+    }]);
+    
+    message.success('已创建新材质');
+  };
+  
+  // 重命名材质
+  const renameMaterial = (materialId: string, newName: string) => {
+    const sceneMat = sceneMaterials.find(m => m.id === materialId);
+    if (!sceneMat) return;
+    
+    sceneMat.material.name = newName;
+    setSceneMaterials(prev => prev.map(m => 
+      m.id === materialId ? { ...m, name: newName } : m
+    ));
+    setRenamingMaterialId(null);
+  };
+  
+  // 删除材质（只能删除未使用的）
+  const deleteMaterial = (materialId: string) => {
+    const sceneMat = sceneMaterials.find(m => m.id === materialId);
+    if (!sceneMat) return;
+    
+    if (sceneMat.usedBy.size > 0) {
+      message.error('该材质正在被使用，无法删除');
+      return;
+    }
+    
+    sceneMat.material.dispose();
+    setSceneMaterials(prev => prev.filter(m => m.id !== materialId));
+    message.success('材质已删除');
+  };
+  
+  // 复制材质
+  const duplicateMaterial = (materialId: string) => {
+    const sceneMat = sceneMaterials.find(m => m.id === materialId);
+    if (!sceneMat) return;
+    
+    const newMat = sceneMat.material.clone();
+    newMat.name = `${sceneMat.name} (副本)`;
+    
+    setSceneMaterials(prev => [...prev, {
+      id: newMat.uuid,
+      name: newMat.name,
+      material: newMat,
+      usedBy: new Set(),
+    }]);
+    
+    message.success('材质已复制');
   };
 
   function buildPath(object: THREE.Object3D): string {
@@ -7110,24 +8719,71 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const colLeft = showLeft ? '340px' : '0px';
   const colRight = showRight ? '320px' : '0px';
   const isTimelineCollapsed = mode !== 'anim';
+  
+  const rootContainerStyle: React.CSSProperties = {
+    position: 'fixed',
+    inset: 0,
+    display: 'grid',
+    gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`,
+    gridTemplateColumns: `${colLeft} 1fr ${colRight}`,
+    gridTemplateAreas: `'left center right' 'timeline timeline timeline'`,
+    columnGap: 12,
+    rowGap: isTimelineCollapsed ? 0 : 12,
+    padding: 12,
+    boxSizing: 'border-box',
+    overflow: 'hidden',
+    transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease',
+    userSelect: 'none',
+  };
+  
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateRows: `minmax(0, 1fr) ${isTimelineCollapsed ? 0 : timelineHeight}px`, gridTemplateColumns: `${colLeft} 1fr ${colRight}` as any, gridTemplateAreas: `'left center right' 'timeline timeline timeline'`, columnGap: 12, rowGap: isTimelineCollapsed ? 0 : 12, padding: 12, boxSizing: 'border-box', overflow: 'hidden', transition: 'grid-template-rows 220ms ease, grid-template-columns 220ms ease, row-gap 220ms ease', userSelect: 'none' }}
-      onMouseDown={(e)=>{
+    <div
+      style={rootContainerStyle}
+      onMouseDown={(e) => {
         const target = e.target as HTMLElement;
         const tag = target.tagName.toLowerCase();
-        const editable = target.isContentEditable || ['input','textarea'].includes(tag);
+        const editable = target.isContentEditable || ['input', 'textarea'].includes(tag);
         if (!editable) { (document.activeElement as HTMLElement | null)?.blur?.(); }
       }}
     >
-      <Card title={coursewareName || '三维课件'} bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}>
-        <Space wrap size={[8, 8]} style={{ marginBottom: 12 }}>
-          <Button onClick={onFocusSelected} disabled={!selectedKey}>对焦所选</Button>
-          <Button onClick={onIsolateSelected} disabled={!selectedKey}>隔离所选</Button>
-          <Button onClick={onShowAll}>显示全部</Button>
-        </Space>
-        <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
-          <Input.Search placeholder="搜索节点名" allowClear onChange={(e)=>setTreeFilter(e.target.value)} style={{ marginBottom: 8 }} />
-          <div style={{
+      <Card 
+        title={
+          <Segmented 
+            size="small" 
+            value={materialLibTab} 
+            onChange={(v) => setMaterialLibTab(v as 'tree' | 'materials')}
+            options={[
+              { label: '模型结构', value: 'tree' },
+              { label: '材质库', value: 'materials' },
+            ]}
+          />
+        } 
+        bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} 
+        style={{ overflow: 'hidden', height: '100%', gridArea: 'left', opacity: showLeft ? 1 : 0, visibility: showLeft ? 'visible' : 'hidden', pointerEvents: showLeft ? 'auto' : 'none', transition: 'opacity 200ms ease, visibility 200ms linear', minWidth: 0 }}
+      >
+        {/* 模型结构树标签页 */}
+        {materialLibTab === 'tree' && (
+          <>
+            <Space wrap size={[8, 8]} style={{ marginBottom: 12 }}>
+              <Button onClick={onFocusSelected} disabled={!selectedKey}>对焦所选</Button>
+              <Button onClick={onIsolateSelected} disabled={!selectedKey}>隔离所选</Button>
+              <Button onClick={onShowAll}>显示全部</Button>
+              <Tooltip title="使用AI分析模型结构并智能重命名部件">
+                <Button 
+                  type="primary"
+                  icon={aiOrganizing ? <LoadingOutlined /> : <RobotOutlined />}
+                  onClick={onStartAIOrganize}
+                  disabled={aiOrganizing || treeData.length === 0}
+                  loading={aiOrganizing}
+                >
+                  AI智能整理
+                </Button>
+              </Tooltip>
+            </Space>
+            {/* 调试开关：保存截图到本地 */}
+            <div ref={treeContainerRef} style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto' }}>
+              <Input.Search placeholder="搜索节点名" allowClear onChange={(e)=>setTreeFilter(e.target.value)} style={{ marginBottom: 8 }} />
+              <div style={{
             '--tree-row-h': '28px',
             '--icon-w': '22px'
           } as any}>
@@ -7137,6 +8793,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               blockNode
               multiple
               draggable
+              expandedKeys={expandedKeys}
+              onExpand={(keys) => setExpandedKeys(keys as string[])}
               onDrop={(info)=>{
                 const dragKey = String(info.dragNode.key);
                 const dropKey = String(info.node.key);
@@ -7162,6 +8820,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                     onClick: ({ key })=> handleNodeAction(String(key), String(node.key)),
                     items:[
                       { key:'rename', label:'重命名' },
+                      { key:'ai-rename', label:'AI重命名', icon: <RobotOutlined /> },
                       { type:'divider' },
                       { key:'group', label:'打组(含多选)' },
                       { key:'ungroup', label:'解组' },
@@ -7183,8 +8842,411 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               .three-tree .ant-tree-switcher, .three-tree .ant-tree-iconEle { width: 18px; }
               .three-tree .ant-tree-switcher-line-icon { color: #64748b; }
             `}</style>
+              </div>
+            </div>
+          </>
+        )}
+        
+        {/* 材质库标签页 */}
+        {materialLibTab === 'materials' && (
+          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <Space style={{ marginBottom: 12 }}>
+              <Button type="primary" size="small" icon={<PlusOutlined />} onClick={createNewMaterial}>
+                新建材质
+              </Button>
+              <Button size="small" onClick={collectSceneMaterials}>
+                刷新
+              </Button>
+            </Space>
+            
+            <div style={{ flex: '1 1 0', overflowY: 'auto' }}>
+              {sceneMaterials.length === 0 ? (
+                <Empty description="暂无材质" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {sceneMaterials.map((sceneMat) => (
+                    <div 
+                      key={sceneMat.id}
+                      draggable
+                      onClick={() => setEditingMaterialId(sceneMat.id)}
+                      onDragStart={(e) => {
+                        setDraggingMaterialId(sceneMat.id);
+                        e.dataTransfer.setData('materialId', sceneMat.id);
+                        e.dataTransfer.effectAllowed = 'copy';
+                      }}
+                      onDragEnd={() => setDraggingMaterialId(null)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '8px 10px',
+                        background: editingMaterialId === sceneMat.id 
+                          ? 'rgba(6, 182, 212, 0.2)' 
+                          : draggingMaterialId === sceneMat.id 
+                            ? 'rgba(24, 144, 255, 0.15)' 
+                            : 'rgba(255,255,255,0.03)',
+                        border: editingMaterialId === sceneMat.id 
+                          ? '1px solid rgba(6, 182, 212, 0.5)' 
+                          : '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      {/* 材质球预览 */}
+                      <div style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: '50%',
+                        background: `#${(sceneMat.material as any).color?.getHexString?.() || 'cccccc'}`,
+                        boxShadow: 'inset -4px -4px 8px rgba(0,0,0,0.3), inset 4px 4px 8px rgba(255,255,255,0.2)',
+                        flexShrink: 0,
+                      }} />
+                      
+                      {/* 材质名称 */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {renamingMaterialId === sceneMat.id ? (
+                          <Input
+                            size="small"
+                            value={renamingMaterialName}
+                            onChange={(e) => setRenamingMaterialName(e.target.value)}
+                            onBlur={() => {
+                              if (renamingMaterialName.trim()) {
+                                renameMaterial(sceneMat.id, renamingMaterialName.trim());
+                              }
+                              setRenamingMaterialId(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && renamingMaterialName.trim()) {
+                                renameMaterial(sceneMat.id, renamingMaterialName.trim());
+                              } else if (e.key === 'Escape') {
+                                setRenamingMaterialId(null);
+                              }
+                            }}
+                            autoFocus
+                          />
+                        ) : (
+                          <div 
+                            style={{ fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            onDoubleClick={() => {
+                              setRenamingMaterialId(sceneMat.id);
+                              setRenamingMaterialName(sceneMat.name);
+                            }}
+                          >
+                            {sceneMat.name}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '10px', color: '#888' }}>
+                          {sceneMat.usedBy.size} 个对象使用
+                        </div>
+                      </div>
+                      
+                      {/* 操作按钮 */}
+                      <Dropdown
+                        trigger={['click']}
+                        menu={{
+                          items: [
+                            { key: 'rename', label: '重命名', onClick: () => { setRenamingMaterialId(sceneMat.id); setRenamingMaterialName(sceneMat.name); } },
+                            { key: 'duplicate', label: '复制', onClick: () => duplicateMaterial(sceneMat.id) },
+                            { key: 'apply', label: '应用到选中对象', disabled: !selectedKey, onClick: () => selectedKey && applyMaterialToObject(sceneMat.id, selectedKey) },
+                            { type: 'divider' },
+                            { key: 'delete', label: '删除', danger: true, disabled: sceneMat.usedBy.size > 0, onClick: () => deleteMaterial(sceneMat.id) },
+                          ] as any,
+                        }}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} />
+                      </Dropdown>
+                    </div>
+                  ))}
+                </Space>
+              )}
+            </div>
+            
+            <div style={{ marginTop: 8, fontSize: '11px', color: '#888', textAlign: 'center' }}>
+              💡 点击材质球编辑属性，拖拽到模型上应用
+            </div>
+            
+            {/* 材质编辑面板 */}
+            {editingMaterialId && (() => {
+              const editingMat = sceneMaterials.find(m => m.id === editingMaterialId);
+              if (!editingMat) return null;
+              const material = editingMat.material;
+              const isMeshStandard = material instanceof THREE.MeshStandardMaterial;
+              const isMeshPhong = material instanceof THREE.MeshPhongMaterial;
+              const isMeshLambert = material instanceof THREE.MeshLambertMaterial;
+              const isMeshBasic = material instanceof THREE.MeshBasicMaterial;
+              
+              return (
+                <div style={{ 
+                  marginTop: 12, 
+                  padding: 12, 
+                  background: 'rgba(6, 182, 212, 0.08)', 
+                  border: '1px solid rgba(6, 182, 212, 0.3)',
+                  borderRadius: 8 
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 12 }}>编辑: {editingMat.name}</span>
+                    <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setEditingMaterialId(null)} />
+                  </div>
+                  <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                    {/* 材质类型 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', color: '#888' }}>类型</span>
+                      <Select
+                        size="small"
+                        value={material.type}
+                        style={{ width: '100%' }}
+                        onChange={(newType) => {
+                          const oldColor = (material as any).color?.clone();
+                          const oldOpacity = material.opacity;
+                          const commonProps = {
+                            color: oldColor || new THREE.Color(0xffffff),
+                            opacity: oldOpacity,
+                            transparent: material.transparent,
+                            side: material.side,
+                          };
+                          let newMaterial: THREE.Material;
+                          switch (newType) {
+                            case 'MeshBasicMaterial':
+                              newMaterial = new THREE.MeshBasicMaterial(commonProps);
+                              break;
+                            case 'MeshLambertMaterial':
+                              newMaterial = new THREE.MeshLambertMaterial(commonProps);
+                              break;
+                            case 'MeshPhongMaterial':
+                              newMaterial = new THREE.MeshPhongMaterial({ ...commonProps, shininess: 30 });
+                              break;
+                            case 'MeshStandardMaterial':
+                            default:
+                              newMaterial = new THREE.MeshStandardMaterial({ ...commonProps, metalness: 0.1, roughness: 0.8 });
+                              break;
+                          }
+                          newMaterial.name = editingMat.name;
+                          // 更新所有使用此材质的对象
+                          editingMat.usedBy.forEach(objKey => {
+                            const obj = keyToObject.current.get(objKey);
+                            if (obj && (obj as THREE.Mesh).isMesh) {
+                              const mesh = obj as THREE.Mesh;
+                              if (Array.isArray(mesh.material)) {
+                                mesh.material = mesh.material.map(m => m === material ? newMaterial : m);
+                              } else if (mesh.material === material) {
+                                mesh.material = newMaterial;
+                              }
+                            }
+                          });
+                          material.dispose();
+                          materialModifiedRef.current = true;
+                          collectSceneMaterials();
+                          setMaterialPropsKey(k => k + 1);
+                        }}
+                      >
+                        <Select.Option value="MeshBasicMaterial">Basic</Select.Option>
+                        <Select.Option value="MeshLambertMaterial">Lambert</Select.Option>
+                        <Select.Option value="MeshPhongMaterial">Phong</Select.Option>
+                        <Select.Option value="MeshStandardMaterial">Standard</Select.Option>
+                      </Select>
+                    </div>
+                    {/* 颜色 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', color: '#888' }}>颜色</span>
+                      <Input
+                        size="small"
+                        type="color"
+                        value={`#${(material as any).color?.getHexString() || 'ffffff'}`}
+                        onChange={(e) => {
+                          if ((material as any).color) {
+                            (material as any).color.setStyle(e.target.value);
+                            material.needsUpdate = true;
+                            materialModifiedRef.current = true;
+                            setMaterialPropsKey(k => k + 1);
+                            const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                            if (r && s && c) { 
+                              const comp = composerRef.current; 
+                              if (comp) comp.render(); 
+                              else r.render(s, c); 
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                    {/* 透明度 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', color: '#888' }}>透明度</span>
+                      <Slider
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={material.opacity}
+                        onChange={(v: number) => {
+                          material.opacity = v;
+                          material.transparent = v < 1;
+                          material.needsUpdate = true;
+                          materialModifiedRef.current = true;
+                          setMaterialPropsKey(k => k + 1);
+                          const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                          if (r && s && c) { 
+                            const comp = composerRef.current; 
+                            if (comp) comp.render(); 
+                            else r.render(s, c); 
+                          }
+                        }}
+                      />
+                    </div>
+                    {/* Standard材质属性 */}
+                    {isMeshStandard && (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>金属度</span>
+                          <Slider
+                            min={0} max={1} step={0.01}
+                            value={(material as THREE.MeshStandardMaterial).metalness}
+                            onChange={(v: number) => {
+                              (material as THREE.MeshStandardMaterial).metalness = v;
+                              material.needsUpdate = true;
+                              materialModifiedRef.current = true;
+                              setMaterialPropsKey(k => k + 1);
+                              const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                              if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>粗糙度</span>
+                          <Slider
+                            min={0} max={1} step={0.01}
+                            value={(material as THREE.MeshStandardMaterial).roughness}
+                            onChange={(v: number) => {
+                              (material as THREE.MeshStandardMaterial).roughness = v;
+                              material.needsUpdate = true;
+                              materialModifiedRef.current = true;
+                              setMaterialPropsKey(k => k + 1);
+                              const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                              if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>自发光</span>
+                          <Input
+                            size="small"
+                            type="color"
+                            value={`#${(material as THREE.MeshStandardMaterial).emissive?.getHexString() || '000000'}`}
+                            onChange={(e) => {
+                              (material as THREE.MeshStandardMaterial).emissive?.setStyle(e.target.value);
+                              material.needsUpdate = true;
+                              materialModifiedRef.current = true;
+                              setMaterialPropsKey(k => k + 1);
+                              const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                              if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {/* Phong材质属性 */}
+                    {isMeshPhong && (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>高光</span>
+                          <Input
+                            size="small"
+                            type="color"
+                            value={`#${(material as THREE.MeshPhongMaterial).specular?.getHexString() || 'ffffff'}`}
+                            onChange={(e) => {
+                              (material as THREE.MeshPhongMaterial).specular?.setStyle(e.target.value);
+                              material.needsUpdate = true;
+                              materialModifiedRef.current = true;
+                              setMaterialPropsKey(k => k + 1);
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>光泽度</span>
+                          <Slider
+                            min={0} max={100} step={1}
+                            value={(material as THREE.MeshPhongMaterial).shininess}
+                            onChange={(v: number) => {
+                              (material as THREE.MeshPhongMaterial).shininess = v;
+                              material.needsUpdate = true;
+                              materialModifiedRef.current = true;
+                              setMaterialPropsKey(k => k + 1);
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
+                    {/* 贴图属性 - 显示当前贴图状态 */}
+                    <Divider style={{ margin: '8px 0' }} />
+                    <div style={{ fontSize: '11px', fontWeight: 600 }}>贴图属性</div>
+                    {(() => {
+                      const stdMat = material as THREE.MeshStandardMaterial;
+                      const hasMap = stdMat.map !== null && stdMat.map !== undefined;
+                      const hasNormalMap = (stdMat as any).normalMap !== null && (stdMat as any).normalMap !== undefined;
+                      const hasRoughnessMap = (stdMat as any).roughnessMap !== null && (stdMat as any).roughnessMap !== undefined;
+                      const hasMetalnessMap = (stdMat as any).metalnessMap !== null && (stdMat as any).metalnessMap !== undefined;
+                      const hasEmissiveMap = (stdMat as any).emissiveMap !== null && (stdMat as any).emissiveMap !== undefined;
+                      const hasAoMap = (stdMat as any).aoMap !== null && (stdMat as any).aoMap !== undefined;
+                      
+                      return (
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                            <span>漫反射贴图</span>
+                            <span style={{ color: hasMap ? '#52c41a' : '#888' }}>{hasMap ? '已设置' : '无'}</span>
+                          </div>
+                          {isMeshStandard && (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                                <span>法线贴图</span>
+                                <span style={{ color: hasNormalMap ? '#52c41a' : '#888' }}>{hasNormalMap ? '已设置' : '无'}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                                <span>粗糙度贴图</span>
+                                <span style={{ color: hasRoughnessMap ? '#52c41a' : '#888' }}>{hasRoughnessMap ? '已设置' : '无'}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                                <span>金属度贴图</span>
+                                <span style={{ color: hasMetalnessMap ? '#52c41a' : '#888' }}>{hasMetalnessMap ? '已设置' : '无'}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                                <span>自发光贴图</span>
+                                <span style={{ color: hasEmissiveMap ? '#52c41a' : '#888' }}>{hasEmissiveMap ? '已设置' : '无'}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                                <span>AO贴图</span>
+                                <span style={{ color: hasAoMap ? '#52c41a' : '#888' }}>{hasAoMap ? '已设置' : '无'}</span>
+                              </div>
+                            </>
+                          )}
+                          {/* 贴图操作按钮 */}
+                          {hasMap && (
+                            <Button 
+                              size="small" 
+                              danger 
+                              style={{ marginTop: 4, fontSize: '11px' }}
+                              onClick={() => {
+                                if (stdMat.map) {
+                                  stdMat.map.dispose();
+                                  stdMat.map = null;
+                                  stdMat.needsUpdate = true;
+                                  materialModifiedRef.current = true;
+                                  setMaterialPropsKey(k => k + 1);
+                                  const r = rendererRef.current; const s = sceneRef.current; const c = cameraRef.current; 
+                                  if (r && s && c) { const comp = composerRef.current; if (comp) comp.render(); else r.render(s, c); }
+                                }
+                              }}
+                            >
+                              移除漫反射贴图
+                            </Button>
+                          )}
+                        </Space>
+                      );
+                    })()}
+                  </Space>
+                </div>
+              );
+            })()}
           </div>
-        </div>
+        )}
       </Card>
       <Card title={<div style={{ position:'relative', display:'flex', alignItems:'center', minHeight: 36 }}>
         <span style={{ fontWeight: 600 }}>三维视窗</span>
@@ -7306,7 +9368,42 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             <span style={{ color:'#94a3b8' }}>当前步骤：{(()=>{ if (steps.length===0) return '无'; const t=timeline.current; let idx=-1; for(let i=0;i<steps.length;i++){ if (steps[i].time<=t) idx=i; } return idx>=0 ? `${idx+1}. ${steps[idx].name}` : '未到步骤'; })()}</span>
           </Space>
         </div>
-        <div ref={mountRef} style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }}
+        <div 
+          ref={mountRef} 
+          style={{ flex: 1, width: '100%', height: '100%', minHeight: 420, position:'relative' }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            const materialId = e.dataTransfer.getData('materialId');
+            if (!materialId) return;
+            
+            // 使用射线检测找到鼠标下的对象
+            const mount = mountRef.current;
+            const camera = cameraRef.current;
+            const scene = sceneRef.current;
+            if (!mount || !camera || !scene) return;
+            
+            const rect = mount.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+            const modelRoot = modelRootRef.current;
+            if (!modelRoot) return;
+            
+            const intersects = raycaster.intersectObject(modelRoot, true);
+            if (intersects.length > 0) {
+              const hitObject = intersects[0].object;
+              const objKey = hitObject.uuid;
+              applyMaterialToObject(materialId, objKey);
+            } else {
+              message.info('请将材质拖拽到模型对象上');
+            }
+            setDraggingMaterialId(null);
+          }}
           onMouseDown={(e)=>{
             if (!(e.ctrlKey||e.metaKey)) return;
             const host = e.currentTarget as HTMLDivElement;
@@ -7476,24 +9573,26 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                           </Space>
                           <Divider style={{ margin: '8px 0' }} />
                           
-                          {/* 材质属性编辑面板 */}
-                          <div style={{ fontWeight: 600 }}>材质属性</div>
+                          {/* 材质属性编辑面板 - 只有对象本身是Mesh才显示材质属性 */}
                           {(() => {
-                            // 查找对象的Mesh及其材质
-                            let meshFound: THREE.Mesh | undefined;
-                            obj.traverse((child) => {
-                              if (child instanceof THREE.Mesh && !meshFound) {
-                                meshFound = child;
-                              }
-                            });
-                            
-                            if (!meshFound || !meshFound.material) {
-                              return <div style={{ fontSize: '12px', color: '#999' }}>该对象没有材质</div>;
+                            // 只有当选中的对象本身是Mesh时才显示材质属性
+                            // 空父对象（没有自己的网格/材质）不显示材质属性
+                            if (!(obj as THREE.Mesh).isMesh || !(obj as THREE.Mesh).material) {
+                              return null; // 空父对象不显示材质属性区域
                             }
                             
-                            const targetMesh = meshFound;
+                            const targetMesh = obj as THREE.Mesh;
                             const materials = Array.isArray(targetMesh.material) ? targetMesh.material : [targetMesh.material];
                             const material = materials[materialIndex] || materials[0];
+                            
+                            // 材质修改前保存撤销快照的 helper
+                            const saveMaterialUndo = () => {
+                              if (selectedKey) pushMaterialUndo(selectedKey, materialIndex);
+                            };
+                            
+                            // 获取材质使用信息
+                            const usageCount = getMaterialUsageCount(material);
+                            const isShared = usageCount > 1;
                             
                             // 检测材质类型
                             const materialType = material.type;
@@ -7504,6 +9603,27 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                             
                             return (
                               <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                                {/* 材质名称显示 */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
+                                  <span style={{ fontSize: '12px', color: '#888' }}>名称</span>
+                                  <Input
+                                    size="small"
+                                    value={material.name || '未命名材质'}
+                                    onChange={(e) => {
+                                      material.name = e.target.value;
+                                      materialModifiedRef.current = true;
+                                      setMaterialPropsKey(k => k + 1);
+                                      collectSceneMaterials(); // 刷新材质库
+                                    }}
+                                    placeholder="材质名称"
+                                    style={{ 
+                                      fontWeight: 500,
+                                      background: 'rgba(255,255,255,0.05)',
+                                      border: '1px solid rgba(255,255,255,0.15)'
+                                    }}
+                                  />
+                                </div>
+                                
                                 {materials.length > 1 && (
                                   <Select
                                     size="small"
@@ -7511,11 +9631,48 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     onChange={setMaterialIndex}
                                     style={{ width: '100%' }}
                                   >
-                                    {materials.map((_, idx) => (
-                                      <Select.Option key={idx} value={idx}>材质 {idx + 1}</Select.Option>
+                                    {materials.map((mat, idx) => (
+                                      <Select.Option key={idx} value={idx}>
+                                        {(mat as THREE.Material).name || `材质 ${idx + 1}`}
+                                      </Select.Option>
                                     ))}
                                   </Select>
                                 )}
+                                
+                                {/* 材质共享信息和操作 */}
+                                <div style={{ 
+                                  padding: '8px', 
+                                  background: isShared ? 'rgba(250, 173, 20, 0.1)' : 'rgba(82, 196, 26, 0.1)', 
+                                  borderRadius: 6, 
+                                  border: `1px solid ${isShared ? 'rgba(250, 173, 20, 0.3)' : 'rgba(82, 196, 26, 0.3)'}` 
+                                }}>
+                                  <div style={{ fontSize: '11px', color: isShared ? '#faad14' : '#52c41a', marginBottom: 6 }}>
+                                    {isShared 
+                                      ? `🔗 共享材质 (${usageCount} 个对象使用)` 
+                                      : '✓ 独立材质'}
+                                  </div>
+                                  <Space size={4} wrap>
+                                    {isShared && (
+                                      <Button 
+                                        size="small" 
+                                        type="primary"
+                                        style={{ fontSize: '11px', height: 24 }}
+                                        onClick={() => selectedKey && cloneMaterialForObject(selectedKey, materialIndex)}
+                                      >
+                                        复制为独立材质
+                                      </Button>
+                                    )}
+                                    <Tooltip title="从材质库选择材质应用到此对象">
+                                      <Button 
+                                        size="small"
+                                        style={{ fontSize: '11px', height: 24 }}
+                                        onClick={() => setMaterialLibTab('materials')}
+                                      >
+                                        更换材质
+                                      </Button>
+                                    </Tooltip>
+                                  </Space>
+                                </div>
                                 
                                 <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 4, alignItems: 'center' }}>
                                   <span style={{ fontSize: '12px' }}>类型</span>
@@ -7524,6 +9681,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     value={materialType}
                                     style={{ width: '100%' }}
                                     onChange={(newType) => {
+                                      saveMaterialUndo(); // 保存撤销快照
                                       // 保存当前材质属性
                                       const oldColor = (material as any).color?.clone();
                                       const oldOpacity = material.opacity;
@@ -7590,6 +9748,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     size="small"
                                     type="color"
                                     value={`#${(material as any).color?.getHexString() || 'ffffff'}`}
+                                    onFocus={saveMaterialUndo}
                                     onChange={(e) => {
                                       if ((material as any).color) {
                                         (material as any).color.setStyle(e.target.value);
@@ -7613,6 +9772,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     size="small"
                                     checked={material.transparent}
                                     onChange={(checked) => {
+                                      saveMaterialUndo(); // 保存撤销快照
                                       material.transparent = checked;
                                       // 开启透明时，设置合理的初始透明度和渲染设置
                                       if (checked) {
@@ -7649,6 +9809,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                         step={0.01}
                                         defaultValue={material.opacity}
                                         onChange={(value: number) => {
+                                          saveMaterialUndo(); // 保存撤销快照
                                           material.opacity = value;
                                           material.needsUpdate = true;
                                           materialModifiedRef.current = true;
@@ -7670,6 +9831,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                     size="small"
                                     value={material.side}
                                     onChange={(value) => {
+                                      saveMaterialUndo(); // 保存撤销快照
                                       material.side = value;
                                       material.needsUpdate = true;
                                     }}
@@ -7694,6 +9856,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                         step={0.01}
                                         defaultValue={Number((material as THREE.MeshStandardMaterial).metalness) || 0}
                                         onChange={(val) => {
+                                          saveMaterialUndo(); // 保存撤销快照
                                           const value = typeof val === 'number' ? val : Number(val);
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).metalness = value;
@@ -7715,6 +9878,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                                         step={0.01}
                                         defaultValue={Number((material as THREE.MeshStandardMaterial).roughness) || 0}
                                         onChange={(val) => {
+                                          saveMaterialUndo(); // 保存撤销快照
                                           const value = typeof val === 'number' ? val : Number(val);
                                           if (!isNaN(value)) {
                                             (material as THREE.MeshStandardMaterial).roughness = value;
@@ -7874,7 +10038,24 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                       <Button type="primary" onClick={addAnnotationForSelected}>为所选添加标注</Button>
                     )}
                   </Flex>
-                ) : <div>点击结构树或视窗选择对象</div>}
+                ) : (
+                  <div>
+                    <div style={{ marginBottom: 8 }}>点击结构树或视窗选择对象</div>
+                    <div style={{ 
+                      fontSize: '11px', 
+                      color: '#888', 
+                      padding: '8px', 
+                      background: 'rgba(24, 144, 255, 0.08)', 
+                      borderRadius: 6,
+                      lineHeight: 1.6
+                    }}>
+                      💡 选择技巧：<br/>
+                      • 单击：选中外层对象<br/>
+                      • 双击：下钻选中子对象<br/>
+                      • Ctrl+点击：多选
+                    </div>
+                  </div>
+                )}
                 <Divider />
                 <div style={{ fontWeight: 600 }}>标注列表</div>
                 <div>
@@ -8208,7 +10389,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             </div>
           </div>
       </Card>
-      <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} onDelete={(id)=>{ setAnnotations(prev=>prev.filter(a=>a.id!==id)); setEditingAnno(null); }} />
+      <AnnotationEditor open={!!editingAnno} value={editingAnno} onCancel={()=>setEditingAnno(null)} onOk={(v)=>{ if (!v) return; setAnnotations(prev => prev.map(x => x.id === v.id ? v : x)); setEditingAnno(null); }} onDelete={(id)=>{ setAnnotations(prev=>prev.filter(a=>a.id!==id)); setEditingAnno(null); }} coursewareName={coursewareData?.name} />
       {settingsModalContent}
       <Modal title="重命名" open={renameOpen} onCancel={()=>setRenameOpen(false)} onOk={async ()=>{ const v=await renameForm.validateFields(); const key=(window as any).__renameKey as string; const obj=keyToObject.current.get(key); if(obj){ obj.name=String(v.name||''); setPrsTick(x=>x+1); const root=modelRootRef.current!; const nodes:TreeNode[]=[]; const map=keyToObject.current; map.clear(); const makeNode=(o:THREE.Object3D):TreeNode=>{ const k=o.uuid; map.set(k,o); return { title:o.name||o.type||k.slice(0,8), key:k, children:o.children?.map(makeNode) }; }; nodes.push(makeNode(root)); setTreeData(nodes); } setRenameOpen(false); }} destroyOnClose>
         <Form layout="vertical" form={renameForm} preserve={false}>
@@ -8250,6 +10431,264 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         onSave={handleAnimationSave}
         onDelete={handleAnimationDelete}
       />
+      
+      {/* AI智能整理结果预览Modal */}
+      <Modal
+        title={
+          <Space>
+            <RobotOutlined style={{ color: '#1890ff' }} />
+            <span>AI整理结果预览</span>
+            <Switch 
+              size="small"
+              checked={showAIScreenshots}
+              onChange={setShowAIScreenshots}
+              checkedChildren="显示截图"
+              unCheckedChildren="隐藏截图"
+            />
+          </Space>
+        }
+        open={aiOrganizeModalVisible}
+        onCancel={cancelAIOrganize}
+        width={showAIScreenshots ? 1200 : 900}
+        footer={[
+          <Button key="cancel" onClick={cancelAIOrganize} icon={<CloseOutlined />}>
+            取消
+          </Button>,
+          <Button key="apply" type="primary" onClick={applyAIOrganizeResult} icon={<CheckOutlined />}>
+            应用更改
+          </Button>
+        ]}
+        destroyOnClose
+      >
+        <div style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          <div style={{ marginBottom: 16, padding: '12px 16px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae0ff' }}>
+            <p style={{ margin: 0, color: '#0958d9' }}>
+              <strong>提示：</strong>AI已分析模型结构并生成优化建议。{showAIScreenshots ? '下方显示截图与识别结果的对照，方便检查识别准确性。' : '点击"应用更改"将更新模型结构树。'}
+            </p>
+          </div>
+          
+          {aiOrganizeResult && showAIScreenshots && (
+            <div style={{ marginBottom: 16 }}>
+              <Card size="small" title={`截图识别对照 (共 ${aiPartScreenshots.size} 张)`} style={{ background: '#fafafa' }}>
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
+                  gap: 12, 
+                  maxHeight: 500, 
+                  overflowY: 'auto',
+                  padding: 8
+                }}>
+                  {(() => {
+                    // 从AI结果中提取所有有original_path的节点
+                    const collectNodes = (nodes: AIOrganizedNode[]): AIOrganizedNode[] => {
+                      const result: AIOrganizedNode[] = [];
+                      for (const node of nodes) {
+                        if (node.original_path) {
+                          result.push(node);
+                        }
+                        if (node.children) {
+                          result.push(...collectNodes(node.children));
+                        }
+                      }
+                      return result;
+                    };
+                    const allNodes = collectNodes(aiOrganizeResult.nodes);
+                    
+                    // 只显示有截图的节点
+                    const nodesWithScreenshots = allNodes.filter(n => n.original_path && aiPartScreenshots.has(n.original_path));
+                    
+                    return nodesWithScreenshots.map((node, idx) => {
+                      const screenshots = aiPartScreenshots.get(node.original_path!);
+                      // 查找原始名称
+                      const findOriginal = (tree: TreeNode[], key: string): string | null => {
+                        for (const n of tree) {
+                          if (n.key === key) return n.title;
+                          if (n.children) {
+                            const found = findOriginal(n.children, key);
+                            if (found) return found;
+                          }
+                        }
+                        return null;
+                      };
+                      const originalName = findOriginal(treeData, node.original_path!) || '未知';
+                      const hasChange = originalName !== node.new_name;
+                      
+                      return (
+                        <div 
+                          key={node.original_path} 
+                          style={{ 
+                            border: hasChange ? '2px solid #52c41a' : '1px solid #d9d9d9', 
+                            borderRadius: 8, 
+                            padding: 8,
+                            background: hasChange ? '#f6ffed' : '#fff'
+                          }}
+                        >
+                          {screenshots && (
+                            <div style={{ 
+                              width: '100%', 
+                              background: '#000', 
+                              borderRadius: 4, 
+                              marginBottom: 8,
+                              overflow: 'hidden'
+                            }}>
+                              <Image.PreviewGroup>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, padding: 6 }}>
+                                  <div style={{ borderRadius: 4, overflow: 'hidden', background: '#000' }}>
+                                    <Image
+                                      src={screenshots.context}
+                                      alt={`${node.new_name}-context`}
+                                      style={{ width: '100%', height: 110, objectFit: 'contain' }}
+                                      preview={{ mask: <span style={{ color: '#fff', fontSize: 12 }}>位置图：点击放大</span> }}
+                                    />
+                                    <div style={{ fontSize: 11, color: '#bfbfbf', textAlign: 'center', padding: '4px 0 2px' }}>位置图</div>
+                                  </div>
+                                  <div style={{ borderRadius: 4, overflow: 'hidden', background: '#000' }}>
+                                    <Image
+                                      src={screenshots.focus}
+                                      alt={`${node.new_name}-focus`}
+                                      style={{ width: '100%', height: 110, objectFit: 'contain' }}
+                                      preview={{ mask: <span style={{ color: '#fff', fontSize: 12 }}>聚焦图：点击放大</span> }}
+                                    />
+                                    <div style={{ fontSize: 11, color: '#bfbfbf', textAlign: 'center', padding: '4px 0 2px' }}>聚焦图</div>
+                                  </div>
+                                </div>
+                              </Image.PreviewGroup>
+                            </div>
+                          )}
+                          <div style={{ fontSize: 12 }}>
+                            <div style={{ color: '#8c8c8c', marginBottom: 2 }}>
+                              原始: <span style={{ color: '#333' }}>{originalName}</span>
+                            </div>
+                            <div style={{ color: hasChange ? '#389e0d' : '#8c8c8c', fontWeight: hasChange ? 500 : 400 }}>
+                              识别: <span style={{ color: hasChange ? '#389e0d' : '#333' }}>{node.new_name}</span>
+                              {hasChange && <span style={{ marginLeft: 4, fontSize: 10 }}>✓</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </Card>
+            </div>
+          )}
+          
+          {aiOrganizeResult && !showAIScreenshots && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 1fr', gap: 16, alignItems: 'start' }}>
+              {/* 原始结构 */}
+              <Card size="small" title="原始结构" style={{ background: '#fafafa' }}>
+                <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                  {(() => {
+                    const renderOriginalTree = (nodes: TreeNode[], depth: number = 0): React.ReactNode => {
+                      return nodes.map((node, idx) => (
+                        <div key={node.key} style={{ paddingLeft: depth * 16 }}>
+                          <div style={{ 
+                            padding: '4px 8px', 
+                            borderRadius: 4,
+                            background: depth === 0 ? '#e6f4ff' : 'transparent',
+                            marginBottom: 2,
+                            fontSize: 13,
+                            color: '#333'
+                          }}>
+                            {node.title}
+                          </div>
+                          {node.children && renderOriginalTree(node.children, depth + 1)}
+                        </div>
+                      ));
+                    };
+                    return renderOriginalTree(treeData);
+                  })()}
+                </div>
+              </Card>
+              
+              {/* 箭头 */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', paddingTop: 100 }}>
+                <span style={{ fontSize: 24, color: '#52c41a' }}>→</span>
+              </div>
+              
+              {/* 整理后结构 */}
+              <Card size="small" title="AI整理后" style={{ background: '#f6ffed', borderColor: '#b7eb8f' }}>
+                <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                  {(() => {
+                    const renderOrganizedTree = (nodes: AIOrganizedNode[], depth: number = 0): React.ReactNode => {
+                      return nodes.map((node, idx) => {
+                        const hasChange = node.original_path && (() => {
+                          // 查找原始名称
+                          const findOriginal = (tree: TreeNode[], key: string): string | null => {
+                            for (const n of tree) {
+                              if (n.key === key) return n.title;
+                              if (n.children) {
+                                const found = findOriginal(n.children, key);
+                                if (found) return found;
+                              }
+                            }
+                            return null;
+                          };
+                          const original = findOriginal(treeData, node.original_path!);
+                          return original && original !== node.new_name;
+                        })();
+                        
+                        return (
+                          <div key={node.original_path || `new-${idx}`} style={{ paddingLeft: depth * 16 }}>
+                            <div style={{ 
+                              padding: '4px 8px', 
+                              borderRadius: 4,
+                              background: hasChange ? '#d9f7be' : (depth === 0 ? '#e6f4ff' : 'transparent'),
+                              marginBottom: 2,
+                              fontSize: 13,
+                              color: hasChange ? '#389e0d' : '#333',
+                              fontWeight: hasChange ? 500 : 400
+                            }}>
+                              {node.new_name}
+                              {hasChange && <span style={{ marginLeft: 8, fontSize: 11, color: '#8c8c8c' }}>(已修改)</span>}
+                            </div>
+                            {node.children && renderOrganizedTree(node.children, depth + 1)}
+                          </div>
+                        );
+                      });
+                    };
+                    return renderOrganizedTree(aiOrganizeResult.nodes);
+                  })()}
+                </div>
+              </Card>
+            </div>
+          )}
+          
+          {/* 统计信息 */}
+          {aiOrganizeResult && (
+            <div style={{ marginTop: 16, padding: '8px 16px', background: '#fafafa', borderRadius: 8, fontSize: 13, color: '#666' }}>
+              {(() => {
+                let changeCount = 0;
+                const countChanges = (nodes: AIOrganizedNode[]) => {
+                  for (const node of nodes) {
+                    if (node.original_path) {
+                      const findOriginal = (tree: TreeNode[], key: string): string | null => {
+                        for (const n of tree) {
+                          if (n.key === key) return n.title;
+                          if (n.children) {
+                            const found = findOriginal(n.children, key);
+                            if (found) return found;
+                          }
+                        }
+                        return null;
+                      };
+                      const original = findOriginal(treeData, node.original_path);
+                      if (original && original !== node.new_name) {
+                        changeCount++;
+                      }
+                    }
+                    if (node.children) {
+                      countChanges(node.children);
+                    }
+                  }
+                };
+                countChanges(aiOrganizeResult.nodes);
+                return `AI建议重命名 ${changeCount} 个节点`;
+              })()}
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -8266,20 +10705,90 @@ function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
   return nodes.map(mapNode).filter(Boolean) as TreeNode[];
 }
 
-function AnnotationEditor({ open, value, onCancel, onOk, onDelete }: { open: boolean; value: Annotation | null; onCancel: ()=>void; onOk: (v: Annotation | null)=>void; onDelete?: (id: string)=>void }) {
+function AnnotationEditor({ open, value, onCancel, onOk, onDelete, coursewareName }: { open: boolean; value: Annotation | null; onCancel: ()=>void; onOk: (v: Annotation | null)=>void; onDelete?: (id: string)=>void; coursewareName?: string }) {
   const [form] = Form.useForm();
+  const [aiGenerating, setAiGenerating] = React.useState(false);
+  const { message } = App.useApp();
+  
   useEffect(() => {
     if (open && value) {
       form.setFieldsValue({ title: value.label.title, summary: value.label.summary });
     }
   }, [open, value, form]);
+
+  // AI生成简介
+  const onAIGenerateSummary = async () => {
+    const title = form.getFieldValue('title');
+    if (!title?.trim()) {
+      message.warning('请先输入标注标题');
+      return;
+    }
+    if (!coursewareName?.trim()) {
+      message.warning('课件名称未设置');
+      return;
+    }
+
+    setAiGenerating(true);
+    try {
+      const token = getToken();
+      const apiUrl = getAPI_URL();
+      
+      const response = await fetch(`${apiUrl}/api/ai/generate-annotation-summary`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          coursewareName: coursewareName.trim(),
+          annotationTitle: title.trim()
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `请求失败: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data.success || !data.result?.summary) {
+        throw new Error('AI返回数据格式不正确');
+      }
+
+      form.setFieldsValue({ summary: data.result.summary });
+      message.success('AI生成简介完成');
+    } catch (error) {
+      console.error('AI生成简介失败:', error);
+      message.error(`AI生成简介失败: ${(error as Error).message}`);
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
   return (
     <Modal title="编辑标注" open={open} onCancel={onCancel} footer={null} destroyOnClose>
       <Form layout="vertical" form={form} preserve={false}>
         <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标注标题' }]}> 
           <Input placeholder="例如：发动机组件" />
         </Form.Item>
-        <Form.Item name="summary" label="简介">
+        <Form.Item 
+          name="summary" 
+          label={
+            <Space>
+              简介
+              <Button 
+                type="link" 
+                size="small" 
+                icon={aiGenerating ? <LoadingOutlined /> : <RobotOutlined />}
+                onClick={onAIGenerateSummary}
+                disabled={aiGenerating}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                {aiGenerating ? 'AI生成中...' : 'AI生成'}
+              </Button>
+            </Space>
+          }
+        >
           <Input.TextArea 
             rows={4} 
             placeholder="简要描述此标注内容的作用、特点或注意事项..." 

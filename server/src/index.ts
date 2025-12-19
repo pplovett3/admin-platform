@@ -21,6 +21,8 @@ import publishRoutes from './routes/publish.routes';
 import activationCodesRoutes from './routes/activation-codes.routes';
 import activationRoutes from './routes/activation.routes';
 import quizRoutes from './routes/quiz.routes';
+import portalRoutes from './routes/portal.routes';
+import reviewRoutes from './routes/review.routes';
 
 async function migrateLegacyRoles(): Promise<void> {
   await UserModel.updateMany({ role: 'admin' as any }, { $set: { role: 'superadmin' } }).catch(() => undefined);
@@ -101,7 +103,7 @@ async function bootstrap() {
     ],
     credentials: true,
     methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
-    allowedHeaders: ['Authorization','Content-Type','Accept'],
+    allowedHeaders: ['Authorization','Content-Type','Accept','X-Requested-With'],
     maxAge: 86400
   };
   app.use(cors(corsOptions));
@@ -128,6 +130,8 @@ async function bootstrap() {
   app.use('/api/activation-codes', activationCodesRoutes);
   app.use('/api/activation', activationRoutes);
   app.use('/api/quiz', quizRoutes);
+  app.use('/api/portal', portalRoutes);
+  app.use('/api/review', reviewRoutes);
 
   app.listen(config.port, () => {
     console.log('Server listening on port ' + config.port);

@@ -8,8 +8,8 @@ export async function submitQuizResult(req: Request, res: Response) {
   try {
     const { courseId, publishId, answers } = req.body || {};
     
-    if (!courseId) {
-      return res.status(400).json({ message: 'courseId is required' });
+    if (!courseId && !publishId) {
+      return res.status(400).json({ message: 'courseId or publishId is required' });
     }
 
     if (!Array.isArray(answers) || answers.length === 0) {
@@ -22,8 +22,34 @@ export async function submitQuizResult(req: Request, res: Response) {
       return res.status(401).json({ message: 'Authentication required' });
     }
 
-    // 获取AI课程数据以验证答案
-    const aiCourse = await AICourseModel.findById(courseId).lean();
+    // 支持两种查找方式：
+    // 1. courseId 直接是 AICourse._id
+    // 2. courseId 是 PublishedCourse._id，需要先查找 originalCourseId
+    let actualCourseId = courseId;
+    
+    // 先尝试直接查找 AICourse
+    let aiCourse = await AICourseModel.findById(courseId).lean();
+    
+    // 如果找不到，尝试把 courseId 当作 publishId 从 PublishedCourse 查找
+    if (!aiCourse && courseId) {
+      const { PublishedCourseModel } = await import('../models/PublishedCourse');
+      const publishedCourse = await PublishedCourseModel.findById(courseId).lean();
+      if (publishedCourse?.originalCourseId) {
+        actualCourseId = publishedCourse.originalCourseId.toString();
+        aiCourse = await AICourseModel.findById(actualCourseId).lean();
+      }
+    }
+    
+    // 如果还是找不到，尝试用 publishId 参数
+    if (!aiCourse && publishId) {
+      const { PublishedCourseModel } = await import('../models/PublishedCourse');
+      const publishedCourse = await PublishedCourseModel.findById(publishId).lean();
+      if (publishedCourse?.originalCourseId) {
+        actualCourseId = publishedCourse.originalCourseId.toString();
+        aiCourse = await AICourseModel.findById(actualCourseId).lean();
+      }
+    }
+    
     if (!aiCourse) {
       return res.status(404).json({ message: 'Course not found' });
     }

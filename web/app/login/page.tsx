@@ -1,11 +1,16 @@
 "use client";
-import { App, Button, Card, Form, Input } from 'antd';
+import { App, Button, Card, Form, Input, Radio } from 'antd';
 import { useRouter } from 'next/navigation';
 import { apiPost } from '@/app/_utils/api';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { parseJwt } from '@/app/_utils/auth';
 import * as THREE from 'three';
+import Link from 'next/link';
 
 type LoginResp = { token: string };
+
+// 登录目标类型
+type LoginTarget = 'admin' | 'editor';
 
 // 创建圆形发光粒子纹理
 function createGlowParticleTexture(): THREE.Texture {
@@ -244,12 +249,30 @@ function ParticleNetworkBackground() {
 export default function LoginPage() {
   const { message } = App.useApp();
   const router = useRouter();
+  const [loginTarget, setLoginTarget] = useState<LoginTarget>('admin');
 
   const onFinish = async (values: any) => {
     try {
       const resp = await apiPost<LoginResp>('/api/auth/login', values);
-      localStorage.setItem('token', resp.token);
-      router.push('/');
+      const token = resp.token;
+      
+      // 解析 JWT 获取角色信息
+      const payload = parseJwt(token);
+      
+      // 学生不允许登录此入口
+      if (payload?.role === 'student') {
+        message.error('学生账号请从课程门户登录');
+        return;
+      }
+      
+      localStorage.setItem('token', token);
+      
+      // 根据选择跳转到对应模块
+      if (loginTarget === 'editor') {
+        router.push('/editor');
+      } else {
+        router.push('/admin/analytics');
+      }
     } catch (e: any) {
       message.error(e?.message || '登录失败');
     }
@@ -299,7 +322,7 @@ export default function LoginPage() {
       {/* 液态玻璃登录卡片 */}
       <Card 
         style={{ 
-          width: 400, 
+          width: 420, 
           borderRadius: 24,
           // 液态玻璃效果
           background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 100%)',
@@ -345,16 +368,80 @@ export default function LoginPage() {
         <div style={{ 
           fontSize: 20, 
           fontWeight: 600, 
-          marginBottom: 28, 
+          marginBottom: 24, 
           textAlign: 'center',
           color: 'rgba(255, 255, 255, 0.95)',
           letterSpacing: 4,
           position: 'relative'
         }}>
-          账号登录
+          管理员登录
         </div>
         
         <Form layout="vertical" onFinish={onFinish}>
+          {/* 登录目标选择 */}
+          <Form.Item 
+            label={<span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: 13 }}>登录目标</span>}
+          >
+            <Radio.Group 
+              value={loginTarget} 
+              onChange={(e) => setLoginTarget(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div 
+                  onClick={() => setLoginTarget('admin')}
+                  style={{
+                    flex: 1,
+                    padding: '16px 12px',
+                    borderRadius: 12,
+                    cursor: 'pointer',
+                    background: loginTarget === 'admin' 
+                      ? 'linear-gradient(135deg, rgba(34, 211, 238, 0.2) 0%, rgba(6, 182, 212, 0.15) 100%)'
+                      : 'rgba(255, 255, 255, 0.05)',
+                    border: loginTarget === 'admin'
+                      ? '1px solid rgba(34, 211, 238, 0.4)'
+                      : '1px solid rgba(255, 255, 255, 0.1)',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  <Radio value="admin" style={{ width: '100%' }}>
+                    <div style={{ color: '#fff', marginLeft: 4 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>管理后台</div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>
+                        数据分析、用户管理、课程审核
+                      </div>
+                    </div>
+                  </Radio>
+                </div>
+                <div 
+                  onClick={() => setLoginTarget('editor')}
+                  style={{
+                    flex: 1,
+                    padding: '16px 12px',
+                    borderRadius: 12,
+                    cursor: 'pointer',
+                    background: loginTarget === 'editor' 
+                      ? 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(124, 58, 237, 0.15) 100%)'
+                      : 'rgba(255, 255, 255, 0.05)',
+                    border: loginTarget === 'editor'
+                      ? '1px solid rgba(139, 92, 246, 0.4)'
+                      : '1px solid rgba(255, 255, 255, 0.1)',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  <Radio value="editor" style={{ width: '100%' }}>
+                    <div style={{ color: '#fff', marginLeft: 4 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>三维编辑器</div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>
+                        资源管理、课件创作、AI课程
+                      </div>
+                    </div>
+                  </Radio>
+                </div>
+              </div>
+            </Radio.Group>
+          </Form.Item>
+
           <Form.Item 
             label={<span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: 13 }}>手机号</span>} 
             name="phone" 
@@ -402,17 +489,41 @@ export default function LoginPage() {
               fontWeight: 600,
               letterSpacing: 4,
               // 液态玻璃风格的按钮
-              background: 'linear-gradient(135deg, rgba(34, 211, 238, 0.9) 0%, rgba(6, 182, 212, 0.85) 100%)',
+              background: loginTarget === 'admin'
+                ? 'linear-gradient(135deg, rgba(34, 211, 238, 0.9) 0%, rgba(6, 182, 212, 0.85) 100%)'
+                : 'linear-gradient(135deg, rgba(139, 92, 246, 0.9) 0%, rgba(124, 58, 237, 0.85) 100%)',
               border: '1px solid rgba(255, 255, 255, 0.2)',
-              boxShadow: `
-                0 4px 24px rgba(34, 211, 238, 0.35),
-                inset 0 1px 1px rgba(255, 255, 255, 0.3)
-              `
+              boxShadow: loginTarget === 'admin'
+                ? '0 4px 24px rgba(34, 211, 238, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.3)'
+                : '0 4px 24px rgba(139, 92, 246, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.3)'
             }}
           >
             登 录
           </Button>
         </Form>
+
+        {/* 学生入口提示 */}
+        <div style={{ 
+          marginTop: 24, 
+          textAlign: 'center',
+          paddingTop: 20,
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)'
+        }}>
+          <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: 13 }}>
+            学生用户？
+          </span>
+          <Link 
+            href="/portal/login" 
+            style={{ 
+              color: 'rgba(34, 211, 238, 0.9)', 
+              marginLeft: 8,
+              fontSize: 13,
+              textDecoration: 'none'
+            }}
+          >
+            前往课程门户登录
+          </Link>
+        </div>
       </Card>
     </div>
   );

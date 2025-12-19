@@ -26,6 +26,9 @@ export interface IQuestion {
   relatedOutlineItemId?: string;    // 关联的大纲项ID
 }
 
+// 审核状态类型
+export type ReviewStatus = 'draft' | 'pending' | 'approved' | 'rejected';
+
 export interface IAICourse extends Document {
   version: string; // schema版本
   title: string;
@@ -48,6 +51,12 @@ export interface IAICourse extends Document {
   createdBy: Types.ObjectId;
   updatedBy: Types.ObjectId;
   courseVersion: number;
+  // 审核相关字段
+  reviewStatus: ReviewStatus; // 审核状态
+  reviewedBy?: Types.ObjectId; // 审核人
+  reviewedAt?: Date; // 审核时间
+  reviewComment?: string; // 审核意见
+  submittedAt?: Date; // 提交审核时间
 }
 
 const VoiceConfigSchema = new Schema({
@@ -93,7 +102,13 @@ const AICourseSchema = new Schema<IAICourse>({
   status: { type: String, enum: ['draft', 'published'], default: 'draft' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  courseVersion: { type: Number, default: 1 }
+  courseVersion: { type: Number, default: 1 },
+  // 审核相关字段
+  reviewStatus: { type: String, enum: ['draft', 'pending', 'approved', 'rejected'], default: 'draft' },
+  reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  reviewedAt: { type: Date },
+  reviewComment: { type: String },
+  submittedAt: { type: Date }
 }, { timestamps: true });
 
 // 暂时移除所有索引，避免冲突

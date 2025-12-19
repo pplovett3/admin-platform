@@ -19,5 +19,11 @@ export const config = {
   // Azure TTS 配置
   azureSpeechKey: process.env.AZURE_SPEECH_KEY || '',
   azureSpeechRegion: process.env.AZURE_SPEECH_REGION || '',
-  azureSpeechEndpoint: process.env.AZURE_SPEECH_ENDPOINT || ''
+  azureSpeechEndpoint: process.env.AZURE_SPEECH_ENDPOINT || '',
+  // 通义千问VL配置（用于AI智能标注整理）
+  qwenVLApiKey: process.env.QWEN_VL_API_KEY || '',
+  qwenVLBaseUrl: process.env.QWEN_VL_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  // 豆包API配置（字节跳动）
+  doubaoApiKey: process.env.DOUBAO_API_KEY || '',
+  doubaoBaseUrl: process.env.DOUBAO_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3'
 } as const; 
