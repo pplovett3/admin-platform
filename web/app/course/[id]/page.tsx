@@ -355,54 +355,113 @@ export default function PublicCoursePage() {
     return (
       <div style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
         <ParticleBackground theme="green" />
-        <div style={{
-          position: 'relative',
-          zIndex: 1,
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-          background: 'radial-gradient(ellipse at center, rgba(10, 26, 24, 0.55) 0%, rgba(5, 13, 16, 0.75) 55%, rgba(2, 8, 5, 0.88) 100%)',
-        }}>
-          <div style={{
-            width: 420,
-            maxWidth: '92vw',
-            padding: 28,
-            borderRadius: 22,
-            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)',
-            border: '1px solid rgba(16, 185, 129, 0.22)',
-            backdropFilter: 'blur(24px) saturate(160%)',
-            WebkitBackdropFilter: 'blur(24px) saturate(160%)',
-            boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
-            color: '#fff',
-            textAlign: 'center',
-          }}>
-            <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: 2, marginBottom: 18 }}>
+        <Modal
+          open={true}
+          footer={null}
+          centered
+          width={440}
+          maskClosable={false}
+          closable={false}
+          styles={{
+            mask: { background: 'rgba(0, 0, 0, 0.5)', backdropFilter: 'blur(6px)' },
+            content: {
+              background: 'linear-gradient(135deg, rgba(10, 26, 24, 0.92) 0%, rgba(5, 13, 16, 0.90) 100%)',
+              backdropFilter: 'blur(24px) saturate(160%)',
+              WebkitBackdropFilter: 'blur(24px) saturate(160%)',
+              borderRadius: '22px',
+              border: '1px solid rgba(16, 185, 129, 0.22)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.55)',
+              padding: '36px 32px',
+            }
+          }}
+        >
+          <div style={{ textAlign: 'center' }}>
+            {/* 动画图标 */}
+            <div style={{
+              width: 72,
+              height: 72,
+              margin: '0 auto 20px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, rgba(52, 211, 153, 0.25) 0%, rgba(16, 185, 129, 0.15) 100%)',
+              border: '2px solid rgba(52, 211, 153, 0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 32,
+              animation: 'loading-pulse 2s ease-in-out infinite',
+            }}>
+              📦
+            </div>
+
+            {/* 标题 */}
+            <div style={{
+              fontSize: 18,
+              fontWeight: 700,
+              color: 'rgba(255, 255, 255, 0.95)',
+              marginBottom: 6,
+              letterSpacing: 1,
+            }}>
+              正在准备课程资源
+            </div>
+
+            {/* 动态消息 */}
+            <div style={{
+              fontSize: 13,
+              color: 'rgba(110, 231, 183, 0.85)',
+              marginBottom: 24,
+              minHeight: 20,
+              transition: 'opacity 0.3s ease',
+            }}>
               {loadingMessage}
             </div>
+
+            {/* 进度条 */}
             <div style={{
               width: '100%',
-              height: 6,
-              background: 'rgba(255,255,255,0.10)',
-              borderRadius: 6,
+              height: 8,
+              background: 'rgba(255, 255, 255, 0.08)',
+              borderRadius: 8,
               overflow: 'hidden',
-              marginBottom: 14,
-              border: '1px solid rgba(255,255,255,0.06)'
+              marginBottom: 10,
+              border: '1px solid rgba(255, 255, 255, 0.06)'
             }}>
               <div style={{
                 width: `${loadingProgress}%`,
                 height: '100%',
-                background: 'linear-gradient(135deg, #34d399 0%, #10b981 50%, #059669 100%)',
-                borderRadius: 6,
-                transition: 'width 0.25s ease'
+                background: 'linear-gradient(90deg, #34d399 0%, #10b981 50%, #059669 100%)',
+                borderRadius: 8,
+                transition: 'width 0.3s ease',
+                boxShadow: '0 0 12px rgba(52, 211, 153, 0.5)',
               }} />
             </div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)' }}>
-              {loadingProgress}%
+
+            {/* 百分比 + 加载点 */}
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255, 255, 255, 0.8)' }}>
+                {loadingProgress}%
+              </span>
+              <span style={{ color: 'rgba(52, 211, 153, 0.6)', fontSize: 14 }}>
+                {[0, 1, 2].map(i => (
+                  <span key={i} style={{
+                    display: 'inline-block',
+                    animation: `loading-dot 1.2s ease-in-out ${i * 0.15}s infinite`,
+                  }}>.</span>
+                ))}
+              </span>
             </div>
           </div>
-        </div>
+
+          <style>{`
+            @keyframes loading-pulse {
+              0%, 100% { transform: scale(1); opacity: 0.85; }
+              50% { transform: scale(1.08); opacity: 1; }
+            }
+            @keyframes loading-dot {
+              0%, 80%, 100% { opacity: 0.2; }
+              40% { opacity: 1; }
+            }
+          `}</style>
+        </Modal>
       </div>
     );
   }
@@ -456,9 +515,7 @@ export default function PublicCoursePage() {
   const handleModeSelect = (mode: ViewMode) => {
     setShowModeSelect(false);
     setViewMode(mode);
-    if (mode === 'learn') {
-      setIsPlaying(true);
-    }
+    // 不自动播放，等待用户点击"开始播放"按钮
   };
 
   // 返回选择界面

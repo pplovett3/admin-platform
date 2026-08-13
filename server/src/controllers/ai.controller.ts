@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
 import { Types } from 'mongoose';
+import { config } from '../config/env';
 import { CoursewareModel } from '../models/Courseware';
 import { AICourseModel } from '../models/AICourse';
-import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, getAzureVoices, generateQuestionsWithDeepSeek, organizeModelStructureWithQwenVL, identifySinglePartWithQwenVL, generateAnnotationSummaryWithAI, ModelStructureNode, PartImageData } from '../utils/ai-services';
+import { generateCourseWithDeepSeek, searchImagesWithMetaso, generateTTSWithMinimax, queryTTSStatus, getFileDownloadUrl, generateTTSWithAzure, generateTTSWithDoubao, DOUBAO_TTS_VOICES, generateQuestionsWithDeepSeek, organizeModelStructureWithQwenVL, identifySinglePartWithQwenVL, generateAnnotationSummaryWithAI, ModelStructureNode, PartImageData, generateImageWithDoubao, generateImagePromptWithDoubao } from '../utils/ai-services';
 
 // 生成AI课程
 export async function generateCourse(req: Request, res: Response) {
@@ -125,8 +126,8 @@ export async function ttsPreview(req: Request, res: Response) {
       return res.status(400).json({ message: 'Text is required' });
     }
 
-    if (!provider || !['minimax', 'azure'].includes(provider)) {
-      return res.status(400).json({ message: 'Valid provider (minimax/azure) is required' });
+    if (!provider || !['minimax', 'azure', 'doubao'].includes(provider)) {
+      return res.status(400).json({ message: 'Valid provider (minimax/azure/doubao) is required' });
     }
 
     if (provider === 'minimax') {
@@ -207,6 +208,34 @@ export async function ttsPreview(req: Request, res: Response) {
         isAsync: false,
         message: 'TTS生成成功，可直接播放'
       });
+    } else if (provider === 'doubao') {
+      const { speaker, speedRatio, speed, format } = providerParams;
+
+      if (!speaker) {
+        return res.status(400).json({ message: 'speaker is required for Doubao TTS' });
+      }
+
+      // 调用豆包语音合成-2.0（同步流式，返回音频Buffer）
+      const result = await generateTTSWithDoubao({
+        text: text.trim(),
+        speaker,
+        speedRatio: speedRatio ?? speed ?? 1.0,
+        format: format || 'mp3'
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || '豆包TTS生成失败');
+      }
+
+      res.json({
+        provider: 'doubao',
+        text: text.trim(),
+        speaker,
+        audioUrl: result.audioUrl,
+        duration: result.duration,
+        isAsync: false,
+        message: 'TTS生成成功，可直接播放'
+      });
     }
   } catch (error) {
     console.error('TTS preview error:', error);
@@ -260,70 +289,30 @@ export async function getTTSProviders(req: Request, res: Response) {
   try {
     const providers = [];
 
-    // Minimax 音色列表（基于之前提供的音色列表）
-    const minimaxVoices = [
-      { id: 'presenter_female', name: '女播音员', gender: 'female', locale: 'zh-CN' },
-      { id: 'presenter_male', name: '男播音员', gender: 'male', locale: 'zh-CN' },
-      { id: 'audiobook_male_1', name: '男有声书1', gender: 'male', locale: 'zh-CN' },
-      { id: 'audiobook_male_2', name: '男有声书2', gender: 'male', locale: 'zh-CN' },
-      { id: 'audiobook_female_1', name: '女有声书1', gender: 'female', locale: 'zh-CN' },
-      { id: 'audiobook_female_2', name: '女有声书2', gender: 'female', locale: 'zh-CN' },
-      { id: 'male-qn-jingying', name: '精英男声', gender: 'male', locale: 'zh-CN' },
-      { id: 'female-shaonv', name: '少女音', gender: 'female', locale: 'zh-CN' },
-      { id: 'female-yujie', name: '御姐音', gender: 'female', locale: 'zh-CN' },
-      { id: 'male-qn-qingse', name: '青涩男声', gender: 'male', locale: 'zh-CN' },
-      { id: 'male-qn-badao', name: '霸道男声', gender: 'male', locale: 'zh-CN' },
-      { id: 'female-qn-daxuesheng', name: '大学生女声', gender: 'female', locale: 'zh-CN' }
-    ];
-
+    // 仅保留豆包语音合成-2.0（按需求：只用豆包配音，停用 Azure / Minimax）
     providers.push({
-      id: 'minimax',
-      name: 'Minimax TTS',
-      description: '海螺AI语音合成服务',
-      isAsync: true,
-      voices: minimaxVoices,
-      supportedFeatures: ['speed', 'volume', 'pitch'],
-      responseTime: '1-2分钟'
+      id: 'doubao',
+      name: '豆包语音合成 2.0',
+      description: '火山引擎豆包语音合成（Doubao-语音合成-2.0）',
+      isAsync: false,
+      voices: DOUBAO_TTS_VOICES.map(v => ({
+        id: v.id,
+        name: v.name,
+        gender: v.gender,
+        locale: v.locale,
+        desc: v.desc
+      })),
+      supportedFeatures: ['speedRatio'],
+      responseTime: '1-3秒',
+      configured: !!(config.doubaoTtsAppId && config.doubaoTtsAccessKey)
     });
-
-    // Azure 音色列表
-    try {
-      const azureVoices = await getAzureVoices();
-      providers.push({
-        id: 'azure',
-        name: 'Azure TTS',
-        description: '微软Azure语音合成服务',
-        isAsync: false,
-        voices: azureVoices.map(voice => ({
-          id: voice.Name,
-          name: voice.LocalName || voice.DisplayName,
-          gender: voice.Gender,
-          locale: voice.Locale,
-          styles: voice.StyleList || []
-        })),
-        supportedFeatures: ['rate', 'pitch', 'style'],
-        responseTime: '3-5秒'
-      });
-    } catch (error) {
-      console.warn('Failed to get Azure voices, adding minimal provider info:', error);
-      providers.push({
-        id: 'azure',
-        name: 'Azure TTS',
-        description: '微软Azure语音合成服务（配置不完整）',
-        isAsync: false,
-        voices: [],
-        supportedFeatures: ['rate', 'pitch', 'style'],
-        responseTime: '3-5秒',
-        error: 'API配置不完整'
-      });
-    }
 
     res.json({
       providers,
       recommendation: {
-        fastResponse: 'azure',
-        highQuality: 'minimax',
-        default: 'azure'
+        fastResponse: 'doubao',
+        highQuality: 'doubao',
+        default: 'doubao'
       }
     });
   } catch (error) {
@@ -582,3 +571,54 @@ export async function generateAnnotationSummary(req: Request, res: Response) {
     res.status(500).json({ message });
   }
 }
+
+// AI 生成图片（豆包 Seedream 文生图）
+export const generateImage = async (req: Request, res: Response) => {
+  try {
+    const { coursewareName, segmentTitle, say, imageKeywords, prompt, size } = req.body;
+
+    let finalPrompt = prompt;
+
+    // 如果没有直接提供提示词，则用豆包 LLM 根据上下文生成提示词
+    if (!finalPrompt || !finalPrompt.trim()) {
+      if (!imageKeywords && !say) {
+        return res.status(400).json({ message: '请提供 prompt 或 imageKeywords/say 上下文' });
+      }
+      console.log('[AI生图] 生成提示词...');
+      const promptResult = await generateImagePromptWithDoubao({
+        coursewareName,
+        segmentTitle,
+        say,
+        imageKeywords
+      });
+      if (!promptResult.success || !promptResult.prompt) {
+        return res.status(500).json({ message: promptResult.error || '提示词生成失败' });
+      }
+      finalPrompt = promptResult.prompt;
+    }
+
+    console.log(`[AI生图] 提示词: ${finalPrompt.substring(0, 100)}...`);
+    console.log(`[AI生图] 尺寸: ${size || '2048x2048'}`);
+
+    // 调用豆包 Seedream 生成图片
+    const imageResult = await generateImageWithDoubao(finalPrompt, size || '2048x2048');
+    if (!imageResult.success || !imageResult.url) {
+      return res.status(500).json({ message: imageResult.error || '图片生成失败' });
+    }
+
+    console.log(`[AI生图] 成功: ${imageResult.url.substring(0, 80)}...`);
+
+    res.json({
+      success: true,
+      result: {
+        url: imageResult.url,
+        prompt: finalPrompt,
+        title: imageKeywords || segmentTitle || 'AI生成图片',
+        source: 'AI生成 (豆包 Seedream)'
+      }
+    });
+  } catch (error: any) {
+    console.error('Generate image error:', error);
+    res.status(500).json({ message: error?.message || '图片生成失败' });
+  }
+};

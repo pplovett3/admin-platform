@@ -41,9 +41,12 @@ router.get('/public/proxy', async (req, res) => {
       return res.status(400).json({ message: 'URL parameter is required' });
     }
     
-    // 只允许代理我们自己的NAS域名
-    if (!url.startsWith('https://dl.yf-xr.com/') && !url.startsWith('https://video.yf-xr.com/')) {
-      return res.status(403).json({ message: 'Only whitelisted domains are allowed' });
+    // 允许代理我们自己的NAS域名，以及外部图片URL（用于课程配图展示）
+    const isWhitelisted = url.startsWith('https://dl.yf-xr.com/') || url.startsWith('https://video.yf-xr.com/');
+    const isExternalImage = url.startsWith('http://') || url.startsWith('https://');
+    
+    if (!isWhitelisted && !isExternalImage) {
+      return res.status(403).json({ message: 'Only whitelisted domains or HTTP(S) URLs are allowed' });
     }
     
     console.log('Public proxy request:', url);

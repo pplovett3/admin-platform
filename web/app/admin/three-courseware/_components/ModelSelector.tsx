@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Modal, Radio, List, Avatar, Upload, Button, Input, Space, App, Spin, Empty, Pagination, Badge, Progress } from 'antd';
 import { InboxOutlined, CloudUploadOutlined, FileOutlined, GlobalOutlined } from '@ant-design/icons';
 import { apiGet, apiPost } from '@/app/_utils/api';
+import { convertModelToGlb, needsGlbConversion } from '@/app/_utils/modelConvert';
 import type { UploadProps } from 'antd';
 
 interface ModelItem {
@@ -279,19 +280,31 @@ export default function ModelSelector({ open, onCancel, onSelect }: ModelSelecto
           message.error('STEP 转换失败');
         }
       } else {
-        // 普通模型文件
+        // 普通模型文件：FBX/OBJ/STL 先转换为 GLB（保证 Unity 元宇宙大厅可加载），GLB 直接上传
+        let uploadFile = file;
+        if (needsGlbConversion(file.name)) {
+          setUploadStatus('正在转换为 GLB（Unity 兼容格式）...');
+          setUploadProgress(20);
+          try {
+            uploadFile = await convertModelToGlb(file);
+          } catch (e: any) {
+            message.error(`模型转换失败：${e?.message || '未知错误'}`);
+            return;
+          }
+        }
+
         // 大于 80MB 使用分块上传（留一些余量）
-        if (file.size > 80 * 1024 * 1024) {
-          result = await uploadWithChunks(file);
+        if (uploadFile.size > 80 * 1024 * 1024) {
+          result = await uploadWithChunks(uploadFile);
         } else {
           setUploadStatus('上传中...');
-          result = await uploadNormal(file);
+          result = await uploadNormal(uploadFile);
           setUploadProgress(100);
         }
 
         if (result?.ok && result?.downloadUrl) {
           message.success('模型上传成功');
-          onSelect(result.downloadUrl, file.name);
+          onSelect(result.downloadUrl, uploadFile.name);
         } else {
           message.error('上传失败');
         }

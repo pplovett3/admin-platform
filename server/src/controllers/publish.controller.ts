@@ -8,6 +8,28 @@ import { batchGenerateTTSForCourse } from '../utils/ai-services';
 import * as crypto from 'crypto';
 import * as path from 'path';
 
+/**
+ * 构建课程分享链接
+ * 优先级：
+ * 1) PUBLIC_BASE_URL 环境变量（容器化部署推荐，避免拿到 docker 内部 Host）
+ * 2) X-Forwarded-Host / X-Forwarded-Proto（被反向代理时由代理提供）
+ * 3) req.get('host')，并把后端端口替换成前端端口（开发环境兜底）
+ */
+function buildShareUrl(req: Request, publishId: string): string {
+  if (config.publicBaseUrl) {
+    return `${config.publicBaseUrl.replace(/\/$/, '')}/course/${publishId}`;
+  }
+  const xfHost = req.get('x-forwarded-host');
+  const xfProto = req.get('x-forwarded-proto');
+  if (xfHost) {
+    const proto = xfProto || req.protocol;
+    return `${proto}://${xfHost}/course/${publishId}`;
+  }
+  const host = req.get('host') || '';
+  const frontendHost = host.replace(`:${config.port}`, `:${config.frontendPort}`);
+  return `${req.protocol}://${frontendHost}/course/${publishId}`;
+}
+
 // 发布AI课程
 export async function publishCourse(req: Request, res: Response) {
   try {
@@ -52,6 +74,8 @@ export async function publishCourse(req: Request, res: Response) {
       images: [] as string[],
       thumbnail: undefined as string | undefined
     };
+    // 配音生成异常时填充，用于向上游/前端反馈（不阻止发布）
+    let ttsWarning: { expected: number; generated: number; message: string } | undefined;
 
     // 调试：检查课程原始数据中的图片URL
     console.log('原始课程数据检查:');
@@ -79,8 +103,16 @@ export async function publishCourse(req: Request, res: Response) {
 
     if (ttsConfig && aiCourse.outline && aiCourse.outline.length > 0) {
       console.log('开始批量生成TTS配音...');
+      // 统计需要配音的步骤数（有 say 文本的步骤）
+      let expectedTtsCount = 0;
+      for (const seg of aiCourse.outline) {
+        if (!seg.items) continue;
+        for (const it of seg.items) {
+          if (it.say?.trim()) expectedTtsCount++;
+        }
+      }
       try {
-        const ttsResults = await batchGenerateTTSForCourse(
+        const { results: ttsResults, error: ttsError } = await batchGenerateTTSForCourse(
           aiCourse.outline,
           user.userId,
           ttsConfig
@@ -106,9 +138,24 @@ export async function publishCourse(req: Request, res: Response) {
           }
           }
         }
-        console.log(`TTS生成完成，共生成 ${resourcePaths.audio.length} 个音频文件`);
+        const generatedCount = resourcePaths.audio.length;
+        console.log(`TTS生成完成，共生成 ${generatedCount}/${expectedTtsCount} 个音频文件`);
+        // 配音生成失败（全部或部分）时，向上返回警告，不再静默吞掉
+        if (expectedTtsCount > 0 && generatedCount < expectedTtsCount) {
+          ttsWarning = {
+            expected: expectedTtsCount,
+            generated: generatedCount,
+            message: ttsError || `配音生成失败：仅成功 ${generatedCount}/${expectedTtsCount} 条`
+          };
+          console.warn('TTS配音生成异常:', ttsWarning);
+        }
       } catch (error) {
         console.error('批量TTS生成失败:', error);
+        ttsWarning = {
+          expected: expectedTtsCount,
+          generated: 0,
+          message: error instanceof Error ? error.message : String(error)
+        };
         // TTS失败不阻止发布，只是记录错误
       }
     }
@@ -151,17 +198,16 @@ export async function publishCourse(req: Request, res: Response) {
       publishedCourse = await PublishedCourseModel.create(publishData);
     }
 
-    // 构建分享链接 - 指向前端服务端口
-    const host = req.get('host') || '';
-    const frontendHost = host.replace(`:${config.port}`, `:${config.frontendPort}`); // 将后端端口替换为前端端口
-    const shareUrl = `${req.protocol}://${frontendHost}/course/${publishedCourse.id}`;
+    // 构建分享链接 - 优先使用配置的 PUBLIC_BASE_URL（容器化部署必须）
+    const shareUrl = buildShareUrl(req, publishedCourse.id);
 
     res.json({
       success: true,
       publishId: publishedCourse.id,
       shareUrl,
       publishedAt: publishedCourse.publishedAt,
-      status: publishedCourse.status
+      status: publishedCourse.status,
+      ttsWarning
     });
 
   } catch (error) {
@@ -202,9 +248,7 @@ export async function getPublishStatus(req: Request, res: Response) {
       });
     }
 
-    const host = req.get('host') || '';
-    const frontendHost = host.replace(`:${config.port}`, `:${config.frontendPort}`);
-    const shareUrl = `${req.protocol}://${frontendHost}/course/${publishedCourse.id}`;
+    const shareUrl = buildShareUrl(req, publishedCourse.id);
 
     res.json({
       isPublished: true,

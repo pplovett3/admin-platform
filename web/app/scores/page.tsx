@@ -2,7 +2,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Card, Typography, Select, Table, Space, Input, App, Alert, Modal, Button, Tabs, Tag, Statistic, Row, Col, Progress, Empty } from 'antd';
 import { TrophyOutlined, ClockCircleOutlined } from '@ant-design/icons';
-import { apiGet, authFetch } from '@/app/_utils/api';
+import { apiGet } from '@/app/_utils/api';
 import { getToken, parseJwt, Role } from '@/app/_utils/auth';
 
 export default function ScoresPage() {
@@ -53,7 +53,7 @@ export default function ScoresPage() {
   const loadAiQuizRecords = async () => {
     setAiQuizLoading(true);
     try {
-      const res = await authFetch<any>('/api/quiz/records');
+      const res = await apiGet<any>('/api/quiz/records');
       setAiQuizRecords(res.records || []);
     } catch (e: any) {
       console.error('加载AI课程答题记录失败:', e);

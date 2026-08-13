@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import { Button, Form, Input, Space, message, Layout, Badge } from 'antd';
 import { GlobalOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
+import AIProcessingModal from '@/app/_components/AIProcessingModal';
 import OutlineEditor from './components/OutlineEditor';
 import PropertyPanel from './components/PropertyPanel';
 import CoursewareViewer from './components/CoursewareViewer';
@@ -19,6 +20,9 @@ export default function EditAICoursePage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [aiProcessing, setAiProcessing] = useState(false);
+  const [aiProcessingMessages, setAiProcessingMessages] = useState<string[]>([]);
+  const [aiProcessingTitle, setAiProcessingTitle] = useState('AI 处理中');
   const [form] = Form.useForm();
   const [courseData, setCourseData] = useState<any>(null);
   const [selectedItem, setSelectedItem] = useState<any>(null);
@@ -84,8 +88,18 @@ export default function EditAICoursePage() {
       message.error('请先保存基础信息');
       return;
     }
-    
+
     setGenerating(true);
+    setAiProcessingTitle('AI 生成课程大纲');
+    setAiProcessingMessages([
+      '正在分析课件模型结构...',
+      '理解标注与组件关系...',
+      '编排课程讲解逻辑...',
+      '生成场景动作脚本...',
+      '匹配图片讲解关键词...',
+      '优化大纲结构...',
+    ]);
+    setAiProcessing(true);
     try {
       const values = await form.validateFields(['theme', 'audience', 'durationTarget']);
       const res = await authFetch<any>('/api/ai/generate-course', {
@@ -107,6 +121,7 @@ export default function EditAICoursePage() {
       message.error(e?.message || 'AI生成失败');
     } finally {
       setGenerating(false);
+      setAiProcessing(false);
     }
   }
 
@@ -303,6 +318,13 @@ export default function EditAICoursePage() {
         annotations={coursewareAnnotations}
         visible={questionEditorVisible}
         onClose={() => setQuestionEditorVisible(false)}
+      />
+
+      {/* AI 处理等待弹窗 */}
+      <AIProcessingModal
+        open={aiProcessing}
+        title={aiProcessingTitle}
+        messages={aiProcessingMessages}
       />
     </div>
   );

@@ -248,22 +248,44 @@ Authorization: Bearer <token>
 - `hotspots` 是 `annotations` 的兼容格式
 
 ### 2.3 获取AI课程详情（学生专用）
-获取审核通过的AI课程完整数据。
+获取审核通过的AI课程完整数据，**包含配音音频URL和三维课件模型信息**。
 
 ```http
-GET /api/portal/ai-course/{aiCourseId}
+GET /api/portal/ai-course/{id}
 Authorization: Bearer <token>
 ```
+
+**说明**：使用课程列表中返回的 `id` 字段，接口会自动返回发布后的课程数据（包含 audioUrl）。
 
 **响应** (200):
 ```json
 {
   "_id": "6904275baa0c1d733e9cc722",
+  "publishedId": "6904275baa0c1d733e9cc723",
   "title": "小米SU7车轮介绍",
-  "theme": "汽车零部件认知",
+  "description": "详细讲解小米SU7车轮结构",
   "thumbnail": "https://platform.yf-xr.com/...",
-  "reviewedAt": "2025-01-20T10:30:00.000Z",
-  "createdBy": {"name": "李老师"},
+  "publishedAt": "2025-01-20T10:30:00.000Z",
+  "coursewareId": "68bc53d55f017bd5c72d4013",
+  "coursewareData": {
+    "_id": "68bc53d55f017bd5c72d4013",
+    "name": "小米SU7轮胎",
+    "description": "小米SU7车轮拆解课件",
+    "modelUrl": "/api/files/courseware-download?path=models%2F...",
+    "modifiedModelUrl": "/api/files/courseware-download?path=modifiedModels%2F...",
+    "annotations": [
+      {
+        "id": "4bd0c92c-d87a-4f70-9985-5502c77ca583",
+        "title": "轮毂",
+        "description": "铝合金轮毂结构",
+        "nodeKey": "Xiaomi_SU7_LRB/左后轮/rimDarkIn_001_LRW",
+        "position": {"x": 0.069, "y": 0.004, "z": 0.003}
+      }
+    ],
+    "animations": [...],
+    "settings": {...},
+    "modelStructure": {...}
+  },
   "courseData": {
     "outline": [
       {
@@ -275,8 +297,18 @@ Authorization: Bearer <token>
             "type": "talk",
             "id": "item-1",
             "say": "大家好，今天我们来学习小米SU7的车轮结构...",
-            "audioUrl": "https://platform.yf-xr.com/api/files/xxx/download",
+            "audioUrl": "/api/public/files/68dfa2xxx",
             "audioDuration": 6200
+          },
+          {
+            "type": "scene.action",
+            "id": "item-2",
+            "say": "现在让我们看看轮胎的内部结构...",
+            "audioUrl": "/api/public/files/68dfa3xxx",
+            "audioDuration": 8500,
+            "actions": [
+              {"type": "camera.focus", "target": {"nodeKey": "轮胎"}}
+            ]
           }
         ]
       }
@@ -284,15 +316,45 @@ Authorization: Bearer <token>
     "quizEnabled": true,
     "quiz": [...],
     "assets": {}
+  },
+  "stats": {
+    "viewCount": 128
   }
 }
+```
+
+**核心字段说明**:
+
+| 字段 | 说明 |
+|------|------|
+| `publishedId` | 发布课程ID |
+| `coursewareId` | 关联的三维课件ID |
+| `coursewareData.modelUrl` | 原始模型下载URL |
+| `coursewareData.modifiedModelUrl` | 编辑后模型下载URL（**优先使用**） |
+| `coursewareData.annotations` | 标注点数据 |
+| `coursewareData.animations` | 动画列表 |
+| `courseData.outline[].items[].audioUrl` | ⭐ **配音音频URL** |
+| `courseData.outline[].items[].audioDuration` | 音频时长（毫秒） |
+| `courseData.outline[].items[].say` | 讲解文字（字幕） |
+| `courseData.quiz` | 测验题目 |
+
+**资源下载**:
+
+```
+音频下载（无需Token）:
+GET https://platform.yf-xr.com{audioUrl}
+例如: GET https://platform.yf-xr.com/api/public/files/68dfa2xxx
+
+模型下载（需要Token）:
+GET https://platform.yf-xr.com{coursewareData.modifiedModelUrl}
+Authorization: Bearer <token>
 ```
 
 **说明**:
 - 仅返回 `reviewStatus=approved` 的课程
 - 如果课程未审核通过，返回 404 错误
-- `courseData.outline` 包含课程大纲
-- `courseData.quiz` 包含测验题目（如果启用）
+- **接口会自动从发布数据中获取 audioUrl**，无需额外调用其他接口
+- **模型下载**：优先使用 `coursewareData.modifiedModelUrl`，如果为空则使用 `modelUrl`
 
 ### 2.4 获取学生学习记录
 
@@ -922,17 +984,20 @@ Authorization: Bearer <token>
 #### 步骤3: 获取课程详情
 ```
 三维课件: GET /api/portal/courseware/{id}
-AI课程: GET /api/portal/ai-course/{id}
+AI课程:   GET /api/portal/ai-course/{id}
 Authorization: Bearer <token>
-→ 获得完整课程数据
+→ 获得完整课程数据（AI课程自动包含 audioUrl）
 ```
 
 #### 步骤4: 下载资源并播放
 ```
-遍历课程数据中的资源URL
-- 下载 modelUrl/modifiedModelUrl (3D模型)
-- 下载 audioUrl (音频)
-- 下载 imageUrl (图片)
+三维课件:
+- 下载 modifiedModelUrl 或 modelUrl (3D模型，需要Token)
+
+AI课程:
+- 下载 coursewareData.modifiedModelUrl (3D模型，需要Token)
+- 下载 courseData.outline[].items[].audioUrl (音频，无需Token)
+- 下载 imageUrl (图片，无需Token)
 播放课程
 ```
 

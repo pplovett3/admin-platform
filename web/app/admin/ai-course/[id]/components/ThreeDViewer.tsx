@@ -905,6 +905,48 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
     return '';
   };
 
+  // 🔧 将 FBX 的 Phong/Lambert 材质转换为 PBR Standard 材质
+  const convertPhongToPBR = (root: THREE.Object3D) => {
+    let convertedCount = 0;
+    root.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        const newMaterials = materials.map((mat) => {
+          if (mat instanceof THREE.MeshPhongMaterial || mat instanceof THREE.MeshLambertMaterial) {
+            const pbrMat = new THREE.MeshStandardMaterial({
+              name: mat.name,
+              color: mat.color ? mat.color.clone() : new THREE.Color(0xcccccc),
+              map: mat.map || null,
+              normalMap: (mat as any).normalMap || null,
+              aoMap: (mat as any).aoMap || null,
+              transparent: mat.transparent,
+              opacity: mat.opacity,
+              side: mat.side,
+              alphaTest: mat.alphaTest,
+              metalness: 0.0,
+              roughness: 0.6,
+            });
+            if ((mat as THREE.MeshPhongMaterial).emissive) {
+              pbrMat.emissive = (mat as THREE.MeshPhongMaterial).emissive.clone();
+              pbrMat.emissiveMap = (mat as THREE.MeshPhongMaterial).emissiveMap || null;
+              pbrMat.emissiveIntensity = (mat as THREE.MeshPhongMaterial).emissiveIntensity || 1.0;
+            }
+            if (mat instanceof THREE.MeshPhongMaterial && mat.shininess !== undefined) {
+              pbrMat.roughness = Math.max(0.1, 1.0 - Math.min(mat.shininess / 100, 0.9));
+            }
+            convertedCount++;
+            return pbrMat;
+          }
+          return mat;
+        });
+        object.material = Array.isArray(object.material) ? newMaterials : newMaterials[0];
+      }
+    });
+    if (convertedCount > 0) {
+      console.log(`✅ FBX 材质已自动转换为 PBR Standard: ${convertedCount} 个材质`);
+    }
+  };
+
   const loadModel = async (modelUrl: string) => {
     if (!sceneRef.current || !rendererRef.current || !cameraRef.current) return;
 
@@ -1018,6 +1060,8 @@ export default function ThreeDViewer({ coursewareData, width = 800, height = 600
         const loader = new FBXLoader(manager);
         model = loader.parse(arrayBuffer, '');
         animations = (model as any).animations || [];
+        // 🔧 自动将 Phong/Lambert 材质转换为 PBR Standard
+        convertPhongToPBR(model);
       } else if (isOBJ) {
         const loader = new OBJLoader(manager);
         const textDecoder = new TextDecoder();

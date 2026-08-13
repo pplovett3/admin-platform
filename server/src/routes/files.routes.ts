@@ -7,9 +7,15 @@ import crypto from 'crypto';
 import { authenticate } from '../middlewares/auth';
 import { config } from '../config/env';
 import { FileModel, FileVisibility, FileKind } from '../models/File';
+import { FolderModel } from '../models/Folder';
 import mongoose from 'mongoose';
 import os from 'os';
+import AdmZip from 'adm-zip';
 import { convertStepToGlb, isStepFile } from '../services/step-converter';
+import { checkQuota, formatBytes, getUsedStorage, getUserQuota, UNLIMITED_QUOTA } from '../utils/storage';
+
+// 资源管理器支持入库的扩展名（与单文件上传保持一致）
+const SUPPORTED_RESOURCE_EXTS = ['.mp4', '.jpg', '.jpeg', '.png', '.pdf', '.ppt', '.pptx', '.doc', '.docx', '.glb', '.fbx', '.obj', '.stl'];
 
 const router = Router();
 const tempDir = path.join(os.tmpdir(), 'uploads');
@@ -29,6 +35,7 @@ const chunkUploadSessions = new Map<string, {
   visibility: FileVisibility;
   userId: string;
   userRole: string;
+  folderId: string | null;
   createdAt: Date;
 }>();
 
@@ -83,6 +90,13 @@ function kindToZh(kind: FileKind): string {
     case 'word': return 'WORD';
     default: return '其他';
   }
+}
+
+function parseFolderId(raw: any): mongoose.Types.ObjectId | null {
+  const s = (raw ?? '').toString().trim();
+  if (!s || s === 'null' || s === 'root') return null;
+  if (!mongoose.Types.ObjectId.isValid(s)) return null;
+  return new mongoose.Types.ObjectId(s);
 }
 
 function decodeOriginalName(name: string): string {
@@ -153,16 +167,23 @@ router.get('/proxy', authenticate as any, async (req, res) => {
 
 router.get('/mine', authenticate as any, async (req, res) => {
   const current = (req as any).user as { userId: string };
-  const { type, q, page = '1', pageSize = '20' } = req.query as any;
+  const { type, q, page = '1', pageSize = '20', folderId, visibility } = req.query as any;
   const filter: any = { 
     ownerUserId: new mongoose.Types.ObjectId(current.userId), 
-    visibility: 'private',
     storageDir: { $not: /^tts\// }, // 排除TTS目录下的文件（AI课件配音）
     $and: [
       { originalName: { $not: /^courseware-.*-modified\.glb$/i } }, // 排除编辑器临时文件
       { originalName: { $not: /^thumbnail-/i } } // 排除课件封面图
     ]
   };
+  // 可见性过滤：默认仅私有（向后兼容）；'public' 仅公共；'all' 不限（私有+公共，均限本人拥有）
+  if (visibility === 'public') filter.visibility = 'public';
+  else if (visibility !== 'all') filter.visibility = 'private';
+  // 文件夹过滤：传入有效ID则查该文件夹；传 root/null/空则查根目录；完全不传则返回全部（向后兼容）
+  if (folderId !== undefined) {
+    const fid = parseFolderId(folderId);
+    filter.folderId = fid; // null 会匹配 folderId 为 null 或缺失的旧数据
+  }
   if (type) filter.type = type;
   if (q) {
     // 搜索时添加搜索条件
@@ -182,9 +203,178 @@ router.get('/mine', authenticate as any, async (req, res) => {
     createdAt: r.createdAt,
     downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`,
     viewUrl: (r.type==='image'||r.type==='video'||r.type==='model') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined,
+    thumbnailUrl: r.thumbnailRelPath ? `/api/files/${r._id}/cover` : null,
     visibility: r.visibility,
   }));
   res.json({ rows: mapped, total, page: p, pageSize: ps });
+});
+
+// 当前用户的存储用量（字节）
+router.get('/storage-usage', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const [used, quota] = await Promise.all([
+      getUsedStorage(current.userId),
+      getUserQuota(current.userId),
+    ]);
+    if (quota === UNLIMITED_QUOTA) {
+      // 超管不限容量：quota/remaining 返回 null，前端据此展示“不限容量”
+      return res.json({ used, quota: null, remaining: null, unlimited: true });
+    }
+    res.json({ used, quota, remaining: Math.max(0, quota - used), unlimited: false });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'failed' });
+  }
+});
+
+// ==================== 资源文件夹 ====================
+
+// 列出当前用户在某父目录下的文件夹
+router.get('/folders', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const parentId = parseFolderId((req.query as any).parentId);
+    const folders = await FolderModel.find({
+      ownerUserId: new mongoose.Types.ObjectId(current.userId),
+      parentId,
+    }).sort({ name: 1 }).lean();
+    res.json({ rows: folders.map((f: any) => ({ id: f._id, name: f.name, parentId: f.parentId || null, createdAt: f.createdAt })) });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'failed' });
+  }
+});
+
+// 创建文件夹
+router.post('/folder', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ message: '文件夹名称不能为空' });
+    if (name.length > 100) return res.status(400).json({ message: '文件夹名称过长' });
+    const parentId = parseFolderId(req.body?.parentId);
+    // 校验父目录归属
+    if (parentId) {
+      const parent = await FolderModel.findOne({ _id: parentId, ownerUserId: new mongoose.Types.ObjectId(current.userId) }).lean();
+      if (!parent) return res.status(400).json({ message: '父目录不存在' });
+    }
+    // 同级重名：默认幂等返回已存在的（便于 ZIP 按层级建目录）；
+    // 仅当显式 strict=true 时才报 409（用于手动创建时的重名提示）
+    const dup = await FolderModel.findOne({ ownerUserId: new mongoose.Types.ObjectId(current.userId), parentId, name }).lean();
+    if (dup) {
+      if (req.body?.strict) return res.status(409).json({ message: '同级目录下已存在同名文件夹' });
+      return res.json({ ok: true, existed: true, folder: { id: (dup as any)._id, name: (dup as any).name, parentId: (dup as any).parentId || null } });
+    }
+    const created = await FolderModel.create({ name, parentId, ownerUserId: new mongoose.Types.ObjectId(current.userId) });
+    res.json({ ok: true, folder: { id: (created as any)._id, name: created.name, parentId: created.parentId || null } });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'failed' });
+  }
+});
+
+// 重命名文件夹
+router.put('/folder/:id', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ message: '文件夹名称不能为空' });
+    const folder = await FolderModel.findOne({ _id: id, ownerUserId: new mongoose.Types.ObjectId(current.userId) });
+    if (!folder) return res.status(404).json({ message: 'Not found' });
+    folder.name = name;
+    await folder.save();
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'failed' });
+  }
+});
+
+// 删除文件夹。默认递归删除（连同所有子文件夹与其中的资源、磁盘文件、封面）。
+// 传 ?recursive=false 时仅允许删除空文件夹（保留旧行为）。
+router.delete('/folder/:id', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string };
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+    const owner = new mongoose.Types.ObjectId(current.userId);
+    const folder = await FolderModel.findOne({ _id: id, ownerUserId: owner });
+    if (!folder) return res.status(404).json({ message: 'Not found' });
+
+    const recursive = String((req.query as any).recursive ?? 'true') !== 'false';
+
+    if (!recursive) {
+      const [childFolders, childFiles] = await Promise.all([
+        FolderModel.countDocuments({ parentId: folder._id, ownerUserId: owner }),
+        FileModel.countDocuments({ folderId: folder._id, ownerUserId: owner }),
+      ]);
+      if (childFolders > 0 || childFiles > 0) {
+        return res.status(409).json({ message: '文件夹非空，请先清空其中的子文件夹和资源' });
+      }
+      await folder.deleteOne();
+      return res.json({ ok: true, deletedFolders: 1, deletedFiles: 0 });
+    }
+
+    // 递归收集所有后代文件夹 ID（含自身），再删除其下所有文件与文件夹
+    const allFolderIds: mongoose.Types.ObjectId[] = [folder._id as any];
+    let frontier: mongoose.Types.ObjectId[] = [folder._id as any];
+    while (frontier.length) {
+      const children = await FolderModel.find({ parentId: { $in: frontier }, ownerUserId: owner }).select('_id').lean();
+      const childIds = children.map((c: any) => c._id);
+      if (childIds.length === 0) break;
+      allFolderIds.push(...childIds);
+      frontier = childIds;
+    }
+
+    // 删除这些文件夹下的所有文件（磁盘 + 封面 + DB）
+    const files = await FileModel.find({ folderId: { $in: allFolderIds }, ownerUserId: owner });
+    let deletedFiles = 0;
+    for (const doc of files) {
+      try {
+        const abs = path.join(config.storageRoot, (doc as any).storageRelPath.replace(/\\/g, '/'));
+        if (fs.existsSync(abs)) fs.unlinkSync(abs);
+      } catch {}
+      try {
+        const thumbRel = (doc as any).thumbnailRelPath as string | null;
+        if (thumbRel) {
+          const tAbs = path.join(config.storageRoot, thumbRel.replace(/\\/g, '/'));
+          if (fs.existsSync(tAbs)) fs.unlinkSync(tAbs);
+        }
+      } catch {}
+      await (doc as any).deleteOne();
+      deletedFiles++;
+    }
+
+    // 删除所有文件夹
+    const delRes = await FolderModel.deleteMany({ _id: { $in: allFolderIds }, ownerUserId: owner });
+    res.json({ ok: true, deletedFolders: delRes.deletedCount || allFolderIds.length, deletedFiles });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'failed' });
+  }
+});
+
+// 移动文件到指定文件夹（folderId 为空/root/null = 移动到根目录）
+router.put('/:id/folder', authenticate as any, async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string; role: string };
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+    const doc = await FileModel.findById(id);
+    if (!doc) return res.status(404).json({ message: 'Not found' });
+    const isOwner = String((doc as any).ownerUserId) === String(current.userId);
+    if (!isOwner && current.role !== 'superadmin') return res.status(403).json({ message: 'Forbidden' });
+
+    const target = parseFolderId(req.body?.folderId);
+    if (target) {
+      // 目标文件夹必须属于文件拥有者
+      const folder = await FolderModel.findOne({ _id: target, ownerUserId: (doc as any).ownerUserId }).lean();
+      if (!folder) return res.status(400).json({ message: '目标文件夹不存在' });
+    }
+    (doc as any).folderId = target;
+    await doc.save();
+    res.json({ ok: true, folderId: target });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || 'failed' });
+  }
 });
 
 router.get('/public', authenticate as any, async (_req, res) => {
@@ -208,7 +398,7 @@ router.get('/public', authenticate as any, async (_req, res) => {
     FileModel.find(filter).sort({ createdAt: -1 }).skip((p - 1) * ps).limit(ps).lean(),
     FileModel.countDocuments(filter),
   ]);
-  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: kindToZh(r.type), originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`, viewUrl: (r.type==='image'||r.type==='video'||r.type==='model') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined })), total, page: p, pageSize: ps });
+  res.json({ rows: rows.map((r: any) => ({ id: r._id, type: kindToZh(r.type), originalName: r.originalName, size: r.size, createdAt: r.createdAt, downloadUrl: config.publicDownloadBase ? `${config.publicDownloadBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`, viewUrl: (r.type==='image'||r.type==='video'||r.type==='model') && config.publicViewBase ? `${config.publicViewBase.replace(/\/$/,'')}/${(r.storageRelPath as any)}` : undefined, thumbnailUrl: r.thumbnailRelPath ? `/api/files/${r._id}/cover` : null })), total, page: p, pageSize: ps });
 });
 
 router.get('/client/mine', authenticate as any, async (req, res) => {
@@ -225,7 +415,7 @@ router.get('/client/mine', authenticate as any, async (req, res) => {
     ]
   }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
-  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
+  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`, thumbnailUrl: r.thumbnailRelPath ? `/api/files/${r._id}/cover` : null }));
   res.json({ rows: mapped });
 });
 
@@ -242,7 +432,7 @@ router.get('/client/public', authenticate as any, async (_req, res) => {
     ]
   }).sort({ createdAt: -1 }).lean();
   const base = config.publicDownloadBase.replace(/\/$/, '');
-  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}` }));
+  const mapped = rows.map((r: any) => ({ name: r.originalName, type: kindToZh(r.type), download: base ? `${base}/${r.storageRelPath}` : `/api/files/${r._id}/download/${encodeURIComponent(r.originalName)}`, thumbnailUrl: r.thumbnailRelPath ? `/api/files/${r._id}/cover` : null }));
   res.json({ rows: mapped });
 });
 
@@ -369,6 +559,78 @@ router.get('/public-model/:id', async (req: any, res: any) => {
   }
 });
 
+// 上传/替换资源封面（截图）。主要用于模型：前端用 three.js 渲染 GLB 截图后上传。
+// 封面是资源的“附属文件”，不入 File 集合、不计入个人配额。仅拥有者或超管可设置。
+router.post('/:id/cover', authenticate as any, upload.single('file'), async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string; role: string };
+    const id = req.params.id;
+    const file = (req as any).file as any;
+    if (!mongoose.Types.ObjectId.isValid(id)) { if (file) { try { fs.unlinkSync(file.path); } catch {} } return res.status(404).json({ message: 'Not found' }); }
+    if (!file) return res.status(400).json({ message: 'file is required' });
+
+    const ext = path.extname(decodeOriginalName(file.originalname as string)).toLowerCase();
+    const allowedImg = ['.png', '.jpg', '.jpeg', '.webp'];
+    if (!allowedImg.includes(ext)) { try { fs.unlinkSync(file.path); } catch {} return res.status(400).json({ message: '封面仅支持 PNG/JPG/WEBP 图片' }); }
+
+    const doc = await FileModel.findById(id);
+    if (!doc) { try { fs.unlinkSync(file.path); } catch {} return res.status(404).json({ message: 'Not found' }); }
+    const isOwner = String((doc as any).ownerUserId) === String(current.userId);
+    if (!isOwner && current.role !== 'superadmin') { try { fs.unlinkSync(file.path); } catch {} return res.status(403).json({ message: 'Forbidden' }); }
+
+    // 统一存到 thumbnails/<fileId><ext>，覆盖旧封面
+    const relDir = 'thumbnails';
+    const rel = path.posix.join(relDir, `${id}${ext}`);
+    try { ensureNestedDir(config.storageRoot, relDir); } catch (e: any) { console.error('ensure thumb dir failed:', e?.message); throw e; }
+    const finalPath = path.join(config.storageRoot, rel);
+
+    // 若已有不同扩展名的旧封面，先删除
+    const prev = (doc as any).thumbnailRelPath as string | null;
+    if (prev && prev !== rel) {
+      try { const pAbs = path.join(config.storageRoot, prev.replace(/\\/g, '/')); if (fs.existsSync(pAbs)) fs.unlinkSync(pAbs); } catch {}
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const rs = fs.createReadStream(file.path);
+      const ws = fs.createWriteStream(finalPath, { flags: 'w' });
+      rs.on('error', reject); ws.on('error', reject); ws.on('finish', () => resolve());
+      rs.pipe(ws);
+    });
+    try { fs.unlinkSync(file.path); } catch {}
+
+    (doc as any).thumbnailRelPath = rel.replace(/\\/g, '/');
+    await doc.save();
+
+    return res.json({ ok: true, thumbnailUrl: `/api/files/${id}/cover` });
+  } catch (e: any) {
+    console.error('cover upload failed:', e);
+    return res.status(500).json({ message: e?.message || 'cover upload failed' });
+  }
+});
+
+// 获取资源封面（截图）。免登录，便于其它系统直接 <img> 引用。
+router.get('/:id/cover', async (req: any, res: any) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ message: 'Not found' });
+    const doc = await FileModel.findById(id).select('thumbnailRelPath').lean();
+    const rel = (doc as any)?.thumbnailRelPath;
+    if (!rel) return res.status(404).json({ message: 'No cover' });
+    const abs = path.join(config.storageRoot, String(rel).replace(/\\/g, '/'));
+    if (!fs.existsSync(abs)) return res.status(404).json({ message: 'Cover missing' });
+    const ext = path.extname(abs).toLowerCase();
+    const contentTypes: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+    const stat = fs.statSync(abs);
+    res.setHeader('Content-Type', contentTypes[ext] || 'image/png');
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    fs.createReadStream(abs).pipe(res);
+  } catch (e: any) {
+    console.error('cover get error:', e);
+    res.status(500).json({ message: 'Internal error' });
+  }
+});
+
 // STEP 文件上传并转换为 GLB
 router.post('/upload-step', authenticate as any, upload.single('file'), async (req, res) => {
   try {
@@ -420,6 +682,15 @@ router.post('/upload-step', authenticate as any, upload.single('file'), async (r
       visibility = 'public';
     }
 
+    // 存储配额校验
+    if (visibility === 'private') {
+      const quota = await checkQuota(current.userId, glbSize);
+      if (!quota.ok) {
+        fs.unlinkSync(glbTempPath);
+        return res.status(413).json({ message: `存储空间不足：剩余 ${formatBytes(Math.max(0, quota.remaining))}，本次需要 ${formatBytes(glbSize)}。请清理资源或联系管理员扩容。` });
+      }
+    }
+
     const now = new Date();
     const yyyy = String(now.getFullYear());
     const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -460,6 +731,7 @@ router.post('/upload-step', authenticate as any, upload.single('file'), async (r
       sha256,
       storageRelPath: rel.replace(/\\/g, '/'),
       storageDir: relDir.replace(/\\/g, '/'),
+      folderId: parseFolderId(req.body?.folderId),
     } as any);
 
     const savedId = ((saved as any)._id || '').toString();
@@ -503,6 +775,15 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
       visibility = 'public';
     }
 
+    // 存储配额校验（个人资源占用个人空间；公共资源不计入个人配额）
+    if (visibility === 'private') {
+      const quota = await checkQuota(current.userId, file.size);
+      if (!quota.ok) {
+        fs.unlinkSync(file.path);
+        return res.status(413).json({ message: `存储空间不足：剩余 ${formatBytes(Math.max(0, quota.remaining))}，本次需要 ${formatBytes(file.size)}。请清理资源或联系管理员扩容。` });
+      }
+    }
+
     const sha256 = await new Promise<string>((resolve, reject) => {
       const hash = crypto.createHash('sha256');
       fs.createReadStream(file.path)
@@ -537,6 +818,7 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
     });
     fs.unlinkSync(file.path);
 
+    const folderId = parseFolderId(req.body?.folderId);
     const saved = await FileModel.create({
       ownerUserId: new mongoose.Types.ObjectId(current.userId),
       ownerRole: current.role as any,
@@ -549,6 +831,7 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
       sha256,
       storageRelPath: rel.replace(/\\/g, '/'),
       storageDir: relDir.replace(/\\/g, '/'),
+      folderId,
     } as any);
 
     const savedId = ((saved as any)._id || '').toString();
@@ -560,13 +843,100 @@ router.post('/upload', authenticate as any, upload.single('file'), async (req, r
   }
 });
 
+// ZIP 上传并自动解压：仅入库压缩包内平台支持的资源格式
+router.post('/upload-zip', authenticate as any, upload.single('file'), async (req, res) => {
+  try {
+    const current = (req as any).user as { userId: string; role: string };
+    const file = (req as any).file as any;
+    if (!file) return res.status(400).json({ message: 'file is required' });
+
+    const decodedName = decodeOriginalName(file.originalname as string);
+    if (path.extname(decodedName).toLowerCase() !== '.zip') {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({ message: '仅支持 .zip 压缩包' });
+    }
+
+    const folderId = parseFolderId(req.body?.folderId);
+
+    let zip: AdmZip;
+    try {
+      zip = new AdmZip(file.path);
+    } catch (e: any) {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({ message: 'ZIP 文件无法解析，可能已损坏' });
+    }
+
+    const entries = zip.getEntries().filter((e) => !e.isDirectory);
+    // 先挑出受支持的文件并统计总大小，做配额校验
+    const candidates = entries.filter((e) => SUPPORTED_RESOURCE_EXTS.includes(path.extname(e.entryName).toLowerCase()));
+    if (candidates.length === 0) {
+      fs.unlinkSync(file.path);
+      return res.status(400).json({ message: '压缩包内没有平台支持的资源文件（支持：图片/视频/PDF/Office/3D模型）' });
+    }
+    const totalBytes = candidates.reduce((sum, e) => sum + (e.header.size || 0), 0);
+    const quota = await checkQuota(current.userId, totalBytes);
+    if (!quota.ok) {
+      fs.unlinkSync(file.path);
+      return res.status(413).json({ message: `存储空间不足：剩余 ${formatBytes(Math.max(0, quota.remaining))}，压缩包内资源共需 ${formatBytes(totalBytes)}。` });
+    }
+
+    const now = new Date();
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+
+    const result = { total: candidates.length, imported: 0, skipped: entries.length - candidates.length, items: [] as any[], errors: [] as any[] };
+
+    for (const entry of candidates) {
+      try {
+        // 取压缩包内文件名（去掉内部目录层级，避免路径穿越）
+        const baseName = path.posix.basename(entry.entryName.replace(/\\/g, '/'));
+        const ext = path.extname(baseName).toLowerCase();
+        const buffer = entry.getData();
+        const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+
+        const id = new mongoose.Types.ObjectId().toString();
+        const rel = path.posix.join('users', current.userId, yyyy, mm, id, baseName);
+        const relDir = path.posix.dirname(rel);
+        ensureNestedDir(config.storageRoot, relDir);
+        const finalPath = path.join(config.storageRoot, rel);
+        fs.writeFileSync(finalPath, buffer);
+
+        const saved = await FileModel.create({
+          ownerUserId: new mongoose.Types.ObjectId(current.userId),
+          ownerRole: current.role as any,
+          visibility: 'private',
+          type: detectKindByExt(ext),
+          originalName: baseName,
+          originalNameSaved: baseName,
+          ext,
+          size: buffer.length,
+          sha256,
+          storageRelPath: rel.replace(/\\/g, '/'),
+          storageDir: relDir.replace(/\\/g, '/'),
+          folderId,
+        } as any);
+        result.imported++;
+        result.items.push({ id: (saved as any)._id, name: baseName });
+      } catch (err: any) {
+        result.errors.push({ name: entry.entryName, reason: err?.message || '导入失败' });
+      }
+    }
+
+    fs.unlinkSync(file.path);
+    return res.json({ ok: true, ...result });
+  } catch (e: any) {
+    console.error('zip upload failed:', e);
+    return res.status(500).json({ message: e?.message || 'zip upload failed' });
+  }
+});
+
 // ==================== 分块上传接口 ====================
 
 // 1. 初始化分块上传
 router.post('/chunk/init', authenticate as any, async (req, res) => {
   try {
     const current = (req as any).user as { userId: string; role: string };
-    const { fileName, fileSize, totalChunks, visibility = 'private' } = req.body;
+    const { fileName, fileSize, totalChunks, visibility = 'private', folderId } = req.body;
 
     if (!fileName || !fileSize || !totalChunks) {
       return res.status(400).json({ message: 'fileName, fileSize, totalChunks are required' });
@@ -582,6 +952,14 @@ router.post('/chunk/init', authenticate as any, async (req, res) => {
       return res.status(403).json({ message: 'only superadmin can upload public resource' });
     }
 
+    // 存储配额校验（分块上传通常是大文件，提前在初始化时拦截）
+    if (visibility !== 'public') {
+      const quota = await checkQuota(current.userId, parseInt(fileSize));
+      if (!quota.ok) {
+        return res.status(413).json({ message: `存储空间不足：剩余 ${formatBytes(Math.max(0, quota.remaining))}，本次需要 ${formatBytes(parseInt(fileSize))}。请清理资源或联系管理员扩容。` });
+      }
+    }
+
     const uploadId = crypto.randomUUID();
     const sessionDir = path.join(chunkTempDir, uploadId);
     fs.mkdirSync(sessionDir, { recursive: true });
@@ -595,6 +973,7 @@ router.post('/chunk/init', authenticate as any, async (req, res) => {
       visibility: visibility as FileVisibility,
       userId: current.userId,
       userRole: current.role,
+      folderId: parseFolderId(folderId) ? String(parseFolderId(folderId)) : null,
       createdAt: new Date(),
     });
 
@@ -754,6 +1133,7 @@ router.post('/chunk/complete', authenticate as any, async (req, res) => {
       sha256,
       storageRelPath: rel.replace(/\\/g, '/'),
       storageDir: relDir.replace(/\\/g, '/'),
+      folderId: session.folderId ? new mongoose.Types.ObjectId(session.folderId) : null,
     } as any);
 
     const savedId = ((saved as any)._id || '').toString();
@@ -800,6 +1180,14 @@ router.delete('/:id', authenticate as any, async (req, res) => {
   try {
     const abs = path.join(config.storageRoot, (doc as any).storageRelPath.replace(/\\/g, '/'));
     if (fs.existsSync(abs)) fs.unlinkSync(abs);
+  } catch {}
+  // best-effort remove cover/thumbnail
+  try {
+    const thumbRel = (doc as any).thumbnailRelPath as string | null;
+    if (thumbRel) {
+      const tAbs = path.join(config.storageRoot, thumbRel.replace(/\\/g, '/'));
+      if (fs.existsSync(tAbs)) fs.unlinkSync(tAbs);
+    }
   } catch {}
   await (doc as any).deleteOne();
   res.json({ ok: true });

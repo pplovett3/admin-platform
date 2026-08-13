@@ -280,6 +280,7 @@ export async function getCoursewareDetail(req: Request, res: Response) {
 }
 
 // 获取AI课件详情（学生可访问，只返回审核通过的）
+// 优先从 PublishedCourse 获取数据（包含 audioUrl），如果没有发布则返回原始 AICourse 数据
 export async function getAICourseDetail(req: Request, res: Response) {
   try {
     const { id } = req.params;
@@ -288,20 +289,99 @@ export async function getAICourseDetail(req: Request, res: Response) {
       return res.status(400).json({ message: 'Invalid AI course id' });
     }
 
+    // 1. 先检查是否有对应的 PublishedCourse（发布课程，包含 audioUrl）
+    const publishedCourse = await PublishedCourseModel
+      .findOne({ originalCourseId: new Types.ObjectId(id), status: 'active' })
+      .lean();
+
+    if (publishedCourse) {
+      // 有发布课程，返回发布数据（包含 audioUrl）
+      const published = publishedCourse as any;
+      
+      // 获取关联的三维课件数据
+      let coursewareData: any = published.coursewareData || null;
+      
+      // 如果 publishedCourse 没有 coursewareData，尝试从 Courseware 获取
+      if (!coursewareData && published.courseData?.coursewareId) {
+        const courseware = await CoursewareModel
+          .findById(published.courseData.coursewareId)
+          .select('_id name description modelUrl modifiedModelUrl annotations hotspots animations settings modelStructure')
+          .lean();
+        
+        if (courseware) {
+          coursewareData = {
+            _id: (courseware as any)._id,
+            name: (courseware as any).name,
+            description: (courseware as any).description,
+            modelUrl: (courseware as any).modelUrl,
+            modifiedModelUrl: (courseware as any).modifiedModelUrl,
+            annotations: (courseware as any).annotations || [],
+            hotspots: (courseware as any).hotspots || [],
+            animations: (courseware as any).animations || [],
+            settings: (courseware as any).settings || {},
+            modelStructure: (courseware as any).modelStructure || {},
+          };
+        }
+      }
+
+      return res.json({
+        _id: id,
+        publishedId: published._id.toString(),
+        title: published.title,
+        description: published.description,
+        thumbnail: published.thumbnail,
+        publishedAt: published.publishedAt,
+        coursewareId: published.courseData?.coursewareId || null,
+        coursewareData,
+        courseData: {
+          ...published.courseData,
+          quizEnabled: Array.isArray(published.courseData?.quiz) && published.courseData.quiz.length > 0,
+        },
+        stats: published.stats,
+      });
+    }
+
+    // 2. 没有发布课程，回退到原始 AICourse 数据（没有 audioUrl）
     const aiCourse = await AICourseModel
       .findOne({ _id: id, reviewStatus: 'approved' })
       .populate('createdBy', 'name')
-      // 注意：AICourse 模型中实际存储的是 outline/questions/assets 等字段，而不是 courseData
-      .select('_id title theme thumbnail outline questions assets reviewedAt createdBy')
+      .select('_id title theme thumbnail outline questions assets reviewedAt createdBy coursewareId')
       .lean();
 
     if (!aiCourse) {
       return res.status(404).json({ message: 'AI course not found or not approved' });
     }
 
+    // 获取关联的三维课件数据（模型URL、标注、动画等）
+    let coursewareData: any = null;
+    const coursewareId = (aiCourse as any).coursewareId;
+    if (coursewareId) {
+      const courseware = await CoursewareModel
+        .findById(coursewareId)
+        .select('_id name description modelUrl modifiedModelUrl annotations hotspots animations settings modelStructure')
+        .lean();
+      
+      if (courseware) {
+        coursewareData = {
+          _id: (courseware as any)._id,
+          name: (courseware as any).name,
+          description: (courseware as any).description,
+          modelUrl: (courseware as any).modelUrl,
+          modifiedModelUrl: (courseware as any).modifiedModelUrl,
+          annotations: (courseware as any).annotations || [],
+          hotspots: (courseware as any).hotspots || [],
+          animations: (courseware as any).animations || [],
+          settings: (courseware as any).settings || {},
+          modelStructure: (courseware as any).modelStructure || {},
+        };
+      }
+    }
+
     // 兼容前端：返回 courseData 结构（Portal Learn 页面依赖 courseData.outline）
     const normalized = {
       ...aiCourse,
+      coursewareId: coursewareId ? coursewareId.toString() : null,
+      coursewareData,
       courseData: {
         outline: (aiCourse as any).outline || [],
         quizEnabled: Array.isArray((aiCourse as any).questions) && (aiCourse as any).questions.length > 0,

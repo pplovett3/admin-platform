@@ -4,8 +4,8 @@ import Providers from './providers';
 import RootShell from './root-shell';
 
 export const metadata: Metadata = {
-  title: 'YF课程管理平台',
-  description: 'Unity 教学培训后台管理',
+  title: '虚拟仿真多人多地协同教学系统',
+  description: '虚拟仿真多人多地协同教学系统',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

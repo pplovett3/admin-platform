@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from 'react';
-import { Card, Form, Input, Select, Button, Space, Upload, Image, Tag, message, Modal, Row, Col, Spin, Slider } from 'antd';
-import { PlusOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Select, Button, Space, Upload, Image, Tag, message, Modal, Row, Col, Spin, Slider, Tabs } from 'antd';
+import { PlusOutlined, DeleteOutlined, SearchOutlined, RobotOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
+import AIProcessingModal from '@/app/_components/AIProcessingModal';
 
 interface PropertyPanelProps {
   selectedItem: any;
@@ -19,6 +20,10 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
   const [searchKeywords, setSearchKeywords] = useState('');
   const [coursewareData, setCoursewareData] = useState<any>(null);
   const [picking, setPicking] = useState(false);
+  const [imageModalTab, setImageModalTab] = useState('search');
+  const [aiImageLoading, setAiImageLoading] = useState(false);
+  const [aiImageResult, setAiImageResult] = useState<any>(null);
+  const [aiImagePrompt, setAiImagePrompt] = useState('');
 
   useEffect(() => {
     if (selectedItem) {
@@ -162,12 +167,13 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
             )}
             
             <Space>
-              <Button 
-                icon={<SearchOutlined />} 
+              <Button
+                icon={<SearchOutlined />}
                 onClick={() => {
                   const keywords = selectedItem.imageKeywords || form.getFieldValue('imageKeywords');
                   if (keywords) {
                     setSearchKeywords(keywords);
+                    setImageModalTab('search');
                     setImageSearchVisible(true);
                     searchImages(keywords);
                   } else {
@@ -177,8 +183,20 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
               >
                 搜索图片
               </Button>
-              <Button onClick={() => setImageSearchVisible(true)}>
+              <Button onClick={() => { setImageModalTab('search'); setImageSearchVisible(true); }}>
                 手动搜索
+              </Button>
+              <Button
+                icon={<RobotOutlined />}
+                style={{ borderColor: '#722ed1', color: '#722ed1' }}
+                onClick={() => {
+                  setAiImageResult(null);
+                  setAiImagePrompt('');
+                  setImageModalTab('ai');
+                  setImageSearchVisible(true);
+                }}
+              >
+                AI生成图片
               </Button>
             </Space>
           </Card>
@@ -495,15 +513,18 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                   provider: value,
                   voice_id: undefined,
                   voiceName: undefined,
+                  speaker: undefined,
                   gender: undefined,
                   rate: value === 'azure' ? '+0%' : 1.0,
                   speed: value === 'minimax' ? 1.0 : undefined,
+                  speedRatio: value === 'doubao' ? 1.0 : undefined,
                   vol: value === 'minimax' ? 1.0 : undefined,
                   pitch: value === 'azure' ? '+0Hz' : 0,
                   style: value === 'azure' ? 'general' : undefined
                 }
               });
             }}>
+              <Select.Option value="doubao">豆包语音合成 2.0 (推荐)</Select.Option>
               <Select.Option value="azure">Azure TTS (快速)</Select.Option>
               <Select.Option value="minimax">Minimax TTS (高质量)</Select.Option>
             </Select>
@@ -604,6 +625,27 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
               </Form.Item>
             </>
           )}
+
+          {form.getFieldValue(['tts', 'provider']) === 'doubao' && (
+            <>
+              <Form.Item label="音色" name={['tts', 'speaker']}>
+                <Select placeholder="选择音色">
+                  <Select.Option value="zh_female_xiaohe_uranus_bigtts">小何 2.0 (女声·自然亲切)</Select.Option>
+                  <Select.Option value="zh_female_vv_uranus_bigtts">Vivi 2.0 (女声·情感丰富)</Select.Option>
+                  <Select.Option value="zh_female_qingxinnvsheng_uranus_bigtts">清新女声 2.0 (女声·清新淡雅)</Select.Option>
+                  <Select.Option value="zh_female_tianmei_uranus_bigtts">甜美女声 2.0 (女声·甜美)</Select.Option>
+                  <Select.Option value="zh_male_m191_uranus_bigtts">云舟 2.0 (男声·通用)</Select.Option>
+                  <Select.Option value="zh_male_taocheng_uranus_bigtts">小天 2.0 (男声·年轻)</Select.Option>
+                  <Select.Option value="zh_male_liufei_uranus_bigtts">刘飞 2.0 (男声·通用)</Select.Option>
+                  <Select.Option value="zh_male_sophie_uranus_bigtts">魅力苏菲 2.0 (男声·通用)</Select.Option>
+                </Select>
+              </Form.Item>
+
+              <Form.Item label="语速" name={['tts', 'speedRatio']}>
+                <Input type="number" step="0.1" placeholder="1.0" min="0.2" max="3.0" />
+              </Form.Item>
+            </>
+          )}
           
           <Button 
             loading={false}
@@ -629,10 +671,46 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
                 message.warning('请先选择Azure音色');
                 return;
               }
+
+              if (ttsConfig.provider === 'doubao' && !ttsConfig.speaker) {
+                message.warning('请先选择豆包音色');
+                return;
+              }
               
               const text = selectedItem.say.slice(0, 100); // 限制试听文本长度
               
-              if (ttsConfig.provider === 'azure') {
+              if (ttsConfig.provider === 'doubao') {
+                // 豆包语音合成-2.0 - 同步处理
+                let hide = message.loading('正在生成语音...', 0);
+                
+                try {
+                  const response = await authFetch<any>('/api/ai/tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      provider: 'doubao',
+                      text,
+                      speaker: ttsConfig.speaker,
+                      speedRatio: ttsConfig.speedRatio ?? 1.0,
+                      format: 'mp3'
+                    })
+                  });
+                  
+                  hide();
+                  
+                  if (response.audioUrl) {
+                    const audio = new Audio(response.audioUrl);
+                    audio.play();
+                    message.success('开始播放试听音频');
+                  } else {
+                    throw new Error('未获取到音频URL');
+                  }
+                } catch (error: any) {
+                  hide();
+                  const errorMsg = error?.message || '豆包TTS试听失败';
+                  message.error(errorMsg);
+                }
+              } else if (ttsConfig.provider === 'azure') {
                 // Azure TTS - 同步处理
                 let hide = message.loading('正在生成语音...', 0);
                 
@@ -777,90 +855,193 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
         </Card>
       </Form>
 
-      {/* 图片搜索弹窗 */}
+      {/* 图片搜索/生成弹窗 */}
       <Modal
-        title="搜索图片"
+        title="图片配置"
         open={imageSearchVisible}
         onCancel={() => {
           setImageSearchVisible(false);
           setSearchResults([]);
           setSearchKeywords('');
+          setAiImageResult(null);
+          setAiImagePrompt('');
         }}
         footer={null}
         width={800}
       >
-        <div style={{ marginBottom: 16 }}>
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              placeholder="输入搜索关键词，如：发动机结构图"
-              value={searchKeywords}
-              onChange={(e) => setSearchKeywords(e.target.value)}
-              onPressEnter={() => searchImages(searchKeywords)}
-            />
-            <Button 
-              type="primary" 
-              icon={<SearchOutlined />}
-              loading={searchLoading}
-              onClick={() => searchImages(searchKeywords)}
-            >
-              搜索
-            </Button>
-          </Space.Compact>
-        </div>
+        <Tabs
+          activeKey={imageModalTab}
+          onChange={(key) => setImageModalTab(key)}
+          items={[
+            {
+              key: 'search',
+              label: '搜索图片',
+              children: (
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Input
+                        placeholder="输入搜索关键词，如：发动机结构图"
+                        value={searchKeywords}
+                        onChange={(e) => setSearchKeywords(e.target.value)}
+                        onPressEnter={() => searchImages(searchKeywords)}
+                      />
+                      <Button
+                        type="primary"
+                        icon={<SearchOutlined />}
+                        loading={searchLoading}
+                        onClick={() => searchImages(searchKeywords)}
+                      >
+                        搜索
+                      </Button>
+                    </Space.Compact>
+                  </div>
 
-        <Spin spinning={searchLoading}>
-          <div style={{ maxHeight: 400, overflow: 'auto' }}>
-            <Row gutter={[12, 12]}>
-              {searchResults.map((img, index) => (
-                <Col span={8} key={index}>
-                  <div 
-                    style={{ 
-                      border: '1px solid #d9d9d9', 
-                      borderRadius: 6, 
-                      overflow: 'hidden',
-                      cursor: 'pointer',
-                      transition: 'all 0.3s'
-                    }}
-                    onClick={() => selectImage(img)}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = '#1890ff';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(24,144,255,0.2)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = '#d9d9d9';
-                      e.currentTarget.style.boxShadow = 'none';
-                    }}
-                  >
-                    <Image
-                      src={img.url}
-                      alt={img.title}
-                      style={{ width: '100%', height: 120, objectFit: 'cover' }}
-                      fallback="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iI2Y1ZjVmNSIvPjx0ZXh0IHg9IjEwMCIgeT0iNjAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuWbvueJh+WKoOi9veWksei0pTwvdGV4dD48L3N2Zz4="
-                      preview={false}
-                    />
-                    <div style={{ padding: 8 }}>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {img.title}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#666' }}>
-                        来源: {img.source}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#999' }}>
-                        {img.size?.width}×{img.size?.height}
-                      </div>
+                  <Spin spinning={searchLoading}>
+                    <div style={{ maxHeight: 400, overflow: 'auto' }}>
+                      <Row gutter={[12, 12]}>
+                        {searchResults.map((img, index) => (
+                          <Col span={8} key={index}>
+                            <div
+                              style={{
+                                border: '1px solid #d9d9d9',
+                                borderRadius: 6,
+                                overflow: 'hidden',
+                                cursor: 'pointer',
+                                transition: 'all 0.3s'
+                              }}
+                              onClick={() => selectImage(img)}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.borderColor = '#1890ff';
+                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(24,144,255,0.2)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.borderColor = '#d9d9d9';
+                                e.currentTarget.style.boxShadow = 'none';
+                              }}
+                            >
+                              <Image
+                                src={img.url}
+                                alt={img.title}
+                                style={{ width: '100%', height: 120, objectFit: 'cover' }}
+                                fallback="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iI2Y1ZjVmNSIvPjx0ZXh0IHg9IjEwMCIgeT0iNjAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuWbvueJh+WKoOi9veWksei0pTwvdGV4dD48L3N2Zz4="
+                                preview={false}
+                              />
+                              <div style={{ padding: 8 }}>
+                                <div style={{ fontSize: 12, fontWeight: 'bold', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {img.title}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#666' }}>
+                                  来源: {img.source}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#999' }}>
+                                  {img.size?.width}×{img.size?.height}
+                                </div>
+                              </div>
+                            </div>
+                          </Col>
+                        ))}
+                      </Row>
+
+                      {searchResults.length === 0 && !searchLoading && searchKeywords && (
+                        <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>
+                          未找到相关图片，请尝试其他关键词或使用 AI 生成
+                        </div>
+                      )}
+                    </div>
+                  </Spin>
+                </>
+              ),
+            },
+            {
+              key: 'ai',
+              label: (
+                <span>
+                  <RobotOutlined /> AI生成图片
+                </span>
+              ),
+              children: (
+                <div style={{ minHeight: 300 }}>
+                  <div style={{ marginBottom: 16, padding: 12, background: '#f6f0ff', borderRadius: 8, border: '1px solid #d3adf7' }}>
+                    <div style={{ fontSize: 13, fontWeight: 'bold', color: '#722ed1', marginBottom: 8 }}>
+                      生成上下文
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666', lineHeight: 1.8 }}>
+                      <div>关键词：{selectedItem?.imageKeywords || '未设置'}</div>
+                      <div>讲解词：{selectedItem?.say ? (selectedItem.say.length > 60 ? selectedItem.say.substring(0, 60) + '...' : selectedItem.say) : '未设置'}</div>
                     </div>
                   </div>
-                </Col>
-              ))}
-            </Row>
-            
-            {searchResults.length === 0 && !searchLoading && searchKeywords && (
-              <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>
-                未找到相关图片，请尝试其他关键词
-              </div>
-            )}
-          </div>
-        </Spin>
+
+                  <Space style={{ marginBottom: 16 }}>
+                    <Button
+                      type="primary"
+                      icon={<RobotOutlined />}
+                      loading={aiImageLoading}
+                      onClick={() => generateAIImage()}
+                      style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                    >
+                      {aiImageLoading ? '生成中...' : '生成图片'}
+                    </Button>
+                    {aiImageResult && (
+                      <Button onClick={() => generateAIImage()} disabled={aiImageLoading}>
+                        重新生成
+                      </Button>
+                    )}
+                  </Space>
+
+                  <AIProcessingModal
+                    open={aiImageLoading}
+                    title="AI 生成图片"
+                    messages={[
+                      '正在分析图片描述...',
+                      '生成文生图提示词...',
+                      '调用豆包 Seedream 模型...',
+                      '渲染图片中...',
+                      '即将完成...',
+                    ]}
+                  />
+
+                  {aiImageResult && (
+                    <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, overflow: 'hidden', maxWidth: 500 }}>
+                      <img
+                        src={aiImageResult.url}
+                        alt={aiImageResult.title}
+                        style={{ width: '100%', height: 'auto', display: 'block' }}
+                      />
+                      <div style={{ padding: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 'bold', marginBottom: 4 }}>
+                          {aiImageResult.title}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
+                          来源：{aiImageResult.source}
+                        </div>
+                        {aiImageResult.prompt && (
+                          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 8, maxHeight: 60, overflow: 'auto' }}>
+                            提示词：{aiImageResult.prompt}
+                          </div>
+                        )}
+                        <Button
+                          type="primary"
+                          size="small"
+                          onClick={() => selectImage(aiImageResult)}
+                        >
+                          使用此图片
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!aiImageResult && !aiImageLoading && (
+                    <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>
+                      <RobotOutlined style={{ fontSize: 48, color: '#d3adf7', marginBottom: 16 }} />
+                      <div>点击"生成图片"按钮，AI 将根据大纲内容自动生成配图</div>
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
       </Modal>
     </div>
   );
@@ -907,7 +1088,7 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
         image: {
           src: img.url,
           title: img.title,
-          source: { url: img.source, license: img.license || 'Unknown' }
+          source: { url: img.source || 'Unknown', license: img.license || 'Unknown' }
         }
       };
       onItemChange(updatedItem);
@@ -919,6 +1100,40 @@ export default function PropertyPanel({ selectedItem, onItemChange, coursewareId
       });
       setImageSearchVisible(false);
       message.success('图片已选择');
+    }
+  }
+
+  // AI生成图片函数
+  async function generateAIImage() {
+    setAiImageLoading(true);
+    setAiImageResult(null);
+    try {
+      const requestBody: any = {
+        imageKeywords: selectedItem?.imageKeywords || form.getFieldValue('imageKeywords') || '',
+        say: selectedItem?.say || '',
+      };
+
+      // 尝试获取课程名
+      if (coursewareData?.name) {
+        requestBody.coursewareName = coursewareData.name;
+      }
+
+      const response = await authFetch<any>('/api/ai/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (response.success && response.result?.url) {
+        setAiImageResult(response.result);
+        message.success('AI图片生成成功');
+      } else {
+        message.error(response.message || '图片生成失败');
+      }
+    } catch (error: any) {
+      message.error(error?.message || 'AI图片生成失败');
+    } finally {
+      setAiImageLoading(false);
     }
   }
 }

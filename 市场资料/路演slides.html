@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AI 数字人工匠导师智能体 · 路演</title>
+<style>
+/* ============ 设计令牌 ============ */
+:root{
+  --ink:#050A1A; --navy:#0A1F3D; --royal:#1E5CE5; --cyan:#00D4FF;
+  --teal:#14B8A6; --orange:#FF8A3D; --amber:#FFC53D; --violet:#8B5CF6;
+  --magenta:#EC4899; --paper:#F4F6FA; --card:#FFFFFF;
+  --text:#1A2233; --text-lt:#FFFFFF; --text-sub:#6B7A8F; --text-dim:#9AA8BC;
+  --line:#E2E8F0; --grid:#15284A;
+}
+*{margin:0;padding:0;box-sizing:border-box;font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;}
+body{background:#1a1a2e;padding:40px;display:flex;flex-direction:column;align-items:center;gap:40px;}
+
+/* ============ 幻灯片容器 16:9 ============ */
+.slide{
+  width:1280px;height:720px;position:relative;overflow:hidden;
+  border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.4);
+}
+
+/* 深色背景页 */
+.dark{background:linear-gradient(135deg,#050A1A 0%,#0A1F3D 50%,#122E5C 100%);color:var(--text-lt);}
+/* 浅色背景页 */
+.light{background:var(--paper);color:var(--text);}
+
+/* 点阵网格背景 */
+.grid-bg::before{
+  content:"";position:absolute;inset:0;
+  background-image:radial-gradient(circle, rgba(30,50,90,0.25) 1px, transparent 1px);
+  background-size:24px 24px;pointer-events:none;
+}
+
+/* ============ 通用元素 ============ */
+.page-num{position:absolute;bottom:24px;right:40px;font-size:11px;color:var(--text-dim);letter-spacing:1px;}
+.dark .page-num{color:rgba(154,168,188,0.6);}
+.footer-line{position:absolute;bottom:32px;left:60px;right:60px;height:1px;background:var(--line);}
+.dark .footer-line{background:rgba(42,61,95,0.6);}
+.footer-text{position:absolute;bottom:18px;left:60px;font-size:9px;color:var(--text-sub);letter-spacing:0.5px;}
+.dark .footer-text{color:rgba(154,168,188,0.5);}
+
+/* 页头 */
+.header{padding:50px 60px 0;}
+.kicker{font-size:12px;color:var(--cyan);font-weight:700;letter-spacing:2px;margin-bottom:8px;}
+.header h1{font-size:32px;font-weight:700;color:var(--text);margin-bottom:0;}
+.dark .header h1{color:var(--text-lt);}
+.header-deco{display:flex;gap:4px;margin-top:10px;}
+.header-deco span{display:block;height:3px;border-radius:2px;}
+.header-deco .a{width:48px;background:var(--orange);}
+.header-deco .b{width:24px;background:var(--cyan);}
+
+/* 顶部装饰条 */
+.top-bar{position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,var(--cyan),var(--orange));}
+
+/* 装饰圆环 */
+.ring{position:absolute;border-radius:50%;border-style:solid;border-color:rgba(0,212,255,0.3);}
+.glow-dot{position:absolute;border-radius:50%;filter:blur(0.5px);box-shadow:0 0 20px currentColor;}
+
+/* ============ 封面 ============ */
+.cover-tag{
+  display:inline-flex;align-items:center;gap:10px;
+  border:1.5px solid var(--cyan);border-radius:24px;padding:8px 20px;
+  font-size:14px;color:var(--cyan);font-weight:700;margin-bottom:60px;
+}
+.cover-tag .dot{width:8px;height:8px;border-radius:50%;background:var(--orange);}
+.cover h2{font-size:64px;font-weight:700;line-height:1.1;color:var(--text-lt);margin-bottom:8px;}
+.cover .subtitle{font-size:30px;color:var(--cyan);font-weight:700;margin-top:12px;margin-bottom:30px;}
+.cover .value{font-size:17px;color:var(--text-dim);padding-left:16px;border-left:3px solid var(--orange);margin-top:24px;}
+.cover-info{display:flex;flex-direction:column;gap:10px;margin-top:50px;}
+.cover-info .row{display:flex;gap:20px;font-size:13px;}
+.cover-info .row .k{color:var(--cyan);font-weight:700;width:50px;}
+.cover-info .row .v{color:var(--text-dim);}
+
+/* ============ 目录 ============ */
+.toc-left{position:absolute;left:0;top:0;width:430px;height:100%;background:linear-gradient(180deg,#050A1A,#0A1F3D 60%,#122E5C);}
+.toc-left .content{padding:260px 50px;}
+.toc-left .en{font-size:13px;color:var(--cyan);font-weight:700;letter-spacing:3px;}
+.toc-left .cn{font-size:48px;font-weight:700;color:var(--text-lt);margin-top:8px;}
+.toc-left .deco{width:60px;height:3px;background:var(--orange);margin:20px 0;}
+.toc-left .sub{font-size:14px;color:var(--text-dim);line-height:1.8;}
+.toc-right{position:absolute;left:480px;top:60px;right:50px;}
+.toc-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 40px;}
+.toc-item{display:flex;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line);}
+.toc-item .num{font-size:26px;font-weight:700;width:50px;}
+.toc-item .name{font-size:16px;font-weight:600;color:var(--text);}
+.toc-item:nth-child(1) .num{color:var(--orange);}
+.toc-item:nth-child(2) .num{color:var(--cyan);}
+.toc-item:nth-child(3) .num{color:var(--royal);}
+.toc-item:nth-child(4) .num{color:var(--violet);}
+.toc-item:nth-child(5) .num{color:var(--teal);}
+.toc-item:nth-child(6) .num{color:var(--orange);}
+.toc-item:nth-child(7) .num{color:var(--cyan);}
+.toc-item:nth-child(8) .num{color:var(--royal);}
+.toc-item:nth-child(9) .num{color:var(--violet);}
+.toc-item:nth-child(10) .num{color:var(--teal);}
+
+/* ============ 章节页 ============ */
+.section .big-num{font-size:180px;font-weight:700;color:rgba(20,46,92,0.6);line-height:1;position:absolute;left:60px;top:180px;}
+.section .part-label{font-size:13px;color:var(--orange);font-weight:700;letter-spacing:3px;position:absolute;left:65px;top:150px;}
+.section .vline{position:absolute;left:430px;top:260px;width:3px;height:180px;background:var(--orange);}
+.section .s-title{font-size:44px;font-weight:700;color:var(--text-lt);position:absolute;left:470px;top:280px;}
+.section .s-sub{font-size:18px;color:var(--cyan);position:absolute;left:470px;top:360px;}
+
+/* ============ 卡片通用 ============ */
+.card{background:var(--card);border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);overflow:hidden;}
+.card-top{height:50px;display:flex;align-items:center;padding:0 20px;color:#fff;font-weight:700;font-size:15px;}
+.card-body{padding:24px;}
+.card-body .item{display:flex;gap:10px;margin-bottom:14px;font-size:13px;color:var(--text);line-height:1.5;}
+.card-body .item .b{color:inherit;font-weight:700;flex-shrink:0;}
+.card-body .item:last-child{margin-bottom:0;}
+
+/* 痛点卡片 */
+.pain-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 60px;margin-top:30px;}
+.pain-card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);overflow:hidden;height:380px;}
+.pain-head{height:70px;display:flex;align-items:center;padding:0 24px;color:#fff;}
+.pain-head .n{font-size:28px;font-weight:700;margin-right:16px;}
+.pain-head .t{font-size:15px;font-weight:700;}
+.pain-body{padding:24px;}
+.pain-body .li{display:flex;gap:10px;margin-bottom:16px;font-size:13px;color:var(--text);line-height:1.55;}
+.pain-body .li .b{font-weight:700;flex-shrink:0;}
+
+/* 数据卡 */
+.stat-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:0 60px;margin-top:30px;}
+.stat-card{background:linear-gradient(135deg,#050A1A,#0A1F3D);border-radius:10px;padding:20px;box-shadow:0 4px 20px rgba(10,20,40,0.15);height:140px;position:relative;overflow:hidden;}
+.stat-card .bar{width:40px;height:3px;border-radius:2px;margin-bottom:14px;}
+.stat-card .num{font-size:38px;font-weight:700;line-height:1;}
+.stat-card .unit{font-size:16px;color:var(--text-dim);margin-left:4px;}
+.stat-card .label{font-size:12px;color:#fff;font-weight:600;margin-top:10px;}
+.stat-card .tag{font-size:9px;color:inherit;margin-top:4px;letter-spacing:1px;}
+
+/* 三列卡片 */
+.tri-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 60px;margin-top:24px;}
+.tri-card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);height:280px;overflow:hidden;}
+.tri-card .head{padding:20px 24px 0;}
+.tri-card .head .bar{width:40px;height:3px;border-radius:2px;margin-bottom:12px;}
+.tri-card .head .t{font-size:15px;font-weight:700;margin-bottom:16px;}
+.tri-card .body{padding:0 24px;}
+.tri-card .body .li{display:flex;gap:10px;margin-bottom:12px;font-size:12px;color:var(--text);line-height:1.5;}
+.tri-card .body .li .b{font-weight:700;flex-shrink:0;}
+
+/* 目标 2x2 */
+.goal-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;padding:0 60px;margin-top:30px;}
+.goal-card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);height:230px;display:flex;overflow:hidden;}
+.goal-card .side{width:10px;flex-shrink:0;}
+.goal-card .main{padding:24px;display:flex;gap:20px;}
+.goal-card .num-circle{width:60px;height:60px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;}
+.goal-card .txt h3{font-size:17px;font-weight:700;margin-bottom:10px;}
+.goal-card .txt .deco{width:50px;height:2px;margin-bottom:12px;}
+.goal-card .txt p{font-size:12px;color:var(--text-sub);line-height:1.6;}
+
+/* 功能矩阵 3x2 */
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:18px;padding:0 60px;margin-top:30px;height:480px;}
+.feat-card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;}
+.feat-card .top{height:46px;display:flex;align-items:center;padding:0 18px;color:#fff;}
+.feat-card .top .n{font-size:13px;font-weight:700;margin-right:12px;opacity:0.8;}
+.feat-card .top .t{font-size:14px;font-weight:700;}
+.feat-card .body{padding:16px 18px;flex:1;}
+.feat-card .tag{display:inline-block;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:12px;}
+.feat-card .desc{font-size:12px;color:var(--text);line-height:1.6;}
+
+/* 结尾页 */
+.ending{text-align:center;padding-top:200px;}
+.ending h1{font-size:80px;font-weight:700;color:var(--text-lt);letter-spacing:8px;}
+.ending .cn{font-size:30px;color:var(--cyan);font-weight:700;margin-top:20px;}
+.ending .deco{display:flex;justify-content:center;gap:0;margin:30px 0;}
+.ending .deco .a{width:100px;height:2px;background:var(--orange);}
+.ending .deco .b{width:50px;height:2px;background:var(--cyan);}
+.ending .proj{font-size:16px;color:var(--text-dim);margin-top:10px;}
+.ending .event{font-size:13px;color:rgba(106,122,144,0.7);margin-top:40px;}
+
+/* 定位页 */
+.pos-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:240px;height:240px;border-radius:50%;background:linear-gradient(135deg,var(--royal),var(--cyan));display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 0 40px rgba(0,212,255,0.4);}
+.pos-center .t1{font-size:22px;font-weight:700;color:#fff;}
+.pos-center .t2{font-size:14px;color:rgba(255,255,255,0.8);margin-top:6px;}
+.pos-center .deco{width:40px;height:2px;background:var(--orange);margin:10px 0;}
+.pos-center .tag{font-size:11px;color:rgba(255,255,255,0.7);}
+.pos-role{position:absolute;width:260px;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.1);padding:18px;border-top:3px solid;}
+.pos-role .n{font-size:16px;font-weight:700;margin-bottom:6px;}
+.pos-role .s{font-size:12px;color:var(--text);margin-bottom:4px;}
+.pos-role .d{font-size:10px;color:var(--text-sub);}
+.pos-role.full{background:linear-gradient(135deg,var(--royal),var(--navy));border:none;color:#fff;}
+.pos-role.full .n{color:#fff;}
+.pos-role.full .s{color:rgba(255,255,255,0.9);}
+.pos-role.full .d{color:rgba(255,255,255,0.6);}
+
+/* 架构层 */
+.arch-layer{display:flex;gap:20px;padding:0 60px;margin-bottom:16px;}
+.arch-label{width:230px;border-radius:10px;color:#fff;padding:20px;display:flex;flex-direction:column;justify-content:center;box-shadow:0 4px 16px rgba(10,20,40,0.15);}
+.arch-label .n{font-size:20px;font-weight:700;}
+.arch-label .s{font-size:11px;color:rgba(255,255,255,0.8);margin-top:6px;}
+.arch-label .e{font-size:9px;color:rgba(255,255,255,0.5);margin-top:8px;letter-spacing:2px;}
+.arch-content{flex:1;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);padding:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+.arch-content .col{font-size:11px;line-height:1.5;color:var(--text);}
+.arch-content .col .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
+
+/* AI 闭环 */
+.agent-stage{position:absolute;width:240px;text-align:center;}
+.agent-circle{width:240px;height:240px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;box-shadow:0 0 40px rgba(0,212,255,0.3);}
+.agent-circle .n{font-size:26px;font-weight:700;}
+.agent-circle .t{font-size:11px;color:rgba(255,255,255,0.8);margin-top:8px;}
+.agent-desc{margin-top:24px;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(10,20,40,0.08);padding:16px;font-size:12px;color:var(--text);line-height:1.6;}
+.agent-arrow{position:absolute;font-size:40px;color:var(--orange);font-weight:700;}
+
+/* 引擎1 工作流 */
+.flow-step{background:rgba(20,46,92,0.6);border:1px solid var(--cyan);border-radius:8px;padding:10px 16px;margin-bottom:8px;font-size:12px;color:#fff;display:flex;align-items:center;gap:12px;}
+.flow-step .n{color:var(--orange);font-weight:700;font-size:13px;}
+.flow-arrow{text-align:center;color:var(--cyan);font-size:14px;margin:2px 0;}
+
+/* 路线图 */
+.timeline-line{position:absolute;left:80px;right:80px;top:380px;height:4px;background:linear-gradient(90deg,var(--cyan),var(--magenta));border-radius:2px;}
+.timeline-node{position:absolute;width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;box-shadow:0 0 20px rgba(0,212,255,0.4);top:355px;}
+.timeline-label{position:absolute;top:240px;text-align:center;width:160px;}
+.timeline-label .time{display:inline-block;padding:4px 14px;border-radius:16px;background:#fff;border:1.5px solid;font-size:13px;font-weight:700;margin-bottom:8px;}
+.timeline-label .title{font-size:15px;font-weight:700;color:var(--text);}
+.timeline-card{position:absolute;top:440px;width:220px;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(10,20,40,0.1);border-top:3px solid;padding:16px;font-size:12px;color:var(--text-sub);line-height:1.7;text-align:center;}
+
+/* 推广路径 */
+.promo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 60px;margin-top:30px;height:480px;}
+.promo-card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;}
+.promo-head{height:110px;color:#fff;padding:18px 24px;text-align:center;}
+.promo-head .n{font-size:30px;font-weight:700;float:left;}
+.promo-head .p{font-size:11px;color:rgba(255,255,255,0.7);text-align:right;}
+.promo-head .k{font-size:24px;font-weight:700;margin-top:8px;}
+.promo-head .s{font-size:11px;color:rgba(255,255,255,0.7);margin-top:4px;}
+.promo-body{padding:24px;flex:1;}
+.promo-body .li{display:flex;gap:10px;margin-bottom:14px;font-size:13px;color:var(--text);line-height:1.5;}
+.promo-body .li .b{font-weight:700;flex-shrink:0;}
+
+/* 质效/效益 三列大卡 */
+.tri-big{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;padding:0 60px;margin-top:30px;height:480px;}
+.tri-big-card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;}
+.tri-big-head{height:80px;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;}
+.tri-big-body{padding:24px;flex:1;}
+.tri-big-body .metric{margin-bottom:20px;padding-left:14px;border-left:3px solid;}
+.tri-big-body .metric .v{font-size:18px;font-weight:700;}
+.tri-big-body .metric .l{font-size:11px;color:var(--text-sub);margin-top:4px;}
+.tri-big-body .li{display:flex;gap:10px;margin-bottom:12px;font-size:12px;color:var(--text);line-height:1.5;}
+.tri-big-body .li .b{font-weight:700;flex-shrink:0;}
+
+/* 创新优势列表 */
+.adv-list{padding:0 60px;margin-top:30px;display:flex;flex-direction:column;gap:12px;}
+.adv-item{background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(10,20,40,0.06);border:1px solid var(--line);height:76px;display:flex;align-items:center;padding:0 24px;gap:20px;}
+.adv-item .side{width:8px;height:50px;border-radius:4px;flex-shrink:0;}
+.adv-item .num{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;flex-shrink:0;}
+.adv-item .t{font-size:16px;font-weight:700;width:180px;flex-shrink:0;}
+.adv-item .d{font-size:12px;color:var(--text-sub);line-height:1.5;}
+
+/* 引擎3 左侧技术条 + 右侧深色指标 */
+.eng3-left{padding:0 60px;margin-top:24px;width:55%;float:left;}
+.eng3-tech{background:#fff;border-radius:8px;box-shadow:0 4px 16px rgba(10,20,40,0.06);border:1px solid var(--line);height:64px;display:flex;align-items:center;padding:0 20px;margin-bottom:10px;gap:16px;}
+.eng3-tech .side{width:8px;height:48px;border-radius:4px;flex-shrink:0;}
+.eng3-tech .t{font-size:13px;font-weight:700;width:160px;flex-shrink:0;}
+.eng3-tech .d{font-size:11px;color:var(--text-sub);line-height:1.4;}
+.eng3-right{position:absolute;right:60px;top:180px;width:42%;background:linear-gradient(135deg,#050A1A,#0A1F3D);border-radius:10px;padding:24px;box-shadow:0 4px 20px rgba(10,20,40,0.15);height:460px;}
+.eng3-right h3{font-size:16px;color:var(--cyan);font-weight:700;margin-bottom:6px;}
+.eng3-right .deco{width:50px;height:2px;background:var(--orange);margin-bottom:20px;}
+.eng3-metrics{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.eng3-metric{background:rgba(20,46,92,0.6);border:1px solid rgba(42,61,95,0.6);border-radius:8px;padding:14px;text-align:center;height:90px;}
+.eng3-metric .v{font-size:24px;font-weight:700;}
+.eng3-metric .l{font-size:10px;color:var(--text-dim);margin-top:6px;}
+
+/* 痛点解决 横向卡 */
+.ps-list{padding:0 60px;margin-top:30px;display:flex;flex-direction:column;gap:16px;}
+.ps-item{background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(10,20,40,0.08);border:1px solid var(--line);height:130px;display:flex;align-items:center;overflow:hidden;}
+.ps-item .side{width:12px;height:100%;flex-shrink:0;}
+.ps-item .num{width:70px;height:70px;border-radius:50%;margin:0 24px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;font-weight:700;flex-shrink:0;}
+.ps-item .txt{flex:1;padding-right:24px;}
+.ps-item .txt h3{font-size:17px;font-weight:700;margin-bottom:6px;}
+.ps-item .txt .deco{width:50px;height:2px;margin-bottom:8px;}
+.ps-item .txt p{font-size:12px;color:var(--text-sub);line-height:1.55;}
+
+/* 引擎1 左右分栏 */
+.eng1-left{position:absolute;left:60px;top:180px;width:48%;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(10,20,40,0.08);border:1px solid var(--line);padding:24px;height:460px;}
+.eng1-right{position:absolute;right:60px;top:180px;width:42%;background:linear-gradient(135deg,#050A1A,#0A1F3D);border-radius:10px;padding:24px;box-shadow:0 4px 20px rgba(10,20,40,0.15);height:460px;}
+.eng1-cap{display:flex;gap:16px;margin-bottom:14px;align-items:flex-start;}
+.eng1-cap .n{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;flex-shrink:0;}
+.eng1-cap .t{font-size:13px;font-weight:700;width:170px;flex-shrink:0;}
+.eng1-cap .d{font-size:11px;color:var(--text-sub);line-height:1.4;flex:1;}
+
+</style>
+</head>
+<body>
+
+<!-- ============ 1. 封面 ============ -->
+<div class="slide dark grid-bg cover" id="s1">
+  <div class="ring" style="width:280px;height:280px;top:60px;right:60px;border-width:1.5px;border-color:rgba(0,212,255,0.35);"></div>
+  <div class="ring" style="width:180px;height:180px;top:110px;right:110px;border-width:1px;border-color:rgba(255,138,61,0.4);"></div>
+  <div class="ring" style="width:120px;height:120px;top:140px;right:140px;border-width:0.75px;border-color:rgba(139,92,246,0.35);"></div>
+  <div class="glow-dot" style="width:14px;height:14px;top:180px;right:300px;background:var(--cyan);color:var(--cyan);"></div>
+  <div class="glow-dot" style="width:12px;height:12px;bottom:120px;right:80px;background:var(--orange);color:var(--orange);"></div>
+  <div style="padding:80px 70px;">
+    <div class="cover-tag"><span class="dot"></span>昌吉州 AI 智能体创新应用大赛</div>
+    <h2>AI 数字人工匠导师</h2>
+    <h2>智能体</h2>
+    <div class="subtitle">职业教育全栈元宇宙解决方案</div>
+    <div class="value">AI 大模型 × 空间计算 × WebGL2.0 —— 打造沉浸式职教实训新范式</div>
+    <div class="cover-info">
+      <div class="row"><span class="k">定位</span><span class="v">依托昌吉州"东数西算"枢纽 · 国际融合算力中心</span></div>
+      <div class="row"><span class="k">方向</span><span class="v">AI + 职业教育数字化实训</span></div>
+      <div class="row"><span class="k">形式</span><span class="v">路演汇报 / 2026</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 2. 目录 ============ -->
+<div class="slide light" id="s2">
+  <div class="top-bar"></div>
+  <div class="toc-left grid-bg">
+    <div class="content">
+      <div class="en">CONTENTS</div>
+      <div class="cn">目&nbsp;&nbsp;录</div>
+      <div class="deco"></div>
+      <div class="sub">AI 数字人工匠导师智能体<br>路演汇报 · 2026</div>
+    </div>
+  </div>
+  <div class="toc-right">
+    <div class="toc-grid">
+      <div class="toc-item"><span class="num">01</span><span class="name">行业痛点与立项背景</span></div>
+      <div class="toc-item"><span class="num">06</span><span class="name">产品功能与应用场景</span></div>
+      <div class="toc-item"><span class="num">02</span><span class="name">项目目标与产品定位</span></div>
+      <div class="toc-item"><span class="num">07</span><span class="name">成果与质效提升</span></div>
+      <div class="toc-item"><span class="num">03</span><span class="name">总体技术架构</span></div>
+      <div class="toc-item"><span class="num">08</span><span class="name">经济与社会效益</span></div>
+      <div class="toc-item"><span class="num">04</span><span class="name">三大核心技术引擎</span></div>
+      <div class="toc-item"><span class="num">09</span><span class="name">创新优势与推广路径</span></div>
+      <div class="toc-item"><span class="num">05</span><span class="name">AI 智能体闭环能力</span></div>
+      <div class="toc-item"><span class="num">10</span><span class="name">发展规划与愿景</span></div>
+    </div>
+  </div>
+  <div class="page-num">02 / 19</div>
+</div>
+
+<!-- ============ 3. 行业痛点 ============ -->
+<div class="slide light" id="s3">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 01 · 行业痛点</div>
+    <h1>职业教育数字化实训的三大痛点</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="pain-cards">
+    <div class="pain-card">
+      <div class="pain-head" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">
+        <div class="n">01</div><div class="t">3D 实训内容创作门槛高</div>
+      </div>
+      <div class="pain-body" style="border-top:3px solid #FF8A3D;">
+        <div class="li"><span class="b" style="color:#FF8A3D;">●</span>非专业教师难以独立完成 3D 课件制作</div>
+        <div class="li"><span class="b" style="color:#FF8A3D;">●</span>高度依赖外部外包定制，周期长、成本高</div>
+        <div class="li"><span class="b" style="color:#FF8A3D;">●</span>内容更新僵化，难以响应教学需求变化</div>
+      </div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-head" style="background:linear-gradient(135deg,#00D4FF,#005A78);">
+        <div class="n">02</div><div class="t">虚拟仿真局限于单机体验</div>
+      </div>
+      <div class="pain-body" style="border-top:3px solid #00D4FF;">
+        <div class="li"><span class="b" style="color:#00D4FF;">●</span>缺乏高并发低延迟的多人协同机制</div>
+        <div class="li"><span class="b" style="color:#00D4FF;">●</span>交互刻板，无个性化指导与反馈</div>
+        <div class="li"><span class="b" style="color:#00D4FF;">●</span>难以开展跨地域远程协作实训</div>
+      </div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-head" style="background:linear-gradient(135deg,#8B5CF6,#45307A);">
+        <div class="n">03</div><div class="t">时空与硬件壁垒突出</div>
+      </div>
+      <div class="pain-body" style="border-top:3px solid #8B5CF6;">
+        <div class="li"><span class="b" style="color:#8B5CF6;">●</span>新疆地域广阔，师资与资源分布不均</div>
+        <div class="li"><span class="b" style="color:#8B5CF6;">●</span>偏远地区难以享受优质实训资源</div>
+        <div class="li"><span class="b" style="color:#8B5CF6;">●</span>高端 VR/工作站硬件依赖，采购成本高</div>
+      </div>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:60px;left:60px;right:60px;background:#E8F4FD;border-radius:20px;padding:10px 20px;font-size:12px;color:#1E5CE5;font-weight:700;text-align:center;">
+    ● 立项契机：将 AI 技术与空间计算、WebGL2.0 渲染融合，打造 AI 数字人工匠导师智能体
+  </div>
+  <div class="page-num">03 / 19</div>
+</div>
+
+<!-- ============ 4. 项目目标 ============ -->
+<div class="slide light" id="s4">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 02 · 项目目标</div>
+    <h1>四大项目目标</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="goal-grid">
+    <div class="goal-card"><div class="side" style="background:#00D4FF;"></div><div class="main"><div class="num-circle" style="background:linear-gradient(135deg,#00D4FF,#006A88);">01</div><div class="txt"><h3>打造 AI 工匠导师智能体</h3><div class="deco" style="background:#00D4FF;"></div><p>构建具备自主感知、推理与执行能力的 AI 数字人工匠导师，打造职业教育全栈元宇宙解决方案，破解职教数字化实训行业痛点。</p></div></div></div>
+    <div class="goal-card"><div class="side" style="background:#FF8A3D;"></div><div class="main"><div class="num-circle" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">02</div><div class="txt"><h3>依托算力底座赋能实训</h3><div class="deco" style="background:#FF8A3D;"></div><p>依托昌吉州算力底座，实现实训教学的多人协同、零门槛 3D 课件创作、个性化伴学辅导，提升实训智能化、沉浸式与高效性。</p></div></div></div>
+    <div class="goal-card"><div class="side" style="background:#1E5CE5;"></div><div class="main"><div class="num-circle" style="background:linear-gradient(135deg,#1E5CE5,#0F2E78);">03</div><div class="txt"><h3>消纳算力 · 区域标杆</h3><div class="deco" style="background:#1E5CE5;"></div><p>有效消纳昌吉州融合算力资源，推动算力与职教场景深度融合，打造区域数字职教标杆。</p></div></div></div>
+    <div class="goal-card"><div class="side" style="background:#8B5CF6;"></div><div class="main"><div class="num-circle" style="background:linear-gradient(135deg,#8B5CF6,#45307A);">04</div><div class="txt"><h3>可复制模式 · 技能出海</h3><div class="deco" style="background:#8B5CF6;"></div><p>形成可复制、可推广的职教数字化模式，赋能昌吉州及全疆职业院校与企业实训，为"一带一路"技能出海提供数字化载体。</p></div></div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">04 / 19</div>
+</div>
+
+<!-- ============ 5. 产品定位 ============ -->
+<div class="slide light" id="s5">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 02 · 产品定位</div>
+    <h1>一中心 · 三角色 · 全栈闭环</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="pos-center">
+    <div class="t1">AI 工匠导师</div><div class="t2">智能体</div>
+    <div class="deco"></div><div class="tag">感知 · 推理 · 执行</div>
+  </div>
+  <div class="ring" style="width:280px;height:280px;left:50%;top:50%;transform:translate(-50%,-50%);border-width:1px;border-color:rgba(0,212,255,0.3);"></div>
+  <div class="pos-role" style="left:60px;top:200px;border-color:#FF8A3D;">
+    <div class="n" style="color:#FF8A3D;">智能讲师</div>
+    <div class="s">AI 数字人授课</div><div class="d">3D 视角联动 · TTS 配音</div>
+  </div>
+  <div class="pos-role" style="right:60px;top:200px;border-color:#00D4FF;">
+    <div class="n" style="color:#00D4FF;">智能助教</div>
+    <div class="s">个性化伴学辅导</div><div class="d">多模态问答 · 实时反馈</div>
+  </div>
+  <div class="pos-role" style="left:60px;bottom:80px;border-color:#8B5CF6;">
+    <div class="n" style="color:#8B5CF6;">智能教研员</div>
+    <div class="s">零门槛 3D 课件创作</div><div class="d">文本 → 大纲 → 3D 动态课件</div>
+  </div>
+  <div class="pos-role full" style="right:60px;bottom:80px;">
+    <div class="n">全栈闭环</div>
+    <div class="s">Web · Unity · VR</div><div class="d">三端一致播放</div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">05 / 19</div>
+</div>
+
+<!-- ============ 6. 总体技术架构 ============ -->
+<div class="slide light" id="s6">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 03 · 技术架构</div>
+    <h1>云-边-端 协同分布式架构</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div style="margin-top:24px;">
+    <div class="arch-layer">
+      <div class="arch-label" style="background:linear-gradient(135deg,#1E5CE5,#0F2E78);">
+        <div class="n">云 层</div><div class="s">昌吉智算中枢</div><div class="e">CLOUD</div>
+      </div>
+      <div class="arch-content">
+        <div class="col"><span class="dot" style="background:#1E5CE5;"></span>AI 大模型推理<br><span style="color:var(--text-sub);">DeepSeek / QwenVL</span></div>
+        <div class="col"><span class="dot" style="background:#1E5CE5;"></span>3D 资产存储转码<br><span style="color:var(--text-sub);">GLB 标准化</span></div>
+        <div class="col"><span class="dot" style="background:#1E5CE5;"></span>微服务 + K8s<br><span style="color:var(--text-sub);">弹性扩容</span></div>
+        <div class="col"><span class="dot" style="background:#1E5CE5;"></span>数据湖治理<br><span style="color:var(--text-sub);">全生命周期</span></div>
+      </div>
+    </div>
+    <div class="arch-layer">
+      <div class="arch-label" style="background:linear-gradient(135deg,#00D4FF,#005A78);">
+        <div class="n">边缘层</div><div class="s">CDN + 边缘计算</div><div class="e">EDGE</div>
+      </div>
+      <div class="arch-content">
+        <div class="col"><span class="dot" style="background:#00D4FF;"></span>3D 资产就近缓存<br><span style="color:var(--text-sub);">边缘节点</span></div>
+        <div class="col"><span class="dot" style="background:#00D4FF;"></span>解决西部网络波动<br><span style="color:var(--text-sub);">弱网降级</span></div>
+        <div class="col"><span class="dot" style="background:#00D4FF;"></span>预加载策略<br><span style="color:var(--text-sub);">体验保障</span></div>
+        <div class="col"><span class="dot" style="background:#00D4FF;"></span>跨地域协同<br><span style="color:var(--text-sub);">低延迟保障</span></div>
+      </div>
+    </div>
+    <div class="arch-layer">
+      <div class="arch-label" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">
+        <div class="n">端 层</div><div class="s">WebGL2.0 + WebXR</div><div class="e">CLIENT</div>
+      </div>
+      <div class="arch-content">
+        <div class="col"><span class="dot" style="background:#FF8A3D;"></span>轻量化渲染引擎<br><span style="color:var(--text-sub);">浏览器原生</span></div>
+        <div class="col"><span class="dot" style="background:#FF8A3D;"></span>全终端无缝接入<br><span style="color:var(--text-sub);">无硬件依赖</span></div>
+        <div class="col"><span class="dot" style="background:#FF8A3D;"></span>VR/PICO 沉浸<br><span style="color:var(--text-sub);">WebXR 标准</span></div>
+        <div class="col"><span class="dot" style="background:#FF8A3D;"></span>摆脱高配硬件<br><span style="color:var(--text-sub);">普惠化</span></div>
+      </div>
+    </div>
+  </div>
+  <div style="position:absolute;bottom:60px;left:60px;right:60px;background:#E8F4FD;border-radius:20px;padding:8px;text-align:center;font-size:12px;color:#1E5CE5;font-weight:700;">
+    高可用 · 高并发 · 高沉浸 —— AI 职教元宇宙技术生态
+  </div>
+  <div class="page-num">06 / 19</div>
+</div>
+
+<!-- ============ 7. 核心引擎 01 ============ -->
+<div class="slide light" id="s7">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 04 · 核心引擎 01</div>
+    <h1>AI 智能 3D 编辑器</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="eng1-left">
+    <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px;">核心能力</div>
+    <div style="width:60px;height:2px;background:var(--orange);margin-bottom:20px;"></div>
+    <div class="eng1-cap"><div class="n" style="background:linear-gradient(135deg,#FF8A3D,#FFC53D);">1</div><div class="t">多格式 3D 解析</div><div class="d">FBX/OBJ/STL/GLB/STEP，自动转码 GLB</div></div>
+    <div class="eng1-cap"><div class="n" style="background:linear-gradient(135deg,#FF8A3D,#FFC53D);">2</div><div class="t">AI 自动生成课件</div><div class="d">"文本描述→大纲→3D 动态课件"一键生成</div></div>
+    <div class="eng1-cap"><div class="n" style="background:linear-gradient(135deg,#FF8A3D,#FFC53D);">3</div><div class="t">AI 智能整理</div><div class="d">QwenVL 视觉大模型自动识别重命名部件</div></div>
+    <div class="eng1-cap"><div class="n" style="background:linear-gradient(135deg,#FF8A3D,#FFC53D);">4</div><div class="t">关键帧动画编辑</div><div class="d">相机/显隐/变换三轨道，精确控制每帧</div></div>
+    <div class="eng1-cap"><div class="n" style="background:linear-gradient(135deg,#FF8A3D,#FFC53D);">5</div><div class="t">一键演示配置</div><div class="d">相机关键帧·部件高亮·语音解说·标注联动</div></div>
+  </div>
+  <div class="eng1-right">
+    <div style="font-size:16px;font-weight:700;color:var(--cyan);margin-bottom:6px;">AI 课件生成工作流</div>
+    <div style="width:60px;height:2px;background:var(--orange);margin-bottom:20px;"></div>
+    <div class="flow-step"><span class="n">1</span>教师输入文本描述 / 教学目标</div>
+    <div class="flow-arrow">▼</div>
+    <div class="flow-step"><span class="n">2</span>AI 大模型生成课程大纲</div>
+    <div class="flow-arrow">▼</div>
+    <div class="flow-step"><span class="n">3</span>自动配置相机关键帧·部件高亮</div>
+    <div class="flow-arrow">▼</div>
+    <div class="flow-step"><span class="n">4</span>生成 3D 动态课件 + 讲稿</div>
+    <div class="flow-arrow">▼</div>
+    <div class="flow-step"><span class="n">5</span>TTS 批量配音 → 发布</div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">07 / 19</div>
+</div>
+
+<!-- ============ 8. 核心引擎 02 ============ -->
+<div class="slide light" id="s8">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 04 · 核心引擎 02</div>
+    <h1>超低延迟通信协同</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="stat-cards">
+    <div class="stat-card"><div class="bar" style="background:#FF8A3D;"></div><div><span class="num" style="color:#FF8A3D;">&lt;100</span><span class="unit">ms</span></div><div class="label">音频通信延迟</div><div class="tag" style="color:#FF8A3D;">WEBRTC</div></div>
+    <div class="stat-card"><div class="bar" style="background:#00D4FF;"></div><div><span class="num" style="color:#00D4FF;">&lt;50</span><span class="unit">ms</span></div><div class="label">白板同步延迟</div><div class="tag" style="color:#00D4FF;">WEBSOCKET</div></div>
+    <div class="stat-card"><div class="bar" style="background:#8B5CF6;"></div><div><span class="num" style="color:#8B5CF6;">50</span><span class="unit">人</span></div><div class="label">同频在线协同</div><div class="tag" style="color:#8B5CF6;">高并发</div></div>
+    <div class="stat-card"><div class="bar" style="background:#14B8A6;"></div><div><span class="num" style="color:#14B8A6;">6</span><span class="unit">DoF</span></div><div class="label">动作捕捉重定向</div><div class="tag" style="color:#14B8A6;">沉浸式</div></div>
+  </div>
+  <div class="tri-cards">
+    <div class="tri-card"><div class="head"><div class="bar" style="background:#FF8A3D;"></div><div class="t" style="color:#FF8A3D;">WebRTC 音频通信</div></div><div class="body">
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>高清语音多人通话</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>3D 空间音频定位</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>智能混音降噪</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>延迟控制在 100ms 内</div>
+    </div></div>
+    <div class="tri-card"><div class="head"><div class="bar" style="background:#00D4FF;"></div><div class="t" style="color:#00D4FF;">WebSocket 实时同步</div></div><div class="body">
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>虚拟白板 50ms 同步</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>教师授权学生操作</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>同步 3D 模型操作</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>多人实时协作标记</div>
+    </div></div>
+    <div class="tri-card"><div class="head"><div class="bar" style="background:#8B5CF6;"></div><div class="t" style="color:#8B5CF6;">沉浸式协同体验</div></div><div class="body">
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>3D 空间音频沉浸感</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>视角强制同步</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>VR 飞屏技术</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>跨地域协同实训</div>
+    </div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">08 / 19</div>
+</div>
+
+<!-- ============ 9. 核心引擎 03 ============ -->
+<div class="slide light" id="s9">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 04 · 核心引擎 03</div>
+    <h1>高并发渲染优化</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="eng3-left">
+    <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:16px;">关键技术手段</div>
+    <div class="eng3-tech"><div class="side" style="background:#FF8A3D;"></div><div class="t" style="color:#FF8A3D;">动态 LOD</div><div class="d">根据距离动态切换模型精度，远距简化、近距精细</div></div>
+    <div class="eng3-tech"><div class="side" style="background:#00D4FF;"></div><div class="t" style="color:#00D4FF;">遮挡剔除</div><div class="d">智能剔除被遮挡几何体，减少绘制调用</div></div>
+    <div class="eng3-tech"><div class="side" style="background:#1E5CE5;"></div><div class="t" style="color:#1E5CE5;">实例化渲染</div><div class="d">相同几何体批量渲染，降低 GPU 负担</div></div>
+    <div class="eng3-tech"><div class="side" style="background:#8B5CF6;"></div><div class="t" style="color:#8B5CF6;">6DoF 动作捕捉</div><div class="d">头盔/手柄跟踪 + 位置算法驱动全身姿态</div></div>
+    <div class="eng3-tech"><div class="side" style="background:#14B8A6;"></div><div class="t" style="color:#14B8A6;">骨骼重定向</div><div class="d">统一骨骼映射，支持多 Avatar 动作同步</div></div>
+  </div>
+  <div class="eng3-right">
+    <h3>性能指标达成</h3>
+    <div class="deco"></div>
+    <div class="eng3-metrics">
+      <div class="eng3-metric"><div class="v" style="color:#FF8A3D;">50</div><div class="l">人并发同频</div></div>
+      <div class="eng3-metric"><div class="v" style="color:#00D4FF;">100万+</div><div class="l">面片级流畅渲染</div></div>
+      <div class="eng3-metric"><div class="v" style="color:#1E5CE5;">60</div><div class="l">FPS Web 端</div></div>
+      <div class="eng3-metric"><div class="v" style="color:#8B5CF6;">90</div><div class="l">FPS VR 端</div></div>
+      <div class="eng3-metric"><div class="v" style="color:#14B8A6;">≤200</div><div class="l">ms 操作响应</div></div>
+      <div class="eng3-metric"><div class="v" style="color:#FF8A3D;">2</div><div class="l">Mbps 弱网可用</div></div>
+    </div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">09 / 19</div>
+</div>
+
+<!-- ============ 10. AI 智能体闭环 ============ -->
+<div class="slide light" id="s10">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 05 · AI 智能体</div>
+    <h1>"感知 - 推理 - 执行" 闭环智能体</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="agent-stage" style="left:80px;top:200px;">
+    <div class="agent-circle" style="background:linear-gradient(135deg,#00D4FF,#005A78);box-shadow:0 0 40px rgba(0,212,255,0.4);">
+      <div class="n">感 知</div><div class="t">ASR · CV · 多模态</div>
+    </div>
+    <div class="agent-desc">语音 / 文字 / 图片 / 截图<br>多模态输入理解</div>
+  </div>
+  <div class="agent-arrow" style="left:340px;top:300px;">→</div>
+  <div class="agent-stage" style="left:520px;top:200px;">
+    <div class="agent-circle" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);box-shadow:0 0 40px rgba(255,138,61,0.4);">
+      <div class="n">推 理</div><div class="t">DeepSeek 大模型</div>
+    </div>
+    <div class="agent-desc">课程大纲生成<br>知识问答 · 个性化辅导</div>
+  </div>
+  <div class="agent-arrow" style="left:780px;top:300px;">→</div>
+  <div class="agent-stage" style="left:960px;top:200px;">
+    <div class="agent-circle" style="background:linear-gradient(135deg,#8B5CF6,#45307A);box-shadow:0 0 40px rgba(139,92,246,0.4);">
+      <div class="n">执 行</div><div class="t">TTS · 3D · 数字人</div>
+    </div>
+    <div class="agent-desc">数字人讲解演示<br>3D 视角切换 · 部件高亮</div>
+  </div>
+  <div style="position:absolute;bottom:90px;left:60px;right:60px;background:linear-gradient(90deg,#1E5CE5,#0A1F3D);border-radius:20px;padding:10px;text-align:center;color:#fff;font-size:14px;font-weight:700;">
+    ↻ 闭环反馈：执行结果回流至感知层，持续优化教学策略
+  </div>
+  <div style="position:absolute;bottom:50px;left:60px;right:60px;background:#E8F4FD;border-radius:16px;padding:6px;text-align:center;font-size:11px;color:#1E5CE5;">
+    算法伦理围栏 · 人机协同管控 · 数据全生命周期治理 —— 保障系统安全合规
+  </div>
+  <div class="page-num">10 / 19</div>
+</div>
+
+<!-- ============ 11. 产品功能矩阵 ============ -->
+<div class="slide light" id="s11">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 06 · 产品功能</div>
+    <h1>六大核心产品模块</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="feat-grid">
+    <div class="feat-card"><div class="top" style="background:linear-gradient(90deg,#FF8A3D,#8A4520);"><span class="n">01</span><span class="t">元宇宙教学大厅</span></div><div class="body"><span class="tag" style="background:#FFF0E6;color:#FF8A3D;">Unity / PICO</span><div class="desc">多人 VR 协同教学<br>Avatar · 白板 · 飞屏</div></div></div>
+    <div class="feat-card"><div class="top" style="background:linear-gradient(90deg,#00D4FF,#005A78);"><span class="n">02</span><span class="t">AI 智能 3D 编辑器</span></div><div class="body"><span class="tag" style="background:#E0F7FF;color:#00A0C8;">Web · Three.js</span><div class="desc">零门槛 3D 课件创作<br>AI 整理 · 关键帧动画</div></div></div>
+    <div class="feat-card"><div class="top" style="background:linear-gradient(90deg,#1E5CE5,#0F2E78);"><span class="n">03</span><span class="t">AI 课件制作</span></div><div class="body"><span class="tag" style="background:#E0EBFF;color:#1E5CE5;">DeepSeek 大模型</span><div class="desc">一键生成授课大纲<br>考题 · TTS 配音</div></div></div>
+    <div class="feat-card"><div class="top" style="background:linear-gradient(90deg,#8B5CF6,#45307A);"><span class="n">04</span><span class="t">公开播放器</span></div><div class="body"><span class="tag" style="background:#F0E8FF;color:#8B5CF6;">Web · WebXR</span><div class="desc">学习/探索/答题三模式<br>VR 沉浸式体验</div></div></div>
+    <div class="feat-card"><div class="top" style="background:linear-gradient(90deg,#14B8A6,#0A5A50);"><span class="n">05</span><span class="t">资源与用户管理</span></div><div class="body"><span class="tag" style="background:#E0F5F0;color:#14B8A6;">Next.js + Express</span><div class="desc">多角色权限 · 配额<br>批量导入 · 资源转码</div></div></div>
+    <div class="feat-card"><div class="top" style="background:linear-gradient(90deg,#EC4899,#7A2050);"><span class="n">06</span><span class="t">数据分析看板</span></div><div class="body"><span class="tag" style="background:#FFE8F0;color:#EC4899;">MongoDB 聚合</span><div class="desc">成绩统计 · 学习进度<br>趋势图 · 多级穿透</div></div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">11 / 19</div>
+</div>
+
+<!-- ============ 12. 应用场景 ============ -->
+<div class="slide light" id="s12">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 06 · 应用场景</div>
+    <h1>多行业 · 多专业 · 多形态</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="feat-grid">
+    <div class="feat-card"><div class="body" style="padding:20px;display:flex;gap:16px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#FF8A3D,#8A4520);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;flex-shrink:0;">01</div>
+      <div><div style="font-size:15px;font-weight:700;margin-bottom:10px;">高危特种作业实训</div><div style="width:100%;height:1px;background:var(--line);margin-bottom:10px;"></div><div class="desc" style="font-size:11px;color:var(--text-sub);line-height:1.6;">云端 1:1 还原工业现场，零风险虚拟实操，体验违规操作后果</div></div>
+    </div></div>
+    <div class="feat-card"><div class="body" style="padding:20px;display:flex;gap:16px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#00D4FF,#005A78);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;flex-shrink:0;">02</div>
+      <div><div style="font-size:15px;font-weight:700;margin-bottom:10px;">装配式建筑专业</div><div style="width:100%;height:1px;background:var(--line);margin-bottom:10px;"></div><div class="desc" style="font-size:11px;color:var(--text-sub);line-height:1.6;">节点构造 · 结构展示 · 装配工艺流程三维可视化教学</div></div>
+    </div></div>
+    <div class="feat-card"><div class="body" style="padding:20px;display:flex;gap:16px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#1E5CE5,#0F2E78);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;flex-shrink:0;">03</div>
+      <div><div style="font-size:15px;font-weight:700;margin-bottom:10px;">自动化产线专业</div><div style="width:100%;height:1px;background:var(--line);margin-bottom:10px;"></div><div class="desc" style="font-size:11px;color:var(--text-sub);line-height:1.6;">工业机器人 · 产线调试 · 设备维护三维仿真实训</div></div>
+    </div></div>
+    <div class="feat-card"><div class="body" style="padding:20px;display:flex;gap:16px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#45307A);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;flex-shrink:0;">04</div>
+      <div><div style="font-size:15px;font-weight:700;margin-bottom:10px;">水利水电专业</div><div style="width:100%;height:1px;background:var(--line);margin-bottom:10px;"></div><div class="desc" style="font-size:11px;color:var(--text-sub);line-height:1.6;">枢纽工程 · 设备原理 · 施工工艺沉浸式教学</div></div>
+    </div></div>
+    <div class="feat-card"><div class="body" style="padding:20px;display:flex;gap:16px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#14B8A6,#0A5A50);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;flex-shrink:0;">05</div>
+      <div><div style="font-size:15px;font-weight:700;margin-bottom:10px;">企业技能内训</div><div style="width:100%;height:1px;background:var(--line);margin-bottom:10px;"></div><div class="desc" style="font-size:11px;color:var(--text-sub);line-height:1.6;">降低企业内训成本，标准化岗位技能培训与考核</div></div>
+    </div></div>
+    <div class="feat-card"><div class="body" style="padding:20px;display:flex;gap:16px;">
+      <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#EC4899,#7A2050);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;flex-shrink:0;">06</div>
+      <div><div style="font-size:15px;font-weight:700;margin-bottom:10px;">"一带一路"出海</div><div style="width:100%;height:1px;background:var(--line);margin-bottom:10px;"></div><div class="desc" style="font-size:11px;color:var(--text-sub);line-height:1.6;">多语种实训平台，输出中国职业技能标准</div></div>
+    </div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">12 / 19</div>
+</div>
+
+<!-- ============ 13. 痛点解决成果 ============ -->
+<div class="slide light" id="s13">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 07 · 成果</div>
+    <h1>痛点解决成果</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="ps-list">
+    <div class="ps-item"><div class="side" style="background:#FF8A3D;"></div><div class="num" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">01</div><div class="txt"><h3>破解高危特种作业实训难题</h3><div class="deco" style="background:#FF8A3D;"></div><p>云端 1:1 还原工业现场，实现零风险虚拟实操，让学员在安全环境中体验违规操作后果，解决实体实训高消耗、高风险、难复现问题。</p></div></div>
+    <div class="ps-item"><div class="side" style="background:#00D4FF;"></div><div class="num" style="background:linear-gradient(135deg,#00D4FF,#005A78);">02</div><div class="txt"><h3>打破 3D 课件创作壁垒</h3><div class="deco" style="background:#00D4FF;"></div><p>AI 智能编辑器让非专业教师通过文本描述快速生成/修改 3D 课件，终结外部外包定制的僵化模式，释放职教教研产能。</p></div></div>
+    <div class="ps-item"><div class="side" style="background:#8B5CF6;"></div><div class="num" style="background:linear-gradient(135deg,#8B5CF6,#45307A);">03</div><div class="txt"><h3>消解时空与硬件壁垒</h3><div class="deco" style="background:#8B5CF6;"></div><p>全终端无缝接入模式，解决新疆地域广阔、师资资源不均问题，让偏远地区师生也能享受优质实训资源，摆脱高端硬件依赖。</p></div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">13 / 19</div>
+</div>
+
+<!-- ============ 14. 质效提升成果 ============ -->
+<div class="slide light" id="s14">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 07 · 成果</div>
+    <h1>质效提升成果 · 降本 · 提效 · 增质</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="tri-big">
+    <div class="tri-big-card"><div class="tri-big-head" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">降 本</div><div class="tri-big-body">
+      <div class="metric" style="border-color:#FF8A3D;"><div class="v" style="color:#FF8A3D;">数周 → 分钟级</div><div class="l">3D 课件制作周期</div></div>
+      <div class="metric" style="border-color:#FF8A3D;"><div class="v" style="color:#FF8A3D;">零边际成本</div><div class="l">轻量化生产模式</div></div>
+      <div class="metric" style="border-color:#FF8A3D;"><div class="v" style="color:#FF8A3D;">大幅降低</div><div class="l">时间与资金成本</div></div>
+    </div></div>
+    <div class="tri-big-card"><div class="tri-big-head" style="background:linear-gradient(135deg,#00D4FF,#005A78);">提 效</div><div class="tri-big-body">
+      <div class="metric" style="border-color:#00D4FF;"><div class="v" style="color:#00D4FF;">50 人</div><div class="l">单实训大厅高并发</div></div>
+      <div class="metric" style="border-color:#00D4FF;"><div class="v" style="color:#00D4FF;">量级跃升</div><div class="l">核心资源利用率</div></div>
+      <div class="metric" style="border-color:#00D4FF;"><div class="v" style="color:#00D4FF;">跨地域协同</div><div class="l">与线下无异的交互</div></div>
+    </div></div>
+    <div class="tri-big-card"><div class="tri-big-head" style="background:linear-gradient(135deg,#8B5CF6,#45307A);">增 质</div><div class="tri-big-body">
+      <div class="metric" style="border-color:#8B5CF6;"><div class="v" style="color:#8B5CF6;">沉浸式体验</div><div class="l">肌肉记忆 · 空间感</div></div>
+      <div class="metric" style="border-color:#8B5CF6;"><div class="v" style="color:#8B5CF6;">技能转化率</div><div class="l">虚拟 → 真实岗位</div></div>
+      <div class="metric" style="border-color:#8B5CF6;"><div class="v" style="color:#8B5CF6;">多维信息融合</div><div class="l">视角同步 · VR 飞屏</div></div>
+    </div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">14 / 19</div>
+</div>
+
+<!-- ============ 15. 经济与社会效益 ============ -->
+<div class="slide light" id="s15">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 08 · 效益</div>
+    <h1>经济与社会效益</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="tri-big">
+    <div class="tri-big-card"><div class="tri-big-head" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">经济效益</div><div class="tri-big-body">
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>高效消纳昌吉州算力资源，推动"东数西算"价值变现</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>降低本地职教财政硬件采购成本与企业内训成本</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>吸引 AI 职教上下游产业集聚，打造"算力+AI职教"产业链</div>
+    </div></div>
+    <div class="tri-big-card"><div class="tri-big-head" style="background:linear-gradient(135deg,#00D4FF,#005A78);">社会效益</div><div class="tri-big-body">
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>填平地域与师资鸿沟，实现职教资源全域普惠</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>提升新疆青年数字素养与工业技能</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>依托"一带一路"核心区，打造多语种实训平台</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>成为中国职业技能标准出海的数字化桥头堡</div>
+    </div></div>
+    <div class="tri-big-card"><div class="tri-big-head" style="background:linear-gradient(135deg,#8B5CF6,#45307A);">产业与示范价值</div><div class="tri-big-body">
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>形成"政校企"协同的数字职教生态</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>打造国家级虚拟仿真实训示范基地</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>模式可快速复制至全疆乃至西北各地</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>成为 AI 赋能职业教育升级的标杆案例</div>
+    </div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">15 / 19</div>
+</div>
+
+<!-- ============ 16. 创新优势 ============ -->
+<div class="slide light" id="s16">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 09 · 优势</div>
+    <h1>五大创新优势</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="adv-list">
+    <div class="adv-item"><div class="side" style="background:#FF8A3D;"></div><div class="num" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);">1</div><div class="t" style="color:#FF8A3D;">AI 原生</div><div class="d">AI 大模型深度融入 3D 创作与教学全链路，非"3D + AI 外挂"式拼凑</div></div>
+    <div class="adv-item"><div class="side" style="background:#00D4FF;"></div><div class="num" style="background:linear-gradient(135deg,#00D4FF,#005A78);">2</div><div class="t" style="color:#00D4FF;">全栈闭环</div><div class="d">Web · Unity · VR 三端数据格式统一，创作-发布-学习-考核闭环</div></div>
+    <div class="adv-item"><div class="side" style="background:#1E5CE5;"></div><div class="num" style="background:linear-gradient(135deg,#1E5CE5,#0F2E78);">3</div><div class="t" style="color:#1E5CE5;">算力消纳</div><div class="d">精准契合昌吉州"东数西算"定位，算力与职教场景深度融合</div></div>
+    <div class="adv-item"><div class="side" style="background:#8B5CF6;"></div><div class="num" style="background:linear-gradient(135deg,#8B5CF6,#45307A);">4</div><div class="t" style="color:#8B5CF6;">低门槛</div><div class="d">非专业教师可零门槛创作 3D 课件，全终端浏览器接入无硬件依赖</div></div>
+    <div class="adv-item"><div class="side" style="background:#14B8A6;"></div><div class="num" style="background:linear-gradient(135deg,#14B8A6,#0A5A50);">5</div><div class="t" style="color:#14B8A6;">可复制</div><div class="d">模式标准化，可快速复制至全疆、西北乃至"一带一路"沿线国家</div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">16 / 19</div>
+</div>
+
+<!-- ============ 17. 推广路径 ============ -->
+<div class="slide light" id="s17">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 09 · 推广</div>
+    <h1>三步走推广路径</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="promo-grid">
+    <div class="promo-card"><div class="promo-head" style="background:linear-gradient(135deg,#00D4FF,#005A78);"><div class="n">01</div><div class="p">第一阶段</div><div style="clear:both;"></div><div class="k">标杆示范</div><div class="s">昌吉州本地试点</div></div><div class="promo-body">
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>遴选昌吉州职业院校试点部署</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>打造区域数字职教标杆案例</div>
+      <div class="li"><span class="b" style="color:#00D4FF;">●</span>验证商业模式与教学效果</div>
+    </div></div>
+    <div class="promo-card"><div class="promo-head" style="background:linear-gradient(135deg,#FF8A3D,#8A4520);"><div class="n">02</div><div class="p">第二阶段</div><div style="clear:both;"></div><div class="k">区域复制</div><div class="s">全疆及西北推广</div></div><div class="promo-body">
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>复制至全疆职业院校与企业实训</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>拓展至西北五省职教市场</div>
+      <div class="li"><span class="b" style="color:#FF8A3D;">●</span>建立"政校企"协同生态</div>
+    </div></div>
+    <div class="promo-card"><div class="promo-head" style="background:linear-gradient(135deg,#8B5CF6,#45307A);"><div class="n">03</div><div class="p">第三阶段</div><div style="clear:both;"></div><div class="k">出海输出</div><div class="s">"一带一路"桥头堡</div></div><div class="promo-body">
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>多语种实训平台建设</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>输出中国职业技能标准</div>
+      <div class="li"><span class="b" style="color:#8B5CF6;">●</span>技术软实力国际化</div>
+    </div></div>
+  </div>
+  <div class="footer-line"></div><div class="footer-text">AI 数字人工匠导师智能体 · 昌吉州 AI 智能体大赛</div>
+  <div class="page-num">17 / 19</div>
+</div>
+
+<!-- ============ 18. 发展规划 ============ -->
+<div class="slide light" id="s18">
+  <div class="top-bar"></div>
+  <div class="header">
+    <div class="kicker">PART 10 · 愿景</div>
+    <h1>发展规划路线图</h1>
+    <div class="header-deco"><span class="a"></span><span class="b"></span></div>
+  </div>
+  <div class="timeline-line"></div>
+  <div class="timeline-node" style="left:120px;background:linear-gradient(135deg,#00D4FF,#005A78);box-shadow:0 0 20px rgba(0,212,255,0.4);"></div>
+  <div class="timeline-node" style="left:380px;background:linear-gradient(135deg,#FF8A3D,#8A4520);box-shadow:0 0 20px rgba(255,138,61,0.4);"></div>
+  <div class="timeline-node" style="left:640px;background:linear-gradient(135deg,#8B5CF6,#45307A);box-shadow:0 0 20px rgba(139,92,246,0.4);"></div>
+  <div class="timeline-node" style="left:900px;background:linear-gradient(135deg,#EC4899,#7A2050);box-shadow:0 0 20px rgba(236,72,153,0.4);"></div>
+
+  <div class="timeline-label" style="left:60px;"><span class="time" style="color:#00D4FF;border-color:#00D4FF;">2026 H2</span><div class="title">产品深化</div></div>
+  <div class="timeline-label" style="left:320px;"><span class="time" style="color:#FF8A3D;border-color:#FF8A3D;">2027</span><div class="title">规模推广</div></div>
+  <div class="timeline-label" style="left:580px;"><span class="time" style="color:#8B5CF6;border-color:#8B5CF6;">2028</span><div class="title">生态构建</div></div>
+  <div class="timeline-label" style="left:840px;"><span class="time" style="color:#EC4899;border-color:#EC4899;">2029+</span><div class="title">出海输出</div></div>
+
+  <div class="timeline-card" style="left:60px;border-color:#00D4FF;">完善 AI 智能体能力<br>拓展专业场景库</div>
+  <div class="timeline-card" style="left:320px;border-color:#FF8A3D;">全疆职校规模化落地<br>企业内训市场拓展</div>
+  <div class="timeline-card" style="left:580px;border-color:#8B5CF6;">"政校企"协同生态<br>国家级示范基地</div>
+  <div class="timeline-card" style="left:840px;border-color:#EC4899;">多语种平台<br>"一带一路"技能出海</div>
+
+  <div style="position:absolute;bottom:50px;left:60px;right:60px;background:linear-gradient(90deg,#050A1A,#0A1F3D);border-radius:10px;padding:14px;text-align:center;color:#00D4FF;font-size:14px;font-weight:700;">
+    愿景：成为 AI 赋能职业教育升级的标杆，让每一个学习者都有专属的 AI 工匠导师
+  </div>
+  <div class="page-num">18 / 19</div>
+</div>
+
+<!-- ============ 19. 结尾页 ============ -->
+<div class="slide dark grid-bg ending" id="s19">
+  <div class="ring" style="width:300px;height:300px;top:60px;right:60px;border-width:1.2px;border-color:rgba(0,212,255,0.3);"></div>
+  <div class="ring" style="width:200px;height:200px;top:110px;right:110px;border-width:0.8px;border-color:rgba(255,138,61,0.35);"></div>
+  <div class="ring" style="width:120px;height:120px;top:150px;right:150px;border-width:0.6px;border-color:rgba(139,92,246,0.3);"></div>
+  <div class="glow-dot" style="width:14px;height:14px;top:120px;left:150px;background:var(--cyan);color:var(--cyan);"></div>
+  <div class="glow-dot" style="width:12px;height:12px;bottom:100px;right:100px;background:var(--orange);color:var(--orange);"></div>
+  <h1>THANK YOU</h1>
+  <div class="cn">感谢聆听 · 敬请指导</div>
+  <div class="deco"><span class="a"></span><span class="b"></span></div>
+  <div class="proj">AI 数字人工匠导师智能体 · 职业教育全栈元宇宙解决方案</div>
+  <div class="event">昌吉州 AI 智能体创新应用大赛 · 2026</div>
+</div>
+
+</body>
+</html>

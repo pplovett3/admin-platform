@@ -1,0 +1,32 @@
+# Linux 服务器部署版（淘宝 npm 镜像 + 简化构建）
+FROM node:20-alpine
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm config set registry https://registry.npmmirror.com
+
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps
+
+# Alpine 下的 SWC 二进制
+RUN npm install --save-dev @swc/core-linux-musl-x64 2>/dev/null || true
+
+ARG CACHEBUST=1
+RUN echo "Cache bust: $CACHEBUST"
+
+COPY . .
+
+# Linux 上不需要 dos2unix（源码本来就是 LF）
+
+ENV NODE_ENV=production
+
+ARG NEXT_PUBLIC_API_URL=
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN chmod -R +x node_modules/.bin 2>/dev/null || true
+RUN rm -rf .next 2>/dev/null || true
+
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN npm run build
+
+EXPOSE 3000
+CMD ["npm", "start"]

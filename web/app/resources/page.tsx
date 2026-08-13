@@ -5,6 +5,7 @@ import type { UploadProps } from "antd";
 import { EyeOutlined, DownloadOutlined, DeleteOutlined, UploadOutlined } from "@ant-design/icons";
 import { authDownload, authFetch } from "../_lib/api";
 import { getAPI_URL, getCurrentRole } from "../_lib/api";
+import { convertModelToGlb, needsGlbConversion } from "@/app/_utils/modelConvert";
 
 interface FileRow { id: string; type: string; originalName: string; size: number; createdAt: string; downloadUrl: string; viewUrl?: string; visibility?: string; storageRelPath?: string }
 
@@ -207,10 +208,22 @@ export default function ResourcesPage() {
     action: undefined,
     customRequest: async (options) => {
       const { file, onError, onSuccess, onProgress } = options as any;
-      const fileObj = file as File;
+      let fileObj = file as File;
       const visibility = (role === 'superadmin' && isPublicUpload) ? 'public' : 'private';
 
       try {
+        // FBX/OBJ/STL 先转换为 GLB（保证 Unity 元宇宙大厅可加载）
+        if (needsGlbConversion(fileObj.name)) {
+          message.loading({ content: `正在将 ${fileObj.name} 转换为 GLB...`, key: 'conv', duration: 0 });
+          try {
+            fileObj = await convertModelToGlb(fileObj);
+            message.success({ content: `已转换为 ${fileObj.name}`, key: 'conv' });
+          } catch (e: any) {
+            message.error({ content: `模型转换失败：${e?.message || '未知错误'}`, key: 'conv' });
+            onError?.(e);
+            return;
+          }
+        }
         // 大于 80MB 使用分块上传
         if (fileObj.size > 80 * 1024 * 1024) {
           setChunkUploading(true);

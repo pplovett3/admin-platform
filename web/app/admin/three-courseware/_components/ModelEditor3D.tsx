@@ -320,6 +320,7 @@ import { Button, Card, Flex, Form, Input, Space, Tree, App, Modal, Upload, Slide
 import { UploadOutlined, LinkOutlined, InboxOutlined, FolderOpenOutlined, AimOutlined, EyeOutlined, ScissorOutlined, DragOutlined, ReloadOutlined, ExpandOutlined, AppstoreOutlined, ArrowUpOutlined, ArrowLeftOutlined, SettingOutlined, EyeInvisibleOutlined, SaveOutlined, ClockCircleOutlined, PlusOutlined, MoreOutlined, RobotOutlined, LoadingOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { getToken, getAPI_URL } from '@/app/_lib/api';
 import { apiPut, apiGet } from '@/app/_utils/api';
+import AIProcessingModal from '@/app/_components/AIProcessingModal';
 import type { UploadProps } from 'antd';
 
 type TreeNode = {
@@ -504,11 +505,6 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const [treeFilter, setTreeFilter] = useState<string>('');
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const treeContainerRef = useRef<HTMLDivElement | null>(null);
-  
-  // 多层级选择支持 - 双击下钻
-  const lastClickTimeRef = useRef<number>(0);
-  const lastClickObjectRef = useRef<THREE.Object3D | null>(null);
-  const selectionDepthRef = useRef<Map<string, THREE.Object3D>>(new Map()); // 记录每个根对象的当前选中深度
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [editingAnno, setEditingAnno] = useState<Annotation | null>(null);
@@ -523,6 +519,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
   const lastBackgroundSphereCheckRef = useRef<number>(0);
   const lastCameraDistanceRef = useRef<number>(0);
   const materialModifiedRef = useRef<boolean>(false); // 跟踪材质是否被用户修改
+  const transformModifiedRef = useRef<boolean>(false); // 跟踪用户通过 gizmo/输入框 修改的 TRS 变换（scale/position/rotation），用于触发 GLB 重新导出
 
   // 材质库系统
   interface SceneMaterial {
@@ -640,10 +637,10 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     };
     loadWorldScenes();
   }, []);
-  // 纯色背景默认灯光：平行光1，环境光0.5，半球光0
-  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } });
-  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 0.5 });
-  const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0 });
+  // 纯色背景默认灯光：平行光1.5，环境光2，半球光1
+  const [dirLight, setDirLight] = useState<{ color: string; intensity: number; position: { x: number; y: number; z: number } }>({ color: '#ffffff', intensity: 1.5, position: { x: 3, y: 5, z: 2 } });
+  const [ambLight, setAmbLight] = useState<{ color: string; intensity: number }>({ color: '#ffffff', intensity: 2 });
+  const [hemiLight, setHemiLight] = useState<{ skyColor: string; groundColor: string; intensity: number }>({ skyColor: '#ffffff', groundColor: '#404040', intensity: 1 });
   const [autoKey, setAutoKey] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -2128,6 +2125,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     tcontrols.addEventListener('objectChange', () => {
       const obj = tcontrols.object as THREE.Object3D | null;
       if (!obj) return;
+      transformModifiedRef.current = true; // gizmo 修改了 TRS，保存时需重新导出 GLB
       setPrsTick(v=>v+1);
       
       // 获取当前最新的选中集合
@@ -2515,12 +2513,70 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     }
   }
 
+  // 🔧 将 FBX 的 Phong/Lambert 材质转换为 PBR Standard 材质
+  function convertPhongToPBR(root: THREE.Object3D) {
+    let convertedCount = 0;
+    root.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        const newMaterials = materials.map((mat) => {
+          if (mat instanceof THREE.MeshPhongMaterial || mat instanceof THREE.MeshLambertMaterial) {
+            // 创建 PBR Standard 材质
+            const pbrMat = new THREE.MeshStandardMaterial({
+              name: mat.name,
+              color: mat.color ? mat.color.clone() : new THREE.Color(0xcccccc),
+              map: mat.map || null,
+              normalMap: (mat as any).normalMap || null,
+              aoMap: (mat as any).aoMap || null,
+              transparent: mat.transparent,
+              opacity: mat.opacity,
+              side: mat.side,
+              alphaTest: mat.alphaTest,
+              // Phong → PBR 的合理默认值
+              metalness: 0.0,
+              roughness: 0.6,
+            });
+            
+            // 复制自发光属性
+            if ((mat as THREE.MeshPhongMaterial).emissive) {
+              pbrMat.emissive = (mat as THREE.MeshPhongMaterial).emissive.clone();
+              pbrMat.emissiveMap = (mat as THREE.MeshPhongMaterial).emissiveMap || null;
+              pbrMat.emissiveIntensity = (mat as THREE.MeshPhongMaterial).emissiveIntensity || 1.0;
+            }
+            
+            // 如果原材质有高光贴图，用作粗糙度参考（需要反转）
+            if ((mat as THREE.MeshPhongMaterial).specularMap) {
+              console.log(`📝 材质 "${mat.name}" 有高光贴图，建议手动调整粗糙度`);
+            }
+            
+            // 根据 Phong 的 shininess 估算 roughness (shininess 越高越光滑)
+            if (mat instanceof THREE.MeshPhongMaterial && mat.shininess !== undefined) {
+              // shininess 范围通常 0-100+，映射到 roughness 0.1-1.0
+              pbrMat.roughness = Math.max(0.1, 1.0 - Math.min(mat.shininess / 100, 0.9));
+            }
+            
+            convertedCount++;
+            return pbrMat;
+          }
+          return mat;
+        });
+        
+        object.material = Array.isArray(object.material) ? newMaterials : newMaterials[0];
+      }
+    });
+    if (convertedCount > 0) {
+      console.log(`✅ FBX 材质已自动转换为 PBR Standard: ${convertedCount} 个材质`);
+    }
+  }
+
   async function loadModel(src: string, preferModified: boolean = false) {
     const scene = sceneRef.current!;
     setLoading(true);
     
     // 重置材质修改标记（加载新模型时）
     materialModifiedRef.current = false;
+    // 重置变换修改标记（加载新模型时）
+    transformModifiedRef.current = false;
     
     // 如果有修改后的模型且优先使用修改版本，则使用修改后的URL
     let actualSrc = src;
@@ -2697,6 +2753,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
               loadedRoot.scale.set(1, 1, 1);
               loadedRoot.updateMatrixWorld(true);
               console.log('✅ FBX根对象变换已重置');
+              
+              // 🔧 自动将 Phong/Lambert 材质转换为 PBR Standard
+              convertPhongToPBR(loadedRoot);
             }
           } else if (isOBJ) {
             const loader = new OBJLoader(manager);
@@ -3006,6 +3065,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             root.scale.set(1, 1, 1);
             root.updateMatrixWorld(true);
             console.log('✅ FBX根对象变换已重置');
+            
+            // 🔧 自动将 Phong/Lambert 材质转换为 PBR Standard
+            convertPhongToPBR(root);
           }
         } else if (isOBJ) {
           const loader = new OBJLoader(manager);
@@ -3185,6 +3247,9 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             root.scale.set(1, 1, 1);
             root.updateMatrixWorld(true);
             console.log('✅ FBX根对象变换已重置');
+            
+            // 🔧 自动将 Phong/Lambert 材质转换为 PBR Standard
+            convertPhongToPBR(root);
           }
         } else if (isOBJ) {
           const loader = new OBJLoader(manager);
@@ -4055,59 +4120,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       const hitMesh = hits[0].object as THREE.Object3D;
       const add = event.ctrlKey || event.metaKey;
       
-      // 多层级选择逻辑 - 类似Unity：单击选外层，双击下钻
-      const now = performance.now();
-      const timeSinceLastClick = now - lastClickTimeRef.current;
-      const isDoubleClick = timeSinceLastClick < 350; // 350ms 双击阈值
-      
-      // 获取从 hitMesh 到模型根节点的祖先链（不包括场景和模型根）
-      const getAncestorChain = (obj: THREE.Object3D): THREE.Object3D[] => {
-        const chain: THREE.Object3D[] = [obj];
-        let current = obj.parent;
-        while (current && current !== sceneRef.current && current !== root) {
-          chain.push(current);
-          current = current.parent;
-        }
-        return chain.reverse(); // 从根到叶
-      };
-      
-      const ancestorChain = getAncestorChain(hitMesh);
-      
-      // 查找根对象的 key（用于记录选择深度）
-      const rootAncestorKey = ancestorChain.length > 0 ? ancestorChain[0].uuid : hitMesh.uuid;
-      
-      let targetObject: THREE.Object3D;
-      
-      if (isDoubleClick && lastClickObjectRef.current) {
-        // 双击：下钻到更深层级
-        const currentDepth = selectionDepthRef.current.get(rootAncestorKey);
-        if (currentDepth) {
-          // 找到当前选中对象在祖先链中的位置
-          const currentIndex = ancestorChain.findIndex(o => o.uuid === currentDepth.uuid);
-          if (currentIndex >= 0 && currentIndex < ancestorChain.length - 1) {
-            // 下钻到下一层
-            targetObject = ancestorChain[currentIndex + 1];
-          } else {
-            // 已经是最深层，选中最终的mesh
-            targetObject = hitMesh;
-          }
-        } else {
-          // 从第二层开始（跳过第一层）
-          targetObject = ancestorChain.length > 1 ? ancestorChain[1] : hitMesh;
-        }
-      } else {
-        // 单击：选择最外层（祖先链的第一个）
-        targetObject = ancestorChain.length > 0 ? ancestorChain[0] : hitMesh;
-        // 重置选择深度
-        selectionDepthRef.current.clear();
-      }
-      
-      // 记录选择深度
-      selectionDepthRef.current.set(rootAncestorKey, targetObject);
-      lastClickTimeRef.current = now;
-      lastClickObjectRef.current = targetObject;
-      
-      selectObject(targetObject, add);
+      // 直接选中最底层对象（被点击的mesh）
+      selectObject(hitMesh, add);
       return;
     }
     
@@ -6659,7 +6673,11 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
       // 简化层级结构
       const isTrivial = (o: THREE.Object3D) => {
         const hasMesh = (o as any).isMesh || (o as any).geometry || (o as any).material;
-        return !hasMesh && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
+        // 带有非单位变换（scale/position/rotation）的包装层不能剥离，否则变换会丢失
+        const hasTransform = o.position.lengthSq() > 1e-8 ||
+          Math.abs(o.rotation.x) > 1e-6 || Math.abs(o.rotation.y) > 1e-6 || Math.abs(o.rotation.z) > 1e-6 ||
+          Math.abs(o.scale.x - 1) > 1e-6 || Math.abs(o.scale.y - 1) > 1e-6 || Math.abs(o.scale.z - 1) > 1e-6;
+        return !hasMesh && !hasTransform && (o.type === 'Group' || o.type === 'Object3D') && (o.children?.length === 1);
       };
       let pass = 0;
       while (isTrivial(exportRoot) && pass++ < 8) {
@@ -6798,9 +6816,15 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
     return materialModifiedRef.current;
   };
 
+  // 📐 检测是否有 TRS 变换变化（scale/position/rotation）需要重新导出GLB
+  // TRS 轨道不写入 JSON（由 GLB 提供），故变换变化必须触发 GLB 重新导出，否则保存后刷新会丢失
+  const hasTransformChanges = (): boolean => {
+    return transformModifiedRef.current;
+  };
+
   // 📦 检测是否需要重新导出完整GLB文件
   const needsGLBExport = (): boolean => {
-    return hasStructureChanges() || hasAnimationChanges() || hasMaterialChanges();
+    return hasStructureChanges() || hasAnimationChanges() || hasMaterialChanges() || hasTransformChanges();
   };
   
   // 构建模型结构信息（包含删除记录）
@@ -7044,6 +7068,8 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
             console.log('✅ 模型文件上传成功:', modifiedModelUrl);
             // 重置材质修改标记（导出成功后）
             materialModifiedRef.current = false;
+            // 重置变换修改标记（导出成功后，变换已烘焙进新 GLB）
+            transformModifiedRef.current = false;
             
             // 保存文件路径信息（用于删除）
             lastUploadedFilePathRef.current = modifiedModelUrl;
@@ -7747,16 +7773,16 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
         console.log('⚠️ [Settings/Load] 默认设置:', {
           bgType: 'color',
           bgColor: '#919191',
-          dirLight: { intensity: 1 },
-          ambLight: { intensity: 0.5 },
-          hemiLight: { intensity: 0 }
+          dirLight: { intensity: 1.5 },
+          ambLight: { intensity: 2 },
+          hemiLight: { intensity: 1 }
         });
         setBgType('color');
         setBgColor('#919191');
-        // 纯色背景默认灯光：平行光1，环境光0.5，半球光0
-        setDirLight({ color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } });
-        setAmbLight({ color: '#ffffff', intensity: 0.5 });
-        setHemiLight({ skyColor: '#ffffff', groundColor: '#404040', intensity: 0 });
+        // 纯色背景默认灯光：平行光1.5，环境光2，半球光1
+        setDirLight({ color: '#ffffff', intensity: 1.5, position: { x: 3, y: 5, z: 2 } });
+        setAmbLight({ color: '#ffffff', intensity: 2 });
+        setHemiLight({ skyColor: '#ffffff', groundColor: '#404040', intensity: 1 });
       }
       
       console.log('✅ [Settings/Load-Complete] 设置加载完成');
@@ -7788,12 +7814,12 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   style={{ width: 160 }} 
                   onChange={(v)=>{ 
                     // 根据背景类型设置默认灯光值
-                    // 纯色背景：平行光1，环境光0.5，半球光0
+                    // 纯色背景：平行光1.5，环境光2，半球光1
                     // 高斯+HDR / 仅HDR：灯光都为0，使用HDR提供的光照信息
                     const defaultLights = v === 'color' ? {
-                      dirLight: { color: '#ffffff', intensity: 1, position: { x: 3, y: 5, z: 2 } },
-                      ambLight: { color: '#ffffff', intensity: 0.5 },
-                      hemiLight: { skyColor: '#ffffff', groundColor: '#404040', intensity: 0 }
+                      dirLight: { color: '#ffffff', intensity: 1.5, position: { x: 3, y: 5, z: 2 } },
+                      ambLight: { color: '#ffffff', intensity: 2 },
+                      hemiLight: { skyColor: '#ffffff', groundColor: '#404040', intensity: 1 }
                     } : {
                       dirLight: { color: '#ffffff', intensity: 0, position: { x: 3, y: 5, z: 2 } },
                       ambLight: { color: '#ffffff', intensity: 0 },
@@ -10077,19 +10103,19 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                   <div style={{ color: '#94a3b8', marginBottom: 6 }}>对象：{keyToObject.current.get(selectedKey)?.name || selectedKey}</div>
                   <Space direction="vertical" size={6}>
                     <Space>
-                      <InputNumber addonBefore="Px" step={0.01} value={keyToObject.current.get(selectedKey)?.position.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.x=Number(v||0); obj.updateMatrixWorld(); if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, obj.visible); }} />
-                      <InputNumber addonBefore="Py" step={0.01} value={keyToObject.current.get(selectedKey)?.position.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.y=Number(v||0); obj.updateMatrixWorld(); }} />
-                      <InputNumber addonBefore="Pz" step={0.01} value={keyToObject.current.get(selectedKey)?.position.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.z=Number(v||0); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Px" step={0.01} value={keyToObject.current.get(selectedKey)?.position.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.x=Number(v||0); obj.updateMatrixWorld(); transformModifiedRef.current = true; if (autoKeyRef.current) setVisibilityAtCurrent(selectedKey!, obj.visible); }} />
+                      <InputNumber addonBefore="Py" step={0.01} value={keyToObject.current.get(selectedKey)?.position.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.y=Number(v||0); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
+                      <InputNumber addonBefore="Pz" step={0.01} value={keyToObject.current.get(selectedKey)?.position.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.position.z=Number(v||0); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
                     </Space>
                     <Space>
-                      <InputNumber addonBefore="Rx" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.x=Number(v||0); obj.updateMatrixWorld(); }} />
-                      <InputNumber addonBefore="Ry" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.y=Number(v||0); obj.updateMatrixWorld(); }} />
-                      <InputNumber addonBefore="Rz" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.z=Number(v||0); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Rx" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.x=Number(v||0); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
+                      <InputNumber addonBefore="Ry" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.y=Number(v||0); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
+                      <InputNumber addonBefore="Rz" step={0.01} value={keyToObject.current.get(selectedKey)?.rotation.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.rotation.z=Number(v||0); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
                     </Space>
                     <Space>
-                      <InputNumber addonBefore="Sx" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.x=Number(v||1); obj.updateMatrixWorld(); }} />
-                      <InputNumber addonBefore="Sy" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.y=Number(v||1); obj.updateMatrixWorld(); }} />
-                      <InputNumber addonBefore="Sz" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.z=Number(v||1); obj.updateMatrixWorld(); }} />
+                      <InputNumber addonBefore="Sx" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.x} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.x=Number(v||1); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
+                      <InputNumber addonBefore="Sy" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.y} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.y=Number(v||1); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
+                      <InputNumber addonBefore="Sz" step={0.01} value={keyToObject.current.get(selectedKey)?.scale.z} onChange={(v)=>{ const obj=keyToObject.current.get(selectedKey!); if(!obj) return; obj.scale.z=Number(v||1); obj.updateMatrixWorld(); transformModifiedRef.current = true; }} />
                     </Space>
                     <div>
                       <span style={{ marginRight: 8 }}>显示</span>
@@ -10115,7 +10141,7 @@ export default function ModelEditor3D({ initialUrl, coursewareId, coursewareData
                         <InputNumber size="small" placeholder="旋转吸附°" step={1} onChange={(v)=>{ setGizmoSnap(s=>({ ...s, r: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setRotationSnap(((v==null)? null: Number(v)*Math.PI/180) as any); }} />
                         <InputNumber size="small" placeholder="缩放吸附" step={0.01} onChange={(v)=>{ setGizmoSnap(s=>({ ...s, s: (v==null? undefined: Number(v)) })); tcontrolsRef.current?.setScaleSnap(((v==null)? null: Number(v)) as any); }} />
                         <Divider type="vertical" />
-                        <Button size="small" onClick={()=>{ const ids=Array.from(selectedSet); if (ids.length<2) return; const base=keyToObject.current.get(ids[0])!; const bx=base.position.clone(), br=base.rotation.clone(), bs=base.scale.clone(); ids.slice(1).forEach(id=>{ const o=keyToObject.current.get(id)!; o.position.copy(bx); o.rotation.copy(br); o.scale.copy(bs); o.updateMatrixWorld(); }); setPrsTick(v=>v+1); }}>对齐到首个</Button>
+                        <Button size="small" onClick={()=>{ const ids=Array.from(selectedSet); if (ids.length<2) return; const base=keyToObject.current.get(ids[0])!; const bx=base.position.clone(), br=base.rotation.clone(), bs=base.scale.clone(); ids.slice(1).forEach(id=>{ const o=keyToObject.current.get(id)!; o.position.copy(bx); o.rotation.copy(br); o.scale.copy(bs); o.updateMatrixWorld(); }); transformModifiedRef.current = true; setPrsTick(v=>v+1); }}>对齐到首个</Button>
                       </Space>
                     </div>
                   )}
@@ -10708,6 +10734,7 @@ function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
 function AnnotationEditor({ open, value, onCancel, onOk, onDelete, coursewareName }: { open: boolean; value: Annotation | null; onCancel: ()=>void; onOk: (v: Annotation | null)=>void; onDelete?: (id: string)=>void; coursewareName?: string }) {
   const [form] = Form.useForm();
   const [aiGenerating, setAiGenerating] = React.useState(false);
+  const [aiModalOpen, setAiModalOpen] = React.useState(false);
   const { message } = App.useApp();
   
   useEffect(() => {
@@ -10729,6 +10756,7 @@ function AnnotationEditor({ open, value, onCancel, onOk, onDelete, coursewareNam
     }
 
     setAiGenerating(true);
+    setAiModalOpen(true);
     try {
       const token = getToken();
       const apiUrl = getAPI_URL();
@@ -10762,11 +10790,22 @@ function AnnotationEditor({ open, value, onCancel, onOk, onDelete, coursewareNam
       message.error(`AI生成简介失败: ${(error as Error).message}`);
     } finally {
       setAiGenerating(false);
+      setAiModalOpen(false);
     }
   };
 
   return (
     <Modal title="编辑标注" open={open} onCancel={onCancel} footer={null} destroyOnClose>
+      <AIProcessingModal
+        open={aiModalOpen}
+        title="AI 生成标注简介"
+        messages={[
+          '正在分析标注信息...',
+          '理解组件功能与作用...',
+          '生成专业简介内容...',
+          '优化表达与措辞...',
+        ]}
+      />
       <Form layout="vertical" form={form} preserve={false}>
         <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标注标题' }]}> 
           <Input placeholder="例如：发动机组件" />

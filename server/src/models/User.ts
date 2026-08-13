@@ -30,8 +30,12 @@ export interface IUser extends Document {
   role: UserRole;
   metaverseAllowed?: boolean;
   passwordHash: string;
+  storageQuota?: number; // 个人存储配额（字节），默认 5GB
   quizRecords?: IQuizRecord[]; // 答题记录
 }
+
+// 默认存储配额：5GB
+export const DEFAULT_STORAGE_QUOTA = 5 * 1024 * 1024 * 1024;
 
 // 答题答案Schema
 const QuizAnswerSchema = new Schema({
@@ -62,6 +66,7 @@ const UserSchema = new Schema<IUser>(
     role: { type: String, enum: ['superadmin', 'schoolAdmin', 'teacher', 'student'], required: true },
     passwordHash: { type: String, required: true },
     metaverseAllowed: { type: Boolean, default: false },
+    storageQuota: { type: Number, default: DEFAULT_STORAGE_QUOTA },
     quizRecords: { type: [QuizRecordSchema], default: [] },
   },
   { timestamps: true }

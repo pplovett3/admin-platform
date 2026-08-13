@@ -38,6 +38,17 @@ services:
       # 通义千问VL配置（AI智能标注整理）
       - QWEN_VL_API_KEY=sk-c49e7cf4276e492a8f1d1aa204a45fc5
       - QWEN_VL_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+      # 豆包语音合成-2.0配置（火山引擎语音服务，需在"豆包语音"控制台开通）
+      - DOUBAO_TTS_APP_ID=${DOUBAO_TTS_APP_ID:-}
+      - DOUBAO_TTS_ACCESS_KEY=${DOUBAO_TTS_ACCESS_KEY:-}
+      - DOUBAO_TTS_BASE_URL=https://openspeech.bytedance.com
+      - DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+      # 豆包大模型ID（AI生成大纲/考题/标注简介）
+      - DOUBAO_MODEL_ID=doubao-seed-2-1-pro-260628
+      # 豆包思考模式：disabled=关闭思考（快，默认），enabled=开启思考（质量高但慢）
+      - DOUBAO_THINKING=disabled
+      # 豆包文生图模型ID（Seedream 5.0）
+      - DOUBAO_IMAGE_MODEL_ID=doubao-seedream-5-0-260128
     volumes:
       - D:/docker-storage:/storage
     depends_on:

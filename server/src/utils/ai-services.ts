@@ -16,7 +16,85 @@ export interface DeepSeekResponse {
     message: {
       content: string;
     };
+    finish_reason?: string;
   }>;
+}
+
+/**
+ * 健壮的 AI JSON 响应解析器
+ * 处理：markdown 代码块包裹、前后多余文本、JSON 被截断（补全括号）
+ */
+function parseAIJsonResponse(content: string): any {
+  let text = content.trim();
+
+  // 1. 去除 markdown 代码块标记 ```json ... ``` 或 ``` ... ```
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (codeBlockMatch) {
+    text = codeBlockMatch[1].trim();
+  }
+
+  // 2. 尝试直接解析
+  try {
+    return JSON.parse(text);
+  } catch { /* continue */ }
+
+  // 3. 提取最外层 { ... } 或 [ ... ]
+  const objMatch = text.match(/\{[\s\S]*\}/);
+  const arrMatch = text.match(/\[[\s\S]*\]/);
+  // 优先选择先出现的那个
+  const candidates: string[] = [];
+  if (objMatch) candidates.push(objMatch[0]);
+  if (arrMatch) candidates.push(arrMatch[0]);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch { /* continue */ }
+  }
+
+  // 4. JSON 可能被截断 — 尝试补全缺失的闭合括号
+  const raw = candidates[0] || text;
+  const repaired = repairTruncatedJson(raw);
+  try {
+    return JSON.parse(repaired);
+  } catch { /* continue */ }
+
+  // 5. 最后一次尝试：从 raw 中逐步截断尾部不完整部分再补全
+  const lastObj = raw.lastIndexOf('{') >= 0 ? raw.slice(0, raw.lastIndexOf('{')) : raw;
+  const repaired2 = repairTruncatedJson(lastObj);
+  try {
+    return JSON.parse(repaired2);
+  } catch (e) {
+    throw new Error(`JSON解析失败（内容长度${content.length}，可能被截断）: ${(e as Error).message}`);
+  }
+}
+
+/** 统计字符串中未闭合的 { 和 [ 数量，在末尾补上对应的闭合符号 */
+function repairTruncatedJson(jsonStr: string): string {
+  let inString = false;
+  let escape = false;
+  let braceDepth = 0;   // { 计数
+  let bracketDepth = 0; // [ 计数
+
+  for (let i = 0; i < jsonStr.length; i++) {
+    const ch = jsonStr[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') braceDepth++;
+    else if (ch === '}') braceDepth--;
+    else if (ch === '[') bracketDepth++;
+    else if (ch === ']') bracketDepth--;
+  }
+
+  let repaired = jsonStr;
+  // 如果在字符串中被截断，先闭合字符串
+  if (inString) repaired += '"';
+  // 补全括号（注意顺序：先 ] 后 }，因为 JSON 中数组通常在对象内）
+  for (let i = 0; i < Math.max(0, bracketDepth); i++) repaired += ']';
+  for (let i = 0; i < Math.max(0, braceDepth); i++) repaired += '}';
+  return repaired;
 }
 
 // 课件数据接口
@@ -158,9 +236,9 @@ scene.action段落中的actions数组只能使用以下动作类型：
   ];
 
   try {
-    // 如果没有配置 API Key，返回模拟数据
-    if (!config.deepseekApiKey || config.deepseekApiKey === '') {
-      console.warn('DeepSeek API Key not configured, returning mock data');
+    // 如果没有配置豆包 API Key，返回模拟数据
+    if (!config.doubaoApiKey || config.doubaoApiKey === '') {
+      console.warn('Doubao API Key not configured, returning mock course data');
       return {
         outline: [
           {
@@ -189,44 +267,47 @@ scene.action段落中的actions数组只能使用以下动作类型：
       };
     }
 
-    const response = await fetch(`${config.deepseekBaseUrl}/v1/chat/completions`, {
+    // 使用豆包（OpenAI 兼容）替代 DeepSeek，统一计费
+    const response = await fetch(`${config.doubaoBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${config.deepseekApiKey}`,
+        'Authorization': `Bearer ${config.doubaoApiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: config.doubaoModelId, thinking: { type: config.doubaoThinking },
         messages,
         temperature: 0.7,
-        max_tokens: 4000
+        max_tokens: 16000
       })
     });
 
     if (!response.ok) {
-      throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('豆包API错误(generateCourse):', response.status, errorText);
+      throw new Error(`豆包API错误: ${response.status} ${response.statusText}`);
     }
 
     const data: DeepSeekResponse = await response.json();
     const content = data.choices[0]?.message?.content;
+    const finishReason = data.choices[0]?.finish_reason;
     
     if (!content) {
-      throw new Error('No content in DeepSeek response');
+      throw new Error('豆包返回内容为空');
     }
 
-    // 尝试解析JSON
+    console.log(`[生成大纲] 返回长度: ${content.length}, finish_reason: ${finishReason}`);
+
+    // 使用健壮的 JSON 解析器（处理 markdown 包裹、截断等）
     try {
-      return JSON.parse(content);
+      return parseAIJsonResponse(content);
     } catch (parseError) {
-      // 如果直接解析失败，尝试提取JSON部分
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-      throw new Error('Failed to parse JSON from DeepSeek response');
+      console.error('大纲JSON解析失败，原始内容前500字:', content.substring(0, 500));
+      console.error('大纲JSON解析失败，原始内容后500字:', content.substring(content.length - 500));
+      throw new Error(`AI大纲JSON解析失败: ${(parseError as Error).message}`);
     }
   } catch (error) {
-    console.error('DeepSeek API error:', error);
+    console.error('豆包API错误(generateCourse):', error);
     throw error;
   }
 }
@@ -300,9 +381,9 @@ export async function generateQuestionsWithDeepSeek(params: QuestionGenerationPa
   ];
 
   try {
-    // 如果没有配置 API Key，返回模拟数据
-    if (!config.deepseekApiKey || config.deepseekApiKey === '') {
-      console.warn('DeepSeek API Key not configured, returning mock questions');
+    // 如果没有配置豆包 API Key，返回模拟数据
+    if (!config.doubaoApiKey || config.doubaoApiKey === '') {
+      console.warn('Doubao API Key not configured, returning mock questions');
       const mockQuestions: GeneratedQuestion[] = [];
       
       // 生成模拟理论题
@@ -345,51 +426,53 @@ export async function generateQuestionsWithDeepSeek(params: QuestionGenerationPa
       return mockQuestions;
     }
 
-    const response = await fetch(`${config.deepseekBaseUrl}/v1/chat/completions`, {
+    // 使用豆包（OpenAI 兼容）替代 DeepSeek，统一计费
+    const response = await fetch(`${config.doubaoBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${config.deepseekApiKey}`,
+        'Authorization': `Bearer ${config.doubaoApiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: config.doubaoModelId, thinking: { type: config.doubaoThinking },
         messages,
         temperature: 0.7,
-        max_tokens: 4000
+        max_tokens: 8000
       })
     });
 
     if (!response.ok) {
-      throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('豆包API错误(generateQuestions):', response.status, errorText);
+      throw new Error(`豆包API错误: ${response.status} ${response.statusText}`);
     }
 
     const data: DeepSeekResponse = await response.json();
     const content = data.choices[0]?.message?.content;
+    const finishReason = data.choices[0]?.finish_reason;
     
     if (!content) {
-      throw new Error('No content in DeepSeek response');
+      throw new Error('豆包返回内容为空');
     }
 
-    // 尝试解析JSON
+    console.log(`[生成题目] 返回长度: ${content.length}, finish_reason: ${finishReason}`);
+
+    // 使用健壮的 JSON 解析器
     try {
-      const parsed = JSON.parse(content);
-      // 确保返回的是数组
+      const parsed = parseAIJsonResponse(content);
       if (Array.isArray(parsed)) {
         return parsed;
       } else if (parsed.questions && Array.isArray(parsed.questions)) {
         return parsed.questions;
       }
-      throw new Error('Invalid response format');
+      throw new Error('Invalid response format: 期望数组或 {questions: [...]}');
     } catch (parseError) {
-      // 如果直接解析失败，尝试提取JSON部分
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-      throw new Error('Failed to parse JSON from DeepSeek response');
+      console.error('题目JSON解析失败，原始内容前500字:', content.substring(0, 500));
+      console.error('题目JSON解析失败，原始内容后500字:', content.substring(content.length - 500));
+      throw new Error(`AI题目JSON解析失败: ${(parseError as Error).message}`);
     }
   } catch (error) {
-    console.error('DeepSeek Questions API error:', error);
+    console.error('豆包API错误(generateQuestions):', error);
     throw error;
   }
 }
@@ -401,6 +484,129 @@ export interface MetasoImageResult {
   source: string;
   license?: string;
   size?: { width: number; height: number };
+}
+
+/** AI 文生图结果 */
+export interface DoubaoImageResult {
+  success: boolean;
+  url?: string;
+  error?: string;
+}
+
+/**
+ * 使用豆包 Seedream 模型生成图片
+ * @param prompt 文生图提示词
+ * @param size 图片尺寸，默认 2048x2048（Seedream 5.0 要求最小约 3686400 像素）
+ */
+export async function generateImageWithDoubao(prompt: string, size: string = '2048x2048'): Promise<DoubaoImageResult> {
+  if (!config.doubaoApiKey) {
+    return { success: false, error: '豆包 API Key 未配置' };
+  }
+
+  try {
+    const response = await fetch(`${config.doubaoBaseUrl}/images/generations`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.doubaoApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: config.doubaoImageModelId,
+        prompt,
+        size
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('豆包图片生成错误:', response.status, errorText);
+      let errorMsg = `豆包图片生成失败: ${response.status}`;
+      try {
+        const err = JSON.parse(errorText);
+        if (err.error?.message) errorMsg = err.error.message;
+      } catch { /* ignore */ }
+      return { success: false, error: errorMsg };
+    }
+
+    const data = await response.json();
+    const imageUrl = data.data?.[0]?.url;
+    if (!imageUrl) {
+      return { success: false, error: '豆包返回图片URL为空' };
+    }
+
+    return { success: true, url: imageUrl };
+  } catch (error: any) {
+    console.error('豆包图片生成异常:', error);
+    return { success: false, error: error.message || '图片生成异常' };
+  }
+}
+
+/**
+ * 使用豆包大模型将课程大纲中的图片描述转化为文生图提示词
+ * @param context 课程上下文信息（课件名、段落标题、讲解词、图片关键词等）
+ */
+export async function generateImagePromptWithDoubao(context: {
+  coursewareName?: string;
+  segmentTitle?: string;
+  say?: string;
+  imageKeywords?: string;
+}): Promise<{ success: boolean; prompt?: string; error?: string }> {
+  if (!config.doubaoApiKey) {
+    return { success: false, error: '豆包 API Key 未配置' };
+  }
+
+  const userContent = `请根据以下课程信息，生成一段用于AI文生图的英文提示词（prompt）。
+
+课程名称：${context.coursewareName || '未知'}
+段落标题：${context.segmentTitle || '未知'}
+讲解词：${context.say || '无'}
+图片关键词：${context.imageKeywords || '无'}
+
+要求：
+1. 提示词用英文编写，适合 Seedream 文生图模型
+2. 描述要具体、画面感强，包含主体、场景、光线、风格等要素
+3. 风格偏向教学/科普插图，专业清晰
+4. 只返回提示词文本，不要其他内容，不要引号`;
+
+  try {
+    const response = await fetch(`${config.doubaoBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.doubaoApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: config.doubaoModelId, thinking: { type: config.doubaoThinking },
+        messages: [{ role: 'user', content: userContent }],
+        max_tokens: 500
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('豆包提示词生成错误:', response.status, errorText);
+      return { success: false, error: `提示词生成失败: ${response.status}` };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    if (!content) {
+      return { success: false, error: '提示词生成返回为空' };
+    }
+
+    // 清理可能的引号和换行
+    let prompt = content.trim();
+    if ((prompt.startsWith('"') && prompt.endsWith('"')) ||
+        (prompt.startsWith("'") && prompt.endsWith("'"))) {
+      prompt = prompt.slice(1, -1);
+    }
+    prompt = prompt.replace(/\n/g, ' ').trim();
+
+    return { success: true, prompt };
+  } catch (error: any) {
+    console.error('豆包提示词生成异常:', error);
+    return { success: false, error: error.message || '提示词生成异常' };
+  }
 }
 
 export async function searchImagesWithMetaso(keywords: string): Promise<MetasoImageResult[]> {
@@ -665,6 +871,156 @@ export async function getFileDownloadUrl(fileId: number): Promise<string | null>
   }
 }
 
+// 豆包语音合成（Doubao-语音合成-2.0）接口
+export interface DoubaoTTSParams {
+  text: string;
+  speaker: string;          // 音色ID，如 'zh_female_xiaohe_uranus_bigtts'
+  speedRatio?: number;      // 语速 0.2-3.0，默认 1.0
+  format?: 'mp3' | 'wav' | 'pcm' | 'ogg_opus';
+  sampleRate?: number;      // 采样率，默认 24000
+}
+
+export interface DoubaoTTSResult {
+  success: boolean;
+  audioData?: Buffer;
+  audioUrl?: string;
+  duration?: number;
+  error?: string;
+}
+
+// 豆包语音合成 2.0 官方音色列表（resource_id: seed-tts-2.0，uranus 系列）
+export const DOUBAO_TTS_VOICES = [
+  { id: 'zh_female_xiaohe_uranus_bigtts', name: '小何 2.0', gender: 'female', locale: 'zh-CN', desc: '通用女声，自然亲切' },
+  { id: 'zh_female_vv_uranus_bigtts', name: 'Vivi 2.0', gender: 'female', locale: 'zh-CN', desc: '多语种女声，情感丰富' },
+  { id: 'zh_female_qingxinnvsheng_uranus_bigtts', name: '清新女声 2.0', gender: 'female', locale: 'zh-CN', desc: '清新淡雅女声' },
+  { id: 'zh_female_tianmei_uranus_bigtts', name: '甜美女声 2.0', gender: 'female', locale: 'zh-CN', desc: '甜美女声' },
+  { id: 'zh_male_m191_uranus_bigtts', name: '云舟 2.0', gender: 'male', locale: 'zh-CN', desc: '通用男声' },
+  { id: 'zh_male_taocheng_uranus_bigtts', name: '小天 2.0', gender: 'male', locale: 'zh-CN', desc: '通用男声，年轻' },
+  { id: 'zh_male_liufei_uranus_bigtts', name: '刘飞 2.0', gender: 'male', locale: 'zh-CN', desc: '通用男声' },
+  { id: 'zh_male_sophie_uranus_bigtts', name: '魅力苏菲 2.0', gender: 'male', locale: 'zh-CN', desc: '通用男声' }
+];
+
+/**
+ * 豆包语音合成-2.0（火山引擎语音服务 V3 单向流式接口）
+ * 端点：https://openspeech.bytedance.com/api/v3/tts/unidirectional
+ * 鉴权需在火山引擎"豆包语音"控制台开通并获取 AppID + Access Key
+ */
+export async function generateTTSWithDoubao(params: DoubaoTTSParams): Promise<DoubaoTTSResult> {
+  try {
+    if (!config.doubaoTtsAppId || !config.doubaoTtsAccessKey) {
+      console.warn('豆包TTS未配置（DOUBAO_TTS_APP_ID / DOUBAO_TTS_ACCESS_KEY），跳过配音生成');
+      return {
+        success: false,
+        error: '豆包TTS未配置：缺少 DOUBAO_TTS_APP_ID 或 DOUBAO_TTS_ACCESS_KEY。请在火山引擎“豆包语音”控制台开通，并写入服务器 .env；或发布时改用已配置的 Azure TTS。'
+      };
+    }
+
+    const requestId = crypto.randomUUID();
+    const format = params.format || 'mp3';
+    const sampleRate = params.sampleRate || 24000;
+
+    // V3 unidirectional 接口：req_params 格式 + 顶层 user 字段
+    // 鉴权用 X-Api-App-Id + X-Api-Access-Key + X-Api-Resource-Id
+    const response = await fetch(`${config.doubaoTtsBaseUrl}/api/v3/tts/unidirectional`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Api-App-Id': config.doubaoTtsAppId,
+        'X-Api-Access-Key': config.doubaoTtsAccessKey,
+        'X-Api-Resource-Id': config.doubaoTtsResourceId,
+        'X-Api-Request-Id': requestId
+      },
+      body: JSON.stringify({
+        user: { uid: 'admin-platform' },
+        req_params: {
+          text: params.text,
+          speaker: params.speaker,
+          audio_params: {
+            format,
+            sample_rate: sampleRate
+          }
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('豆包TTS API错误:', response.status, errorText);
+      throw new Error(`豆包TTS API错误: ${response.status} ${response.statusText}`);
+    }
+
+    // V3 单向流式接口返回连续 JSON 对象拼接（无换行分隔）
+    // 需要增量解析：跟踪括号深度在深度为 0 时分割出完整 JSON 对象
+    const responseText = await response.text();
+    const base64Chunks: string[] = [];
+
+    const parseJsonObjects = (text: string): any[] => {
+      const objects: any[] = [];
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      let start = -1;
+
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (escape) { escape = false; continue; }
+        if (char === '\\') { escape = true; continue; }
+        if (char === '"') { inString = !inString; continue; }
+        if (inString) continue;
+
+        if (char === '{') {
+          if (depth === 0) start = i;
+          depth++;
+        } else if (char === '}') {
+          depth--;
+          if (depth === 0 && start >= 0) {
+            const jsonStr = text.slice(start, i + 1);
+            try {
+              objects.push(JSON.parse(jsonStr));
+            } catch {
+              // 跳过无法解析的片段
+            }
+            start = -1;
+          }
+        }
+      }
+      return objects;
+    };
+
+    const chunks = parseJsonObjects(responseText);
+    for (const chunk of chunks) {
+      // V3 接口：数据帧 code=0，终止帧 code=20000000；其他为错误
+      if (chunk.code !== undefined && chunk.code !== 0 && chunk.code !== 20000000) {
+        console.error('豆包TTS返回错误码:', chunk.code, chunk.message);
+        throw new Error(`豆包TTS合成失败: ${chunk.message || chunk.code}`);
+      }
+      if (chunk.data) {
+        base64Chunks.push(chunk.data);
+      }
+    }
+
+    if (base64Chunks.length === 0) {
+      throw new Error('豆包TTS返回音频数据为空');
+    }
+
+    const audioData = Buffer.from(base64Chunks.join(''), 'base64');
+    const mimeType = format === 'wav' ? 'audio/wav' : format === 'ogg_opus' ? 'audio/ogg' : 'audio/mpeg';
+
+    return {
+      success: true,
+      audioData,
+      audioUrl: `data:${mimeType};base64,${audioData.toString('base64')}`,
+      duration: estimateAudioDuration(params.text)
+    };
+  } catch (error) {
+    console.error('豆包TTS错误:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
 // Azure TTS 接口
 export interface AzureTTSParams {
   text: string;
@@ -810,11 +1166,10 @@ export const AZURE_TTS_FORMATS = {
 export async function generateTTSWithAzure(params: AzureTTSParams): Promise<AzureTTSResult> {
   try {
     if (!config.azureSpeechKey || !config.azureSpeechRegion) {
-      console.warn('Azure Speech Key/Region not configured, returning mock result');
+      console.warn('Azure Speech Key/Region not configured, skip TTS');
       return {
-        success: true,
-        audioUrl: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav',
-        duration: 5000
+        success: false,
+        error: 'Azure TTS未配置：缺少 AZURE_SPEECH_KEY 或 AZURE_SPEECH_REGION。请在服务器 .env 配置后重试。'
       };
     }
 
@@ -957,15 +1312,18 @@ export async function batchGenerateTTSForCourse(
   courseOutline: any[],
   userId: string,
   ttsConfig: {
-    provider: 'azure' | 'minimax';
+    provider: 'azure' | 'minimax' | 'doubao';
     voiceName?: string;
     voice_id?: string;
+    speaker?: string;       // 豆包TTS音色ID
     speed?: number;
+    speedRatio?: number;    // 豆包TTS语速
     rate?: string;
     language?: string;
   }
-): Promise<{ [itemKey: string]: { audioUrl: string; duration: number; fileId: string } }> {
+): Promise<{ results: { [itemKey: string]: { audioUrl: string; duration: number; fileId: string } }; error: string }> {
   const results: { [itemKey: string]: { audioUrl: string; duration: number; fileId: string } } = {};
+  let firstTtsError = '';
   
   try {
     for (let segmentIndex = 0; segmentIndex < courseOutline.length; segmentIndex++) {
@@ -1007,6 +1365,8 @@ export async function batchGenerateTTSForCourse(
             if (result.success && result.audioData) {
               audioData = result.audioData;
               duration = result.duration || estimateAudioDuration(text);
+            } else if (!result.success) {
+              if (!firstTtsError) firstTtsError = result.error || 'Azure TTS生成失败';
             }
           } else if (ttsConfig.provider === 'minimax') {
             // Minimax是异步的，需要等待完成
@@ -1044,11 +1404,26 @@ export async function batchGenerateTTSForCourse(
                 attempts++;
               }
             }
+          } else if (ttsConfig.provider === 'doubao') {
+            // 豆包语音合成-2.0（同步流式，返回音频Buffer）
+            const doubaoResult = await generateTTSWithDoubao({
+              text,
+              speaker: ttsConfig.speaker || ttsConfig.voice_id || 'zh_female_xiaohe_uranus_bigtts',
+              speedRatio: ttsConfig.speedRatio ?? ttsConfig.speed ?? 1.0,
+              format: 'mp3'
+            });
+
+            if (doubaoResult.success && doubaoResult.audioData) {
+              audioData = doubaoResult.audioData;
+              duration = doubaoResult.duration || estimateAudioDuration(text);
+            } else if (!doubaoResult.success) {
+              if (!firstTtsError) firstTtsError = doubaoResult.error || '豆包TTS生成失败';
+            }
           }
 
           if (audioData) {
             // 保存到NAS
-            const filename = `course_${itemKey}_${Date.now()}.wav`;
+            const filename = `course_${itemKey}_${Date.now()}.mp3`;
             const saveResult = await saveAudioToNAS(audioData, filename, userId, 'audio/wav');
             
             results[itemKey] = {
@@ -1060,18 +1435,21 @@ export async function batchGenerateTTSForCourse(
             console.log(`TTS保存成功: ${itemKey} -> ${saveResult.publicUrl}`);
           } else {
             console.warn(`TTS生成失败: ${itemKey}`);
+            if (!firstTtsError) firstTtsError = 'TTS生成失败：未返回音频数据';
           }
         } catch (error) {
           console.error(`TTS生成错误 ${itemKey}:`, error);
+          if (!firstTtsError) firstTtsError = error instanceof Error ? error.message : String(error);
           // 继续处理下一个
         }
       }
     }
   } catch (error) {
     console.error('Batch TTS generation error:', error);
+    if (!firstTtsError) firstTtsError = error instanceof Error ? error.message : String(error);
   }
 
-  return results;
+  return { results, error: firstTtsError };
 }
 
 // ==========================================
@@ -1185,7 +1563,7 @@ export async function identifySinglePartWithQwenVL(
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'ep-m-20251216144152-z7xk2', // Doubao-Seed-1.6-lite
+          model: config.doubaoModelId, thinking: { type: config.doubaoThinking },
           messages: [
             {
               role: 'user',
@@ -1511,7 +1889,7 @@ ${JSON.stringify(strippedTree, null, 2)}
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'ep-m-20251216144152-z7xk2', // Doubao-Seed-1.6-lite
+        model: config.doubaoModelId, thinking: { type: config.doubaoThinking },
         messages: [
           {
             role: 'system',
@@ -1521,7 +1899,8 @@ ${JSON.stringify(strippedTree, null, 2)}
             role: 'user',
             content: userContent
           }
-        ]
+        ],
+        max_tokens: 16000
       })
     });
 
@@ -1757,7 +2136,7 @@ export async function generateAnnotationSummaryWithAI(
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'ep-m-20251216144152-z7xk2', // Doubao-Seed-1.6-lite
+          model: config.doubaoModelId, thinking: { type: config.doubaoThinking },
           messages: [
             {
               role: 'user',

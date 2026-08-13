@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Modal, Form, Switch, Input, Button, Space, message, Typography, Alert, Select } from 'antd';
 import { ShareAltOutlined, CopyOutlined, GlobalOutlined } from '@ant-design/icons';
 import { authFetch } from '@/app/_lib/api';
+import AIProcessingModal from '@/app/_components/AIProcessingModal';
 
 const { Text, Link } = Typography;
 
@@ -39,9 +40,10 @@ interface PublishStatus {
 export default function PublishDialog({ courseId, visible, onClose, onPublished }: PublishDialogProps) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [publishProcessing, setPublishProcessing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<PublishStatus | null>(null);
   const [checking, setChecking] = useState(false);
-  const [enableTTS, setEnableTTS] = useState(false);
+  const [enableTTS, setEnableTTS] = useState(true); // 默认启用配音：发布时自动生成配音音频
   const [ttsProviders, setTTSProviders] = useState<any[]>([]);
 
   // 获取发布状态
@@ -75,7 +77,27 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
   const loadTTSProviders = async () => {
     try {
       const response = await authFetch<any>('/api/ai/tts/providers');
-      setTTSProviders(response.providers || []);
+      const list = response.providers || [];
+      setTTSProviders(list);
+      // 自动选中"已配置且有音色"的供应商，避免选到未配置项导致“秒发布无配音”
+      // 优先按服务端推荐顺序，其次遍历；跳过 configured=false 或 无音色 的供应商
+      const def = response.recommendation?.default;
+      const order: string[] = [];
+      if (def) order.push(def);
+      for (const p of list) { if (p.id !== def) order.push(p.id); }
+      let chosen: any = null;
+      for (const id of order) {
+        const p = list.find((x: any) => x.id === id);
+        if (p && p.configured !== false && Array.isArray(p.voices) && p.voices.length > 0) {
+          chosen = p;
+          break;
+        }
+      }
+      if (chosen) {
+        form.setFieldValue('ttsProvider', chosen.id);
+        form.setFieldValue('ttsVoice', chosen.voices[0].id);
+        setEnableTTS(true);
+      }
     } catch (error) {
       console.error('加载TTS供应商失败:', error);
     }
@@ -84,6 +106,7 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
   // 发布课程
   const handlePublish = async (values: any) => {
     setLoading(true);
+    setPublishProcessing(true);
     try {
       const { ttsProvider, ttsVoice, ...publishConfig } = values;
       
@@ -101,6 +124,9 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
             ...(ttsProvider === 'azure' ? {
               voiceName: voice.id,
               language: voice.locale || 'zh-CN'
+            } : ttsProvider === 'doubao' ? {
+              speaker: voice.id,
+              speedRatio: 1.0
             } : {
               voice_id: voice.id,
               speed: 1.0
@@ -109,13 +135,22 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
         }
       }
       
-      const response = await authFetch(`/api/ai-courses/${courseId}/publish`, {
+      const response = await authFetch<any>(`/api/ai-courses/${courseId}/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
 
-      message.success(publishStatus?.isPublished ? '发布配置已更新' : '课程发布成功！');
+      // 配音生成异常时，给出明确警告（不再静默“秒发布无配音”）
+      if (response?.ttsWarning) {
+        const w = response.ttsWarning;
+        message.warning(
+          `课程已发布，但配音生成失败（${w.generated}/${w.expected}）：${w.message}。请在发布时改用 Azure TTS，或联系管理员配置豆包 TTS。`,
+          12
+        );
+      } else {
+        message.success(publishStatus?.isPublished ? '发布配置已更新' : '课程发布成功！');
+      }
       
       // 重新获取状态
       await checkPublishStatus();
@@ -127,6 +162,7 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
       message.error(error.message || '发布失败');
     } finally {
       setLoading(false);
+      setPublishProcessing(false);
     }
   };
 
@@ -339,8 +375,13 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
             >
               <Select placeholder="选择TTS供应商">
                 {ttsProviders.map(provider => (
-                  <Select.Option key={provider.id} value={provider.id}>
+                  <Select.Option
+                    key={provider.id}
+                    value={provider.id}
+                    disabled={provider.configured === false}
+                  >
                     {provider.name} - {provider.description}
+                    {provider.configured === false ? '（未配置，不可用）' : ''}
                   </Select.Option>
                 ))}
               </Select>
@@ -393,6 +434,19 @@ export default function PublishDialog({ courseId, visible, onClose, onPublished 
           </Space>
         </div>
       </Form>
+
+      {/* 发布处理等待弹窗 */}
+      <AIProcessingModal
+        open={publishProcessing}
+        title="正在发布课程"
+        messages={[
+          '正在保存课程数据...',
+          '处理课程大纲与素材...',
+          ...(enableTTS ? ['生成配音音频文件...', '处理语音合成...'] : []),
+          '生成公开访问页面...',
+          '即将完成发布...',
+        ]}
+      />
     </Modal>
   );
 }

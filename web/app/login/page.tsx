@@ -299,24 +299,16 @@ export default function LoginPage() {
         position: 'relative'
       }}>
         <h1 style={{
-          fontSize: 42,
+          fontSize: 34,
           fontWeight: 700,
           color: '#ffffff',
-          letterSpacing: 6,
+          letterSpacing: 4,
           margin: 0,
           textShadow: '0 0 40px rgba(34, 211, 238, 0.5), 0 0 80px rgba(34, 211, 238, 0.3)',
           fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif'
         }}>
-          CollabXR平台
+          虚拟仿真多人多地协同教学系统
         </h1>
-        <p style={{
-          fontSize: 14,
-          color: 'rgba(148, 163, 184, 0.8)',
-          marginTop: 8,
-          letterSpacing: 2
-        }}>
-          协作式混合现实内容管理系统
-        </p>
       </div>
       
       {/* 液态玻璃登录卡片 */}

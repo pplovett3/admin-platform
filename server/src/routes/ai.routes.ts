@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requireRole } from '../middlewares/auth';
-import { generateCourse, searchImages, ttsPreview, queryTTS, getTTSProviders, generateQuestions, updateQuestions, organizeModelStructure, identifySinglePart, generateAnnotationSummary } from '../controllers/ai.controller';
+import { generateCourse, searchImages, ttsPreview, queryTTS, getTTSProviders, generateQuestions, updateQuestions, organizeModelStructure, identifySinglePart, generateAnnotationSummary, generateImage } from '../controllers/ai.controller';
 
 const router = Router();
 
@@ -35,5 +35,8 @@ router.post('/identify-part', requireRole(['superadmin', 'schoolAdmin', 'teacher
 
 // AI生成标注简介
 router.post('/generate-annotation-summary', requireRole(['superadmin', 'schoolAdmin', 'teacher']), generateAnnotationSummary);
+
+// AI生成图片（豆包 Seedream 文生图）
+router.post('/generate-image', requireRole(['superadmin', 'schoolAdmin', 'teacher']), generateImage);
 
 export default router;

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, Component, ReactNode } from 'react';
-import { Button, Progress, Space, Typography, message } from 'antd';
+import { createPortal } from 'react-dom';
+import { Button, Modal, Progress, Space, Typography, message } from 'antd';
 import { 
   PlayCircleOutlined, 
   PauseCircleOutlined, 
@@ -111,6 +112,23 @@ export default function PublicCoursePlayer({
   const [modelLoaded, setModelLoaded] = useState(false);
   const [outlineVisible, setOutlineVisible] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+
+  // 图片预览打开时隐藏 WebGL 画布，规避浏览器合成层覆盖弹窗的问题。
+  useEffect(() => {
+    if (!imageViewerVisible) return;
+
+    const canvases = Array.from(document.querySelectorAll<HTMLCanvasElement>('canvas'));
+    const previousVisibility = canvases.map(canvas => canvas.style.visibility);
+    canvases.forEach(canvas => {
+      canvas.style.visibility = 'hidden';
+    });
+
+    return () => {
+      canvases.forEach((canvas, index) => {
+        canvas.style.visibility = previousVisibility[index];
+      });
+    };
+  }, [imageViewerVisible]);
   const [windowSize, setWindowSize] = useState({ width: 1920, height: 1080 });
 
   // 检测移动端和窗口尺寸（安全检查）
@@ -667,10 +685,14 @@ export default function PublicCoursePlayer({
     }
     
     if (imageUrl) {
-      // 处理CORS问题：如果是外部URL，可能需要通过代理访问
+      // 处理图片URL：外部URL通过代理访问（避免热链保护、CORS等问题）
       let processedImageUrl = imageUrl;
-      if (imageUrl.startsWith('https://dl.yf-xr.com/')) {
-        processedImageUrl = `/api/public/proxy?url=${encodeURIComponent(imageUrl)}`;
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      if (imageUrl.startsWith('https://dl.yf-xr.com/') || imageUrl.startsWith('https://video.yf-xr.com/')) {
+        processedImageUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(imageUrl)}`;
+      } else if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        // 其他外部图片URL也通过代理，避免热链保护和跨域问题
+        processedImageUrl = `${baseUrl}/api/public/proxy?url=${encodeURIComponent(imageUrl)}`;
       }
         
       setCurrentImage({
@@ -1117,6 +1139,10 @@ export default function PublicCoursePlayer({
           50% { transform: translate(-50%, -50%) scale(1.05); }
           100% { transform: translate(-50%, -50%) scale(1); }
         }
+        @keyframes start-glow {
+          0%, 100% { box-shadow: 0 0 30px rgba(16, 185, 129, 0.4), 0 0 60px rgba(16, 185, 129, 0.2); }
+          50% { box-shadow: 0 0 40px rgba(16, 185, 129, 0.6), 0 0 80px rgba(16, 185, 129, 0.3); }
+        }
         
         /* 移动端横屏适配 */
         @media screen and (max-width: 768px) and (orientation: portrait) {
@@ -1346,6 +1372,64 @@ export default function PublicCoursePlayer({
             }}
           />
         </div>
+
+        {/* 开始播放覆盖层 - 当未播放且尚未开始时显示 */}
+        {!isPlaying && currentItemNumber === 0 && (
+          <div style={{
+            position: 'absolute',
+            top: '60px',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 500,
+            background: 'rgba(0, 0, 0, 0.5)',
+            backdropFilter: 'blur(4px)',
+          }}>
+            <div
+              onClick={() => onPlayStateChange(true)}
+              style={{
+                cursor: 'pointer',
+                textAlign: 'center',
+                transition: 'transform 0.2s ease',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+            >
+              <div style={{
+                width: 100,
+                height: 100,
+                margin: '0 auto 20px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.9) 0%, rgba(5, 150, 105, 0.9) 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                animation: 'start-glow 2.5s ease-in-out infinite',
+                border: '3px solid rgba(52, 211, 153, 0.3)',
+              }}>
+                <PlayCircleOutlined style={{ fontSize: 52, color: 'white' }} />
+              </div>
+              <div style={{
+                fontSize: 22,
+                fontWeight: 700,
+                color: 'rgba(255, 255, 255, 0.95)',
+                marginBottom: 6,
+                letterSpacing: 2,
+              }}>
+                开始播放
+              </div>
+              <div style={{
+                fontSize: 13,
+                color: 'rgba(110, 231, 183, 0.7)',
+              }}>
+                点击开始 AI 课程讲解
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 课程大纲面板 - 毛玻璃深色风格 */}
         <div 
@@ -1587,13 +1671,23 @@ export default function PublicCoursePlayer({
         }}
         title="点击放大查看"
         >
-          <img 
-            src={currentImage.url} 
+          <img
+            src={currentImage.url}
             alt={currentImage.title}
             style={{
               width: '100%',
               height: 'auto',
               display: 'block'
+            }}
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+              e.currentTarget.parentElement!.style.minHeight = '60px';
+              e.currentTarget.parentElement!.style.display = 'flex';
+              e.currentTarget.parentElement!.style.alignItems = 'center';
+              e.currentTarget.parentElement!.style.justifyContent = 'center';
+              e.currentTarget.parentElement!.style.color = '#888';
+              e.currentTarget.parentElement!.style.fontSize = '12px';
+              e.currentTarget.parentElement!.innerHTML = '🖼️ 图片加载失败';
             }}
           />
           {currentImage.title && (
@@ -1636,14 +1730,52 @@ export default function PublicCoursePlayer({
 
 
 
-      {/* 图片查看器模态框 */}
-      {imageViewerVisible && (
-        <ImageViewer 
-          src={viewerImageSrc} 
-          visible={imageViewerVisible} 
-          onClose={closeImageViewer} 
-        />
-      )}
+      {/* 图片查看器：使用 Ant Design Portal，避免自定义弹层被 WebGL 覆盖 */}
+      <Modal
+        open={imageViewerVisible}
+        onCancel={closeImageViewer}
+        footer={null}
+        centered
+        width="100vw"
+        zIndex={100000}
+        destroyOnClose
+        styles={{
+          mask: { background: '#000' },
+          wrapper: { overflow: 'hidden' },
+          content: {
+            width: '100vw',
+            height: '100vh',
+            maxWidth: 'none',
+            padding: 0,
+            borderRadius: 0,
+            background: '#000',
+            boxShadow: 'none'
+          },
+          body: {
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#000'
+          }
+        }}
+      >
+        {viewerImageSrc && (
+          <img
+            src={viewerImageSrc}
+            alt="课程配图放大查看"
+            style={{
+              display: 'block',
+              maxWidth: '94vw',
+              maxHeight: '92vh',
+              width: 'auto',
+              height: 'auto',
+              objectFit: 'contain'
+            }}
+          />
+        )}
+      </Modal>
       </div>
     </>
     </PlayerErrorBoundary>
@@ -1663,6 +1795,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [imgError, setImgError] = useState(false);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -1782,12 +1915,35 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
   useEffect(() => {
     if (visible) {
       resetView();
+      setImgError(false);
     }
+  }, [visible, src]);
+
+  // 部分浏览器会将 WebGL canvas 放在独立合成层，导致其错误覆盖普通 DOM 弹层。
+  // 查看图片时临时隐藏页面中的 three.js 画布，关闭后恢复原状。
+  useEffect(() => {
+    if (!visible) return;
+
+    const canvases = Array.from(document.querySelectorAll<HTMLCanvasElement>('canvas'));
+    const previousVisibility = canvases.map(canvas => canvas.style.visibility);
+    const previousOverflow = document.body.style.overflow;
+
+    canvases.forEach(canvas => {
+      canvas.style.visibility = 'hidden';
+    });
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      canvases.forEach((canvas, index) => {
+        canvas.style.visibility = previousVisibility[index];
+      });
+      document.body.style.overflow = previousOverflow;
+    };
   }, [visible]);
 
   if (!visible) return null;
 
-  return (
+  return createPortal(
     <div
       ref={containerRef}
       style={{
@@ -1796,8 +1952,8 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.9)',
-        zIndex: 2000,
+        backgroundColor: '#000',
+        zIndex: 99999,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -1940,22 +2096,37 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ src, visible, onClose }) => {
       </div>
 
       {/* 图片 */}
-      <img
-        ref={imageRef}
-        src={src}
-        alt="放大查看"
-        style={{
-          maxWidth: scale === 1 ? '90vw' : 'none',
-          maxHeight: scale === 1 ? '90vh' : 'none',
-          transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
-          cursor: isDragging ? 'grabbing' : scale > 1 ? 'grab' : 'default',
-          userSelect: 'none',
-          pointerEvents: 'auto'
-        }}
-        onMouseDown={handleMouseDown}
-        onDoubleClick={handleDoubleClick}
-        onDragStart={(e) => e.preventDefault()}
-      />
-    </div>
+      {imgError ? (
+        <div style={{ textAlign: 'center', color: '#888' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🖼️</div>
+          <div style={{ fontSize: 16, marginBottom: 8 }}>图片加载失败</div>
+          <div style={{ fontSize: 12, color: '#555', maxWidth: 400, wordBreak: 'break-all' }}>
+            {src || '无图片URL'}
+          </div>
+          <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>
+            可能是图片链接已过期或不可访问
+          </div>
+        </div>
+      ) : (
+        <img
+          ref={imageRef}
+          src={src}
+          alt="放大查看"
+          style={{
+            maxWidth: scale === 1 ? '90vw' : 'none',
+            maxHeight: scale === 1 ? '90vh' : 'none',
+            transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
+            cursor: isDragging ? 'grabbing' : scale > 1 ? 'grab' : 'default',
+            userSelect: 'none',
+            pointerEvents: 'auto'
+          }}
+          onMouseDown={handleMouseDown}
+          onDoubleClick={handleDoubleClick}
+          onDragStart={(e) => e.preventDefault()}
+          onError={() => setImgError(true)}
+        />
+      )}
+    </div>,
+    document.body
   );
 };
