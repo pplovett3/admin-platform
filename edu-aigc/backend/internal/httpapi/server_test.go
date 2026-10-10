@@ -302,6 +302,17 @@ func TestSchoolDecisions(t *testing.T) {
 	defer ts.Close()
 	school := login(t, ts.URL, "school")
 	teacher := login(t, ts.URL, "teacher")
+	groupsRes := do(t, http.MethodGet, ts.URL+"/api/groups", teacher, nil)
+	if groupsRes.StatusCode != 200 {
+		t.Fatalf("教研组列表应能返回 %d", groupsRes.StatusCode)
+	}
+	var listed struct {
+		Items []store.ResearchGroup `json:"items"`
+	}
+	decode(t, groupsRes, &listed)
+	if len(listed.Items) < 2 {
+		t.Fatalf("语文教师应同时属于多个教研组: %+v", listed.Items)
+	}
 	math := login(t, ts.URL, "math")
 	lead := login(t, ts.URL, "lead")
 

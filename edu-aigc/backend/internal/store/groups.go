@@ -59,30 +59,38 @@ func (s *Store) ListGroups(u User) ([]ResearchGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []ResearchGroup
 	for rows.Next() {
 		var g ResearchGroup
 		if err := rows.Scan(&g.ID, &g.TenantID, &g.Name, &g.Mode, &g.Subject, &g.GradeLabel, &g.Description, &g.CreatedAt); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		if u.Role != "admin" && u.Role != "school_admin" && !inGroup(u, g.ID) {
 			continue
 		}
-		members, err := s.groupMembers(g.ID)
-		if err != nil {
-			return nil, err
-		}
-		g.Members = members
-		for _, m := range members {
-			g.MemberIDs = append(g.MemberIDs, m.ID)
-		}
 		out = append(out, g)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
 	}
 	if out == nil {
 		out = []ResearchGroup{}
 	}
-	return out, rows.Err()
+	// 成员查询必须等上面的结果集关掉。SQLite 只开一条连接，套着查会把整个服务卡住。
+	for i := range out {
+		members, err := s.groupMembers(out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Members = members
+		for _, m := range members {
+			out[i].MemberIDs = append(out[i].MemberIDs, m.ID)
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) GetGroup(id string) (ResearchGroup, error) {
