@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>知识库</h2>
-        <p>支持 txt、md、csv、docx、xlsx、pdf 和图片。文档先脱敏，再切片入库。全班成绩表会被拦截。</p>
+        <p>支持 txt、md、csv、docx、xlsx、pdf 和图片。文档先脱敏，再切片入库。全班成绩表会被拦截。图片只有在学校选定且已安装的 OCR 引擎下才会识别，否则只加密归档。</p>
       </div>
     </div>
     <div class="grid-2">
@@ -12,6 +12,12 @@
           <label class="field"><span>新建知识库</span><input v-model="name" placeholder="例如：三年级语文" /></label>
           <label class="field"><span>共享</span>
             <select v-model="share"><option value="private">私有</option><option value="group">教研组</option><option value="public">全校</option></select>
+          </label>
+          <label class="field" v-if="share === 'group'"><span>共享到</span>
+            <select v-model="groupId">
+              <option value="">选择教研组</option>
+              <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+            </select>
           </label>
           <button class="btn">创建</button>
           <p class="err" v-if="error">{{ error }}</p>
@@ -59,6 +65,8 @@ const current = ref(null)
 const docs = ref([])
 const name = ref('')
 const share = ref('private')
+const groupId = ref('')
+const groups = ref([])
 const file = ref(null)
 const uploading = ref(false)
 const error = ref('')
@@ -69,8 +77,9 @@ function levelText(level) {
   return ['未改写', '一级替换', '二级屏蔽', '三级拦截'][level] || ''
 }
 async function load() {
-  const data = await api('/api/knowledge/list')
+  const [data, gs] = await Promise.all([api('/api/knowledge/list'), api('/api/groups')])
   kbs.value = data.items || []
+  groups.value = gs.items || []
 }
 async function open(k) {
   current.value = k
@@ -81,7 +90,7 @@ async function open(k) {
 async function create() {
   error.value = ''
   try {
-    const data = await api('/api/knowledge/create', { method: 'POST', body: JSON.stringify({ name: name.value, share_type: share.value }) })
+    const data = await api('/api/knowledge/create', { method: 'POST', body: JSON.stringify({ name: name.value, share_type: share.value, group_id: share.value === 'group' ? groupId.value : '' }) })
     name.value = ''
     await load()
     await open(data)

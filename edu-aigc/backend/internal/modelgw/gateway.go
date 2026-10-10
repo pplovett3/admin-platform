@@ -26,6 +26,7 @@ type Request struct {
 	Notes      []string
 	History    string
 	Correction string
+	Curriculum string
 	Sensitive  bool
 	ForceLocal bool
 }
@@ -37,11 +38,38 @@ type Gateway struct {
 	Client  *http.Client
 }
 
+// LessonCanLeaveCampus 只有同时配置了兼容接口地址和密钥后才为真。
+// 不默认指向任何公有厂商。缺一则教案留在校内本地模型。
+func (g *Gateway) LessonCanLeaveCampus() bool {
+	return g != nil && strings.TrimSpace(g.APIKey) != "" && strings.TrimSpace(g.BaseURL) != ""
+}
+
+// Overlay 用学校设定覆盖环境变量。空字段保留原来的值，避免把已配置的密钥清掉。
+func Overlay(base *Gateway, baseURL, apiKey, model string) Gateway {
+	g := Gateway{}
+	if base != nil {
+		g = *base
+		g.Client = base.Client
+	}
+	if strings.TrimSpace(baseURL) != "" {
+		g.BaseURL = strings.TrimSpace(baseURL)
+	}
+	if strings.TrimSpace(apiKey) != "" {
+		g.APIKey = strings.TrimSpace(apiKey)
+	}
+	if strings.TrimSpace(model) != "" {
+		g.Model = strings.TrimSpace(model)
+	}
+	return g
+}
+
 func (g *Gateway) Complete(ctx context.Context, req Request) (text, model string, degraded bool) {
 	if req.Topic == "" {
 		req.Topic = "未命名课题"
 	}
-	localOnly := g == nil || strings.TrimSpace(g.APIKey) == "" || req.ForceLocal || req.Sensitive
+	// 不绑定具体厂商。没有密钥时，教案和其他生成都走校内本地模型。
+	// 学情、批改、评语即使以后配了密钥也不出校。
+	localOnly := g == nil || !g.LessonCanLeaveCampus() || req.ForceLocal || req.Sensitive
 	outbound := req.User + "\n" + strings.Join(req.Chunks, "\n") + "\n" + req.System
 	if desensitize.ContainsSensitive(outbound) {
 		localOnly = true
@@ -61,9 +89,9 @@ func (g *Gateway) Complete(ctx context.Context, req Request) (text, model string
 }
 
 func (g *Gateway) remote(ctx context.Context, req Request) (string, error) {
-	base := strings.TrimRight(g.BaseURL, "/")
-	if base == "" {
-		base = "https://api.openai.com/v1"
+	base := strings.TrimRight(strings.TrimSpace(g.BaseURL), "/")
+	if base == "" || strings.TrimSpace(g.APIKey) == "" {
+		return "", fmt.Errorf("未配置兼容接口地址或密钥")
 	}
 	msgs := []map[string]string{}
 	if strings.TrimSpace(req.System) != "" {
@@ -79,7 +107,7 @@ func (g *Gateway) remote(ctx context.Context, req Request) (string, error) {
 	msgs = append(msgs, map[string]string{"role": "user", "content": user})
 	model := g.Model
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = "compatible-model"
 	}
 	body, _ := json.Marshal(map[string]any{
 		"model":       model,
@@ -151,6 +179,9 @@ func lesson(req Request) string {
 		stage = "本校"
 	}
 	fmt.Fprintf(&b, "%s%s教案：%s\n\n", stage, subject, req.Topic)
+	if req.Curriculum != "" {
+		b.WriteString("课标依据：" + req.Curriculum + "\n\n")
+	}
 	if req.Correction != "" {
 		b.WriteString("修订说明：已按本地校验意见补齐结构，并避免超纲表述。\n\n")
 	}

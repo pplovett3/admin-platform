@@ -12,6 +12,7 @@ import (
 	"edu-aigc/internal/auth"
 	"edu-aigc/internal/chat"
 	"edu-aigc/internal/desensitize"
+	"edu-aigc/internal/identity"
 	"edu-aigc/internal/ingest"
 	"edu-aigc/internal/modelgw"
 	"edu-aigc/internal/rag"
@@ -54,6 +55,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/whitelist", s.addWhitelist)
 	mux.HandleFunc("DELETE /api/whitelist", s.deleteWhitelist)
 	mux.HandleFunc("GET /api/learning/stats", s.learningStats)
+	mux.HandleFunc("GET /api/settings", s.getSettings)
+	mux.HandleFunc("PUT /api/settings", s.putSettings)
+	mux.HandleFunc("GET /api/groups", s.listGroups)
+	mux.HandleFunc("POST /api/groups", s.saveGroup)
+	mux.HandleFunc("PUT /api/groups", s.saveGroup)
+	mux.HandleFunc("DELETE /api/groups", s.deleteGroup)
+	mux.HandleFunc("POST /api/groups/members", s.addMember)
+	mux.HandleFunc("DELETE /api/groups/members", s.removeMember)
+	mux.HandleFunc("GET /api/users/list", s.listUsers)
 	mux.HandleFunc("/", s.static)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -80,7 +90,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "请求格式不正确")
 		return
 	}
-	u, err := s.Store.Login(strings.TrimSpace(body.Username), body.Password)
+	cfg, _ := s.Store.Settings(store.TenantID)
+	provider := identity.Active(cfg.IdentityMode)
+	u, err := provider.Authenticate(strings.TrimSpace(body.Username), body.Password, s.Store.Login)
 	if err != nil {
 		_ = s.Store.AddAudit(store.Audit{TenantID: store.TenantID, UserID: "", IP: ipOf(r), OperationType: "login", OperationDetail: "登录失败", Result: "denied"})
 		writeErr(w, 401, err.Error())
@@ -210,13 +222,17 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "当前角色不能使用该共享范围")
 		return
 	}
+	groupID, groupName, okBind := s.bindGroup(w, u, a.ShareType, a.GroupID)
+	if !okBind {
+		return
+	}
 	a.ID = store.NewID()
 	a.TenantID = u.TenantID
 	a.OwnerID = u.ID
-	if a.Department == "" {
-		a.Department = u.Department
-	}
-	if a.ShareType == "group" {
+	a.GroupID = groupID
+	if groupName != "" {
+		a.Department = groupName
+	} else if a.Department == "" {
 		a.Department = u.Department
 	}
 	a.KBIDs = s.filterReadableKB(u, a.KBIDs)
@@ -254,14 +270,19 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "当前角色不能使用该共享范围")
 		return
 	}
+	groupID, groupName, okBind := s.bindGroup(w, u, body.ShareType, body.GroupID)
+	if !okBind {
+		return
+	}
 	old.Name = body.Name
 	old.Description = body.Description
 	old.SystemPrompt = body.SystemPrompt
 	old.ShareType = body.ShareType
 	old.KBIDs = s.filterReadableKB(u, body.KBIDs)
 	old.PluginIDs = body.PluginIDs
-	if body.ShareType == "group" {
-		old.Department = u.Department
+	old.GroupID = groupID
+	if groupName != "" {
+		old.Department = groupName
 	} else if body.Department != "" {
 		old.Department = body.Department
 	}
@@ -337,10 +358,19 @@ func (s *Server) createKB(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "当前角色不能使用该共享范围")
 		return
 	}
+	groupID, groupName, okBind := s.bindGroup(w, u, k.ShareType, k.GroupID)
+	if !okBind {
+		return
+	}
 	k.ID = store.NewID()
 	k.TenantID = u.TenantID
 	k.OwnerID = u.ID
-	k.Department = u.Department
+	k.GroupID = groupID
+	if groupName != "" {
+		k.Department = groupName
+	} else if k.Department == "" {
+		k.Department = u.Department
+	}
 	k.ACLUserIDs = "[]"
 	k.CreatedAt = store.Now()
 	if err := s.Store.CreateKB(k); err != nil {
@@ -402,7 +432,8 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	terms, _ := s.Store.WhitelistTerms(u.TenantID)
 	eng := desensitizer(terms)
-	doc, err = ingest.Process(s.Store, eng, s.DataKey, doc, data)
+	cfg, _ := s.Store.Settings(u.TenantID)
+	doc, err = ingest.Process(s.Store, eng, s.DataKey, doc, data, cfg.OCREngine)
 	if err != nil {
 		writeErr(w, 500, "处理文档失败")
 		return
@@ -535,7 +566,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "资源不存在")
 		return
 	}
-	allowed := u.Role == "admin" || (u.Role == "school_admin" && u.TenantID == res.TenantID) || res.UserID == u.ID || (u.Role == "group_lead" && owner.Department == u.Department && owner.TenantID == u.TenantID)
+	allowed := u.Role == "admin" || (u.Role == "school_admin" && u.TenantID == res.TenantID) || res.UserID == u.ID || (u.Role == "group_lead" && owner.TenantID == u.TenantID && store.SharesGroup(u, owner))
 	if !allowed {
 		writeErr(w, 403, "无权下载该资源")
 		return

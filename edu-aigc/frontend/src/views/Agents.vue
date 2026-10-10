@@ -31,6 +31,12 @@
             <option value="public">全校</option>
           </select>
         </label>
+        <label class="field" v-if="form.share_type === 'group'"><span>共享到</span>
+          <select v-model="form.group_id">
+            <option value="">选择教研组</option>
+            <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
+        </label>
         <div class="field"><span>知识库</span>
           <label class="check" v-for="k in kbs" :key="k.id"><input type="checkbox" :value="k.id" v-model="form.kb_ids" />{{ k.name }}</label>
         </div>
@@ -51,25 +57,27 @@ import { api, shareLabel } from '../api'
 const agents = ref([])
 const kbs = ref([])
 const plugins = ref([])
+const groups = ref([])
 const error = ref('')
-const form = reactive({ id: '', name: '', description: '', system_prompt: '', share_type: 'private', kb_ids: [], plugin_ids: [] })
+const form = reactive({ id: '', name: '', description: '', system_prompt: '', share_type: 'private', group_id: '', kb_ids: [], plugin_ids: [] })
 
 function reset() {
-  Object.assign(form, { id: '', name: '', description: '', system_prompt: '', share_type: 'private', kb_ids: [], plugin_ids: [] })
+  Object.assign(form, { id: '', name: '', description: '', system_prompt: '', share_type: 'private', group_id: '', kb_ids: [], plugin_ids: [] })
 }
 function edit(a) {
   Object.assign(form, { ...a, kb_ids: [...(a.kb_ids || [])], plugin_ids: [...(a.plugin_ids || [])] })
 }
 async function load() {
-  const [a, k, p] = await Promise.all([api('/api/agent/list'), api('/api/knowledge/list'), api('/api/plugin/list')])
+  const [a, k, p, g] = await Promise.all([api('/api/agent/list'), api('/api/knowledge/list'), api('/api/plugin/list'), api('/api/groups')])
   agents.value = a.items || []
   kbs.value = k.items || []
   plugins.value = p.items || []
+  groups.value = g.items || []
 }
 async function save() {
   error.value = ''
   try {
-    const payload = { ...form, kb_ids: form.kb_ids, plugin_ids: form.plugin_ids }
+    const payload = { ...form, group_id: form.share_type === 'group' ? form.group_id : '', kb_ids: form.kb_ids, plugin_ids: form.plugin_ids }
     if (form.id) await api('/api/agent/update', { method: 'PUT', body: JSON.stringify(payload) })
     else await api('/api/agent/create', { method: 'POST', body: JSON.stringify(payload) })
     reset()

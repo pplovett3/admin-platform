@@ -6,6 +6,7 @@ import Chat from './views/Chat.vue'
 import Agents from './views/Agents.vue'
 import Knowledge from './views/Knowledge.vue'
 import Resources from './views/Resources.vue'
+import Groups from './views/Groups.vue'
 import Security from './views/Security.vue'
 
 export const router = createRouter({
@@ -21,6 +22,7 @@ export const router = createRouter({
         { path: 'agents', component: Agents },
         { path: 'knowledge', component: Knowledge },
         { path: 'resources', component: Resources },
+        { path: 'groups', component: Groups },
         { path: 'security', component: Security }
       ]
     }

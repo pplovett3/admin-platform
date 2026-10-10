@@ -14,7 +14,7 @@ import (
 	"edu-aigc/internal/store"
 )
 
-func Process(st *store.Store, eng *desensitize.Engine, key []byte, doc store.Document, data []byte) (store.Document, error) {
+func Process(st *store.Store, eng *desensitize.Engine, key []byte, doc store.Document, data []byte, ocrEngine string) (store.Document, error) {
 	origName := doc.ID + filepath.Ext(doc.FileName) + ".bin"
 	origPath := filepath.Join(st.DataDir(), "original-files", origName)
 	enc, err := secure.Encrypt(key, data)
@@ -28,13 +28,17 @@ func Process(st *store.Store, eng *desensitize.Engine, key []byte, doc store.Doc
 	doc.Status = "desensitizing"
 	_ = st.SaveDocumentState(doc)
 
-	text, err := Extract(doc.FileName, data)
+	text, err := Extract(doc.FileName, data, ocrEngine)
 	if err != nil {
-		if errors.Is(err, ErrNeedOCR) {
+		var ocrErr *OCRError
+		if errors.As(err, &ocrErr) || errors.Is(err, ErrNeedOCR) {
 			arch := filepath.Join(st.DataDir(), "privacy-archive", doc.ID+".bin")
 			_ = os.WriteFile(arch, enc, 0o600)
 			doc.Status = "failed"
-			doc.ErrorMessage = "图片已加密归档。当前环境没有本地 OCR，未提取文字，也不会把图片送入大模型。"
+			doc.ErrorMessage = "图片已加密归档，不会送入大模型。"
+			if ocrErr != nil && ocrErr.Reason != "" {
+				doc.ErrorMessage = ocrErr.Reason
+			}
 			doc.Preview = ""
 			_ = st.SaveDocumentState(doc)
 			return doc, nil

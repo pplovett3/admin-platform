@@ -24,7 +24,7 @@ func CanReadKB(u User, kb KB) bool {
 	if kb.ShareType == "public" {
 		return true
 	}
-	if kb.ShareType == "group" && kb.Department != "" && kb.Department == u.Department {
+	if kb.ShareType == "group" && inGroup(u, kb.GroupID) {
 		return true
 	}
 	return false
@@ -42,7 +42,7 @@ func CanWriteKB(u User, kb KB) bool {
 	if kb.OwnerID == u.ID {
 		return true
 	}
-	if u.Role == "group_lead" && kb.ShareType == "group" && kb.Department == u.Department && kb.TenantID == u.TenantID {
+	if u.Role == "group_lead" && kb.ShareType == "group" && inGroup(u, kb.GroupID) && kb.TenantID == u.TenantID {
 		return true
 	}
 	return false
@@ -64,7 +64,7 @@ func CanReadAgent(u User, a Agent) bool {
 	if a.ShareType == "public" {
 		return true
 	}
-	if a.ShareType == "group" && a.Department != "" && a.Department == u.Department {
+	if a.ShareType == "group" && inGroup(u, a.GroupID) {
 		return true
 	}
 	return false
@@ -77,7 +77,7 @@ func CanWriteAgent(u User, a Agent) bool {
 	if a.OwnerID == u.ID && a.TenantID == u.TenantID {
 		return true
 	}
-	if u.Role == "group_lead" && a.ShareType == "group" && a.Department == u.Department && a.TenantID == u.TenantID {
+	if u.Role == "group_lead" && a.ShareType == "group" && inGroup(u, a.GroupID) && a.TenantID == u.TenantID {
 		return true
 	}
 	return false
@@ -94,6 +94,27 @@ func AllowedShare(u User, share string) bool {
 	default:
 		return false
 	}
+}
+
+func inGroup(u User, groupID string) bool {
+	if groupID == "" {
+		return false
+	}
+	for _, id := range u.GroupIDs {
+		if id == groupID {
+			return true
+		}
+	}
+	return false
+}
+
+func SharesGroup(a, b User) bool {
+	for _, id := range a.GroupIDs {
+		if inGroup(b, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func aclHas(raw, userID string) bool {

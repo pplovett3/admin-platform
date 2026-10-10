@@ -1,3 +1,6 @@
+# 应用服务使用卷里的 SQLite 和本地文件，不连接下面的数据库和队列。
+# postgres、minio、qdrant、rabbitmq 只放在 infra profile，本迭代不要用它替换正在运行的存储。
+
 services:
   app:
     build: .

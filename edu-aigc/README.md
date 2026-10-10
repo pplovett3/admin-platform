@@ -31,12 +31,21 @@ go run ./cmd/server
 | `DATA_DIR` | 数据库与文件目录，默认 `backend/data` |
 | `JWT_SECRET` | 登录令牌密钥 |
 | `DATA_KEY` | 原始文件加密密钥 |
-| `MODEL_BASE_URL` | OpenAI 兼容接口，例如通义兼容模式 |
-| `MODEL_API_KEY` | 留空则只用本地模型 |
-| `MODEL_NAME` | 公有模型名称 |
+| `MODEL_BASE_URL` | OpenAI 兼容接口地址。不绑定具体厂商，留空则不出校 |
+| `MODEL_API_KEY` | 留空则只用校内本地模型。只填密钥、不填地址也不会出校 |
+| `MODEL_NAME` | 学校自己填写的模型名称 |
 | `STATIC_DIR` | 前端构建目录，默认自动寻找 `frontend/dist` |
 
-学情分析、批改和评语始终只走本地模型。送往公有接口之前还会再扫一遍手机号和身份证。
+学情分析、批改和评语始终只走本地模型。教案只有在学校设定或环境变量里同时写了兼容接口地址和密钥后才会离开校园。送出前还会再扫一遍手机号和身份证。
+
+## 学校设定
+
+用校务管理员 `school` 登录后：
+
+- **审计与安全**：填写课标或教材的版本和来源。未填写时，教案会标明演示摘录不能当作依据。图片 OCR 可选自动、PaddleOCR、Tesseract 或关闭；选中的引擎没安装时只加密归档，不会偷偷换另一个。登录方式可以预留 CAS 或 OAuth，插件没启用前仍用本校用户名密码。模型地址和密钥留空时，生成留在校内。
+- **教研组**：按学科、按年级或自定义建组，并把同一人加入多个组。知识库和智能体选择「教研组」共享时，要指定一个组。
+
+演示数据里，语文教师同时在语文教研组和三年级组，数学教师同时在数学教研组和三年级组。
 
 ## 测试
 
@@ -51,5 +60,5 @@ go test ./...
 
 - `backend`：Go 服务，包含脱敏、检索、校验、插件和模型网关
 - `frontend`：Vue 3 + Vite 工作台
-- `deploy/schema.postgres.sql`：与当前表结构对应的 PostgreSQL 脚本
-- `docker-compose.yml`：应用本身可独立启动；`postgres`、`minio`、`qdrant`、`rabbitmq` 在 `infra` profile 中，供后续切换
+- `deploy/schema.postgres.sql`：与当前表结构对应的 PostgreSQL 脚本。运行中的服务不使用它
+- `docker-compose.yml`：应用本身用 SQLite 启动；`postgres`、`minio`、`qdrant`、`rabbitmq` 在 `infra` profile 中，本迭代不接入

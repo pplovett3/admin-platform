@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,7 +13,7 @@ import (
 
 var ErrNeedOCR = errors.New("未安装本地 OCR 引擎")
 
-func Extract(filename string, data []byte) (string, error) {
+func Extract(filename string, data []byte, ocrEngine string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
 	case ".txt", ".md", ".csv", ".json":
@@ -27,7 +25,7 @@ func Extract(filename string, data []byte) (string, error) {
 	case ".pdf":
 		return parsePDF(data), nil
 	case ".jpg", ".jpeg", ".png":
-		return ocrImage(filename, data)
+		return ocrImage(filename, data, ocrEngine)
 	default:
 		return "", errors.New("暂不支持该文件类型，请上传 txt、md、csv、docx、xlsx、pdf 或图片")
 	}
@@ -180,27 +178,3 @@ func hanRuns(data []byte) string {
 	return strings.TrimSpace(b.String())
 }
 
-func ocrImage(filename string, data []byte) (string, error) {
-	if _, err := exec.LookPath("tesseract"); err != nil {
-		return "", ErrNeedOCR
-	}
-	dir, err := os.MkdirTemp("", "eduocr")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, filepath.Base(filename))
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", err
-	}
-	cmd := exec.Command("tesseract", path, "stdout", "-l", "chi_sim+eng")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", ErrNeedOCR
-	}
-	text := strings.TrimSpace(string(out))
-	if text == "" {
-		return "", errors.New("OCR 没有识别到文字")
-	}
-	return text, nil
-}

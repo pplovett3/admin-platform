@@ -29,6 +29,10 @@ const (
 	KBYuwen      = "kb-yuwen"
 	KBMath       = "kb-math"
 	KBScience    = "kb-science"
+	GroupYuwen   = "g-yuwen"
+	GroupMath    = "g-math"
+	GroupGrade3  = "g-grade3"
+	GroupCustom  = "g-custom"
 	AgentYuwen   = "ag-yuwen"
 	AgentMath    = "ag-math"
 	AgentReport  = "ag-report"
@@ -41,15 +45,17 @@ type Store struct {
 }
 
 type User struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	PasswordHash string `json:"-"`
-	TenantID     string `json:"tenant_id"`
-	Role         string `json:"role"`
-	Department   string `json:"department"`
-	DisplayName  string `json:"display_name"`
-	CreateTime   string `json:"create_time"`
-	Status       string `json:"status"`
+	ID           string          `json:"id"`
+	Username     string          `json:"username"`
+	PasswordHash string          `json:"-"`
+	TenantID     string          `json:"tenant_id"`
+	Role         string          `json:"role"`
+	Department   string          `json:"department"`
+	DisplayName  string          `json:"display_name"`
+	CreateTime   string          `json:"create_time"`
+	Status       string          `json:"status"`
+	GroupIDs     []string        `json:"group_ids"`
+	Groups       []ResearchGroup `json:"groups"`
 }
 
 type KB struct {
@@ -62,6 +68,7 @@ type KB struct {
 	Department  string `json:"department"`
 	ACLUserIDs  string `json:"acl_user_ids"`
 	CreatedAt   string `json:"created_at"`
+	GroupID     string `json:"group_id"`
 }
 
 type Document struct {
@@ -103,6 +110,7 @@ type Agent struct {
 	KBIDs        []string `json:"kb_ids"`
 	PluginIDs    []string `json:"plugin_ids"`
 	CreateTime   string   `json:"create_time"`
+	GroupID      string   `json:"group_id"`
 }
 
 type Plugin struct {
@@ -178,6 +186,7 @@ type LearningStat struct {
 	ClassName  string `json:"class_name"`
 	Subject    string `json:"subject"`
 	Summary    string `json:"summary"`
+	GroupID    string `json:"group_id"`
 }
 
 func Open(dbPath, dataDir string) (*Store, error) {
@@ -254,7 +263,24 @@ func (s *Store) Migrate() error {
 			UNIQUE(tenant_id, term))`,
 		`CREATE TABLE IF NOT EXISTS learning_stats (
 			id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, department TEXT NOT NULL, class_name TEXT NOT NULL,
-			subject TEXT NOT NULL, summary TEXT NOT NULL)`,
+			subject TEXT NOT NULL, summary TEXT NOT NULL, group_id TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS research_groups (
+			id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, mode TEXT NOT NULL,
+			subject TEXT NOT NULL DEFAULT '', grade_label TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS user_groups (
+			user_id TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (user_id, group_id))`,
+		`CREATE TABLE IF NOT EXISTS school_settings (
+			tenant_id TEXT PRIMARY KEY,
+			model_base_url TEXT NOT NULL DEFAULT '',
+			model_api_key TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			ocr_engine TEXT NOT NULL DEFAULT 'auto',
+			identity_mode TEXT NOT NULL DEFAULT 'local',
+			identity_config_json TEXT NOT NULL DEFAULT '{}',
+			curriculum_version TEXT NOT NULL DEFAULT '',
+			curriculum_source TEXT NOT NULL DEFAULT '',
+			curriculum_note TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_chunks_kb ON document_chunks(kb_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_docs_kb ON knowledge_documents(kb_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id)`,
@@ -264,7 +290,38 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("迁移失败: %w\n%s", err, stmt)
 		}
 	}
+	for _, col := range []struct{ table, name, decl string }{
+		{"knowledge_bases", "group_id", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "group_id", "TEXT NOT NULL DEFAULT ''"},
+		{"learning_stats", "group_id", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn(col.table, col.name, col.decl); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *Store) ensureColumn(table, name, decl string) error {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var col, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &col, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if col == name {
+			return nil
+		}
+	}
+	_, err = s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + decl)
+	return err
 }
 
 func Now() string { return time.Now().UTC().Format(time.RFC3339) }
@@ -294,12 +351,26 @@ func (s *Store) Login(username, password string) (User, error) {
 
 func (s *Store) UserByUsername(name string) (User, error) {
 	row := s.db.QueryRow(`SELECT id, username, password_hash, tenant_id, role, department, display_name, create_time, status FROM users WHERE username=?`, name)
-	return scanUser(row)
+	u, err := scanUser(row)
+	if err != nil {
+		return u, err
+	}
+	if err := s.attachGroups(&u); err != nil {
+		return User{}, err
+	}
+	return u, nil
 }
 
 func (s *Store) UserByID(id string) (User, error) {
 	row := s.db.QueryRow(`SELECT id, username, password_hash, tenant_id, role, department, display_name, create_time, status FROM users WHERE id=?`, id)
-	return scanUser(row)
+	u, err := scanUser(row)
+	if err != nil {
+		return u, err
+	}
+	if err := s.attachGroups(&u); err != nil {
+		return User{}, err
+	}
+	return u, nil
 }
 
 func (s *Store) TenantName(id string) string {
@@ -348,9 +419,11 @@ func (s *Store) ListAudit(viewer User, limit int) ([]Audit, error) {
 	rows, err := s.db.Query(`SELECT a.id, a.tenant_id, a.user_id, a.ip_addr, a.operation_type, a.resource_type, a.resource_id,
 		a.operation_detail, a.operation_result, a.create_time, u.display_name, u.department
 		FROM audit_logs a JOIN users u ON u.id=a.user_id
-		WHERE (?='admin') OR (?='school_admin' AND a.tenant_id=?) OR (?='group_lead' AND u.department=? AND a.tenant_id=?) OR a.user_id=?
+		WHERE (?='admin') OR (?='school_admin' AND a.tenant_id=?) OR (?='group_lead' AND a.tenant_id=? AND EXISTS (
+			SELECT 1 FROM user_groups mine JOIN user_groups theirs ON mine.group_id=theirs.group_id
+			WHERE mine.user_id=? AND theirs.user_id=a.user_id)) OR a.user_id=?
 		ORDER BY a.create_time DESC LIMIT ?`,
-		viewer.Role, viewer.Role, viewer.TenantID, viewer.Role, viewer.Department, viewer.TenantID, viewer.ID, limit)
+		viewer.Role, viewer.Role, viewer.TenantID, viewer.Role, viewer.TenantID, viewer.ID, viewer.ID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -370,20 +443,20 @@ func (s *Store) CreateKB(k KB) error {
 	if k.ACLUserIDs == "" {
 		k.ACLUserIDs = "[]"
 	}
-	_, err := s.db.Exec(`INSERT INTO knowledge_bases (id, tenant_id, name, description, owner_id, share_type, department, acl_user_ids, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?)`, k.ID, k.TenantID, k.Name, k.Description, k.OwnerID, k.ShareType, k.Department, k.ACLUserIDs, k.CreatedAt)
+	_, err := s.db.Exec(`INSERT INTO knowledge_bases (id, tenant_id, name, description, owner_id, share_type, department, acl_user_ids, created_at, group_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`, k.ID, k.TenantID, k.Name, k.Description, k.OwnerID, k.ShareType, k.Department, k.ACLUserIDs, k.CreatedAt, k.GroupID)
 	return err
 }
 
 func (s *Store) GetKB(id string) (KB, error) {
 	var k KB
-	err := s.db.QueryRow(`SELECT id, tenant_id, name, description, owner_id, share_type, department, acl_user_ids, created_at FROM knowledge_bases WHERE id=?`, id).
-		Scan(&k.ID, &k.TenantID, &k.Name, &k.Description, &k.OwnerID, &k.ShareType, &k.Department, &k.ACLUserIDs, &k.CreatedAt)
+	err := s.db.QueryRow(`SELECT id, tenant_id, name, description, owner_id, share_type, department, acl_user_ids, created_at, group_id FROM knowledge_bases WHERE id=?`, id).
+		Scan(&k.ID, &k.TenantID, &k.Name, &k.Description, &k.OwnerID, &k.ShareType, &k.Department, &k.ACLUserIDs, &k.CreatedAt, &k.GroupID)
 	return k, err
 }
 
 func (s *Store) ListKB(u User) ([]KB, error) {
-	rows, err := s.db.Query(`SELECT id, tenant_id, name, description, owner_id, share_type, department, acl_user_ids, created_at FROM knowledge_bases ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id, tenant_id, name, description, owner_id, share_type, department, acl_user_ids, created_at, group_id FROM knowledge_bases ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +464,7 @@ func (s *Store) ListKB(u User) ([]KB, error) {
 	var out []KB
 	for rows.Next() {
 		var k KB
-		if err := rows.Scan(&k.ID, &k.TenantID, &k.Name, &k.Description, &k.OwnerID, &k.ShareType, &k.Department, &k.ACLUserIDs, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.TenantID, &k.Name, &k.Description, &k.OwnerID, &k.ShareType, &k.Department, &k.ACLUserIDs, &k.CreatedAt, &k.GroupID); err != nil {
 			return nil, err
 		}
 		if CanReadKB(u, k) {
@@ -502,16 +575,16 @@ func (s *Store) ListChunks(kbIDs []string) ([]Chunk, error) {
 func (s *Store) CreateAgent(a Agent) error {
 	kb, _ := json.Marshal(a.KBIDs)
 	pl, _ := json.Marshal(a.PluginIDs)
-	_, err := s.db.Exec(`INSERT INTO agents (id, tenant_id, name, description, system_prompt, owner_id, share_type, department, kb_ids, plugin_ids, create_time)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ID, a.TenantID, a.Name, a.Description, a.SystemPrompt, a.OwnerID, a.ShareType, a.Department, string(kb), string(pl), a.CreateTime)
+	_, err := s.db.Exec(`INSERT INTO agents (id, tenant_id, name, description, system_prompt, owner_id, share_type, department, kb_ids, plugin_ids, create_time, group_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ID, a.TenantID, a.Name, a.Description, a.SystemPrompt, a.OwnerID, a.ShareType, a.Department, string(kb), string(pl), a.CreateTime, a.GroupID)
 	return err
 }
 
 func (s *Store) UpdateAgent(a Agent) error {
 	kb, _ := json.Marshal(a.KBIDs)
 	pl, _ := json.Marshal(a.PluginIDs)
-	_, err := s.db.Exec(`UPDATE agents SET name=?, description=?, system_prompt=?, share_type=?, department=?, kb_ids=?, plugin_ids=? WHERE id=?`,
-		a.Name, a.Description, a.SystemPrompt, a.ShareType, a.Department, string(kb), string(pl), a.ID)
+	_, err := s.db.Exec(`UPDATE agents SET name=?, description=?, system_prompt=?, share_type=?, department=?, kb_ids=?, plugin_ids=?, group_id=? WHERE id=?`,
+		a.Name, a.Description, a.SystemPrompt, a.ShareType, a.Department, string(kb), string(pl), a.GroupID, a.ID)
 	return err
 }
 
@@ -523,8 +596,8 @@ func (s *Store) DeleteAgent(id string) error {
 func (s *Store) GetAgent(id string) (Agent, error) {
 	var a Agent
 	var kb, pl string
-	err := s.db.QueryRow(`SELECT id, tenant_id, name, description, system_prompt, owner_id, share_type, department, kb_ids, plugin_ids, create_time FROM agents WHERE id=?`, id).
-		Scan(&a.ID, &a.TenantID, &a.Name, &a.Description, &a.SystemPrompt, &a.OwnerID, &a.ShareType, &a.Department, &kb, &pl, &a.CreateTime)
+	err := s.db.QueryRow(`SELECT id, tenant_id, name, description, system_prompt, owner_id, share_type, department, kb_ids, plugin_ids, create_time, group_id FROM agents WHERE id=?`, id).
+		Scan(&a.ID, &a.TenantID, &a.Name, &a.Description, &a.SystemPrompt, &a.OwnerID, &a.ShareType, &a.Department, &kb, &pl, &a.CreateTime, &a.GroupID)
 	if err != nil {
 		return a, err
 	}
@@ -534,7 +607,7 @@ func (s *Store) GetAgent(id string) (Agent, error) {
 }
 
 func (s *Store) ListAgents(u User) ([]Agent, error) {
-	rows, err := s.db.Query(`SELECT id, tenant_id, name, description, system_prompt, owner_id, share_type, department, kb_ids, plugin_ids, create_time FROM agents ORDER BY create_time DESC`)
+	rows, err := s.db.Query(`SELECT id, tenant_id, name, description, system_prompt, owner_id, share_type, department, kb_ids, plugin_ids, create_time, group_id FROM agents ORDER BY create_time DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +616,7 @@ func (s *Store) ListAgents(u User) ([]Agent, error) {
 	for rows.Next() {
 		var a Agent
 		var kb, pl string
-		if err := rows.Scan(&a.ID, &a.TenantID, &a.Name, &a.Description, &a.SystemPrompt, &a.OwnerID, &a.ShareType, &a.Department, &kb, &pl, &a.CreateTime); err != nil {
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.Name, &a.Description, &a.SystemPrompt, &a.OwnerID, &a.ShareType, &a.Department, &kb, &pl, &a.CreateTime, &a.GroupID); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(kb), &a.KBIDs)
@@ -637,8 +710,8 @@ func (s *Store) CreateResource(r Resource) error {
 }
 
 func (s *Store) ListResources(u User) ([]Resource, error) {
-	rows, err := s.db.Query(`SELECT r.id, r.tenant_id, r.user_id, r.conversation_id, r.message_id, r.title, r.kind, r.file_path, r.watermark, r.trace_code, r.create_time, u.department
-		FROM generated_resources r JOIN users u ON u.id=r.user_id WHERE r.tenant_id=? OR ?='admin' ORDER BY r.create_time DESC`, u.TenantID, u.Role)
+	rows, err := s.db.Query(`SELECT r.id, r.tenant_id, r.user_id, r.conversation_id, r.message_id, r.title, r.kind, r.file_path, r.watermark, r.trace_code, r.create_time
+		FROM generated_resources r WHERE r.tenant_id=? OR ?='admin' ORDER BY r.create_time DESC`, u.TenantID, u.Role)
 	if err != nil {
 		return nil, err
 	}
@@ -646,12 +719,18 @@ func (s *Store) ListResources(u User) ([]Resource, error) {
 	var out []Resource
 	for rows.Next() {
 		var r Resource
-		var dept string
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.UserID, &r.ConversationID, &r.MessageID, &r.Title, &r.Kind, &r.FilePath, &r.Watermark, &r.TraceCode, &r.CreateTime, &dept); err != nil {
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.UserID, &r.ConversationID, &r.MessageID, &r.Title, &r.Kind, &r.FilePath, &r.Watermark, &r.TraceCode, &r.CreateTime); err != nil {
 			return nil, err
 		}
-		if u.Role == "admin" || u.Role == "school_admin" || r.UserID == u.ID || (u.Role == "group_lead" && dept == u.Department) {
+		if u.Role == "admin" || u.Role == "school_admin" || r.UserID == u.ID {
 			out = append(out, r)
+			continue
+		}
+		if u.Role == "group_lead" {
+			owner, err := s.UserByID(r.UserID)
+			if err == nil && SharesGroup(u, owner) {
+				out = append(out, r)
+			}
 		}
 	}
 	return out, rows.Err()
@@ -705,7 +784,7 @@ func (s *Store) DeleteWhitelist(id, tenantID string) error {
 }
 
 func (s *Store) ListLearningStats(u User) ([]LearningStat, error) {
-	rows, err := s.db.Query(`SELECT id, tenant_id, department, class_name, subject, summary FROM learning_stats WHERE tenant_id=?`, u.TenantID)
+	rows, err := s.db.Query(`SELECT id, tenant_id, department, class_name, subject, summary, group_id FROM learning_stats WHERE tenant_id=?`, u.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -713,10 +792,10 @@ func (s *Store) ListLearningStats(u User) ([]LearningStat, error) {
 	var out []LearningStat
 	for rows.Next() {
 		var st LearningStat
-		if err := rows.Scan(&st.ID, &st.TenantID, &st.Department, &st.ClassName, &st.Subject, &st.Summary); err != nil {
+		if err := rows.Scan(&st.ID, &st.TenantID, &st.Department, &st.ClassName, &st.Subject, &st.Summary, &st.GroupID); err != nil {
 			return nil, err
 		}
-		if u.Role == "admin" || u.Role == "school_admin" || st.Department == u.Department {
+		if u.Role == "admin" || u.Role == "school_admin" || inGroup(u, st.GroupID) {
 			out = append(out, st)
 		}
 	}
@@ -741,11 +820,11 @@ func (s *Store) Seed() error {
 		return err
 	}
 	users := []User{
-		{UserAdmin, "admin", string(hash), TenantID, "admin", "平台", "系统管理员", now, "active"},
-		{UserSchool, "school", string(hash), TenantID, "school_admin", "校务", "校务管理员", now, "active"},
-		{UserLead, "lead", string(hash), TenantID, "group_lead", "语文教研组", "语文组长", now, "active"},
-		{UserTeacher, "teacher", string(hash), TenantID, "teacher", "语文教研组", "语文教师", now, "active"},
-		{UserMath, "math", string(hash), TenantID, "teacher", "数学教研组", "数学教师", now, "active"},
+		{ID: UserAdmin, Username: "admin", PasswordHash: string(hash), TenantID: TenantID, Role: "admin", Department: "平台", DisplayName: "系统管理员", CreateTime: now, Status: "active"},
+		{ID: UserSchool, Username: "school", PasswordHash: string(hash), TenantID: TenantID, Role: "school_admin", Department: "校务", DisplayName: "校务管理员", CreateTime: now, Status: "active"},
+		{ID: UserLead, Username: "lead", PasswordHash: string(hash), TenantID: TenantID, Role: "group_lead", Department: "语文教研组", DisplayName: "语文组长", CreateTime: now, Status: "active"},
+		{ID: UserTeacher, Username: "teacher", PasswordHash: string(hash), TenantID: TenantID, Role: "teacher", Department: "语文教研组、三年级组", DisplayName: "语文教师", CreateTime: now, Status: "active"},
+		{ID: UserMath, Username: "math", PasswordHash: string(hash), TenantID: TenantID, Role: "teacher", Department: "数学教研组、三年级组", DisplayName: "数学教师", CreateTime: now, Status: "active"},
 	}
 	for _, u := range users {
 		if _, err := s.db.Exec(`INSERT INTO users (id, username, password_hash, tenant_id, role, department, display_name, create_time, status) VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -753,10 +832,13 @@ func (s *Store) Seed() error {
 			return err
 		}
 	}
+	if err := s.seedOrg(now); err != nil {
+		return err
+	}
 	kbs := []KB{
-		{KBYuwen, TenantID, "小学语文课标与教案", "公开课标摘录与比喻句教学提示，供备课引用。", UserLead, "public", "语文教研组", "[]", now},
-		{KBMath, TenantID, "小学数学教研组资料", "分数初步认识等教研组共享材料。", UserMath, "group", "数学教研组", "[]", now},
-		{KBScience, TenantID, "小学科学公开要点", "光合作用等科学常识，用于知识点校验对照。", UserSchool, "public", "校务", "[]", now},
+		{ID: KBYuwen, TenantID: TenantID, Name: "小学语文课标与教案", Description: "演示用课标摘录与比喻句教学提示。学校指定权威版本后，请用正式文件替换。", OwnerID: UserLead, ShareType: "public", Department: "语文教研组", ACLUserIDs: "[]", CreatedAt: now, GroupID: GroupYuwen},
+		{ID: KBMath, TenantID: TenantID, Name: "小学数学教研组资料", Description: "分数初步认识等教研组共享材料。", OwnerID: UserMath, ShareType: "group", Department: "数学教研组", ACLUserIDs: "[]", CreatedAt: now, GroupID: GroupMath},
+		{ID: KBScience, TenantID: TenantID, Name: "小学科学公开要点", Description: "光合作用等科学常识，用于知识点校验对照。", OwnerID: UserSchool, ShareType: "public", Department: "校务", ACLUserIDs: "[]", CreatedAt: now},
 	}
 	for _, k := range kbs {
 		if err := s.CreateKB(k); err != nil {
@@ -780,7 +862,7 @@ func (s *Store) Seed() error {
 		}
 		id := NewID()
 		vec, _ := json.Marshal(rag.Embed(d.text))
-		meta := `{"doc_type":"curriculum"}`
+		meta := `{"doc_type":"curriculum","authoritative":false,"source":"demo"}`
 		if err := s.InsertChunks([]Chunk{{ID: id, DocID: docID, KBID: d.kb, Text: d.text, MetaJSON: meta, VectorJSON: string(vec), VectorID: id}}); err != nil {
 			return err
 		}
@@ -800,8 +882,8 @@ func (s *Store) Seed() error {
 		}
 	}
 	agents := []Agent{
-		{ID: AgentYuwen, TenantID: TenantID, Name: "语文备课助手", Description: "依据校本语文资料写教案、课件大纲和练习。", SystemPrompt: "你是小学语文备课助手。优先引用知识库里的课标和教案表述，语言要能直接用于课堂。", OwnerID: UserLead, ShareType: "public", Department: "语文教研组", KBIDs: []string{KBYuwen}, PluginIDs: []string{"lesson", "ppt", "quiz", "rewrite", "grade"}, CreateTime: now},
-		{ID: AgentMath, TenantID: TenantID, Name: "数学出题助手", Description: "面向数学教研组，生成分数等内容的练习。", SystemPrompt: "你是小学数学出题助手。题目必须落在已学知识点内，并给出答案解析。", OwnerID: UserMath, ShareType: "group", Department: "数学教研组", KBIDs: []string{KBMath}, PluginIDs: []string{"quiz", "lesson"}, CreateTime: now},
+		{ID: AgentYuwen, TenantID: TenantID, Name: "语文备课助手", Description: "依据校本语文资料写教案、课件大纲和练习。", SystemPrompt: "你是小学语文备课助手。优先引用知识库里的课标和教案表述，语言要能直接用于课堂。若学校尚未指定权威版本，要说明材料只是演示摘录。", OwnerID: UserLead, ShareType: "public", Department: "语文教研组", KBIDs: []string{KBYuwen}, PluginIDs: []string{"lesson", "ppt", "quiz", "rewrite", "grade"}, CreateTime: now, GroupID: GroupYuwen},
+		{ID: AgentMath, TenantID: TenantID, Name: "数学出题助手", Description: "面向数学教研组，生成分数等内容的练习。", SystemPrompt: "你是小学数学出题助手。题目必须落在已学知识点内，并给出答案解析。", OwnerID: UserMath, ShareType: "group", Department: "数学教研组", KBIDs: []string{KBMath}, PluginIDs: []string{"quiz", "lesson"}, CreateTime: now, GroupID: GroupMath},
 		{ID: AgentReport, TenantID: TenantID, Name: "学情分析助手", Description: "只根据班级汇总指标写学情报告，不接触学生明细。", SystemPrompt: "你只讨论班级汇总指标。禁止推测或索要学生姓名、学号和个人分数。", OwnerID: UserSchool, ShareType: "public", Department: "校务", KBIDs: nil, PluginIDs: []string{"analytics"}, CreateTime: now},
 	}
 	for _, a := range agents {
@@ -820,12 +902,13 @@ func (s *Store) Seed() error {
 		}
 	}
 	stats := []LearningStat{
-		{NewID(), TenantID, "语文教研组", "三年级1班", "语文", "三年级1班语文：平均表现处于中等偏上，优秀率约三成，及格率接近全体。薄弱点为比喻句仿写和段落概括。此为汇总指标，不含学生姓名与个人分数。"},
-		{NewID(), TenantID, "数学教研组", "三年级2班", "数学", "三年级2班数学：整体达到课堂目标，薄弱点为平均分的含义和看图列式。此为汇总指标，不含学生姓名与个人分数。"},
+		{ID: NewID(), TenantID: TenantID, Department: "语文教研组", ClassName: "三年级1班", Subject: "语文", GroupID: GroupYuwen, Summary: "三年级1班语文：平均表现处于中等偏上，优秀率约三成，及格率接近全体。薄弱点为比喻句仿写和段落概括。此为汇总指标，不含学生姓名与个人分数。"},
+		{ID: NewID(), TenantID: TenantID, Department: "数学教研组", ClassName: "三年级2班", Subject: "数学", GroupID: GroupMath, Summary: "三年级2班数学：整体达到课堂目标，薄弱点为平均分的含义和看图列式。此为汇总指标，不含学生姓名与个人分数。"},
+		{ID: NewID(), TenantID: TenantID, Department: "三年级组", ClassName: "三年级", Subject: "综合", GroupID: GroupGrade3, Summary: "三年级组：各学科课堂目标整体达成。此为年级汇总，不含学生姓名与个人分数。"},
 	}
 	for _, st := range stats {
-		if _, err := s.db.Exec(`INSERT INTO learning_stats (id, tenant_id, department, class_name, subject, summary) VALUES (?,?,?,?,?,?)`,
-			st.ID, st.TenantID, st.Department, st.ClassName, st.Subject, st.Summary); err != nil {
+		if _, err := s.db.Exec(`INSERT INTO learning_stats (id, tenant_id, department, class_name, subject, summary, group_id) VALUES (?,?,?,?,?,?,?)`,
+			st.ID, st.TenantID, st.Department, st.ClassName, st.Subject, st.Summary, st.GroupID); err != nil {
 			return err
 		}
 	}

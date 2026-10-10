@@ -1,4 +1,5 @@
--- 与一期 SQLite 切片同构，供后续切换 PostgreSQL 14+。
+-- 与当前 SQLite 表结构同构，仅供以后需要时对照。
+-- 本迭代的运行服务不连接 PostgreSQL，继续使用 SQLite。
 -- 物理表名 users 对应设计文档中的 user，避免保留字。
 
 CREATE TABLE IF NOT EXISTS tenants (
@@ -29,7 +30,8 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
   share_type TEXT NOT NULL,
   department TEXT NOT NULL DEFAULT '',
   acl_user_ids TEXT NOT NULL DEFAULT '[]',
-  created_at TIMESTAMPTZ NOT NULL
+  created_at TIMESTAMPTZ NOT NULL,
+  group_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
@@ -69,7 +71,8 @@ CREATE TABLE IF NOT EXISTS agents (
   department TEXT NOT NULL DEFAULT '',
   kb_ids TEXT NOT NULL DEFAULT '[]',
   plugin_ids TEXT NOT NULL DEFAULT '[]',
-  create_time TIMESTAMPTZ NOT NULL
+  create_time TIMESTAMPTZ NOT NULL,
+  group_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS plugins (
@@ -157,7 +160,38 @@ CREATE TABLE IF NOT EXISTS learning_stats (
   department TEXT NOT NULL,
   class_name TEXT NOT NULL,
   subject TEXT NOT NULL,
-  summary TEXT NOT NULL
+  summary TEXT NOT NULL,
+  group_id TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS research_groups (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  grade_label TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_groups (
+  user_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  PRIMARY KEY (user_id, group_id)
+);
+
+CREATE TABLE IF NOT EXISTS school_settings (
+  tenant_id TEXT PRIMARY KEY,
+  model_base_url TEXT NOT NULL DEFAULT '',
+  model_api_key TEXT NOT NULL DEFAULT '',
+  model_name TEXT NOT NULL DEFAULT '',
+  ocr_engine TEXT NOT NULL DEFAULT 'auto',
+  identity_mode TEXT NOT NULL DEFAULT 'local',
+  identity_config_json TEXT NOT NULL DEFAULT '{}',
+  curriculum_version TEXT NOT NULL DEFAULT '',
+  curriculum_source TEXT NOT NULL DEFAULT '',
+  curriculum_note TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_kb ON document_chunks (kb_id);
