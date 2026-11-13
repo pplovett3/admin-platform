@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,12 +202,34 @@ func Open(dbPath, dataDir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	return &Store{db: db, dataDir: dataDir}, nil
+}
+
+// sqliteDSN 使用 SQLite URI，避免 Windows 盘符和空格把 file:C:\... 拆坏。
+func sqliteDSN(dbPath string) string {
+	const pragma = "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	p := strings.ReplaceAll(dbPath, "\\", "/")
+	drive := len(p) >= 2 && p[1] == ':' && isASCIIAlpha(p[0])
+	if !drive && p == dbPath && !strings.ContainsAny(p, " #?") {
+		return "file:" + dbPath + pragma
+	}
+	if drive && !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return "file:" + strings.Join(parts, "/") + pragma
+}
+
+func isASCIIAlpha(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }
 
 func (s *Store) Close() error { return s.db.Close() }
