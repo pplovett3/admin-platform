@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"io/fs"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,6 +29,7 @@ type Server struct {
 	DataKey    []byte
 	Gateway    *modelgw.Gateway
 	StaticDir  string
+	StaticFS   fs.FS
 	DailyLimit int
 }
 
@@ -690,6 +695,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if dir == "" {
+		if s.serveEmbedded(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte("<!doctype html><meta charset=utf-8><title>校本智教</title><p>前端尚未构建。请在 frontend 目录执行 npm install 与 npm run build。</p>"))
 		return
@@ -707,6 +715,69 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		full = filepath.Join(dir, "index.html")
 	}
 	http.ServeFile(w, r, full)
+}
+
+func (s *Server) serveEmbedded(w http.ResponseWriter, r *http.Request) bool {
+	if s.StaticFS == nil {
+		return false
+	}
+	if _, err := fs.Stat(s.StaticFS, "index.html"); err != nil {
+		return false
+	}
+	name := embeddedName(r.URL.Path)
+	if name == "" {
+		writeErr(w, 400, "路径不正确")
+		return true
+	}
+	if st, err := fs.Stat(s.StaticFS, name); err != nil || st.IsDir() {
+		name = "index.html"
+	}
+	body, err := fs.ReadFile(s.StaticFS, name)
+	if err != nil {
+		writeErr(w, 404, "页面不存在")
+		return true
+	}
+	if ct := staticContentType(name); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
+	return true
+}
+
+func embeddedName(urlPath string) string {
+	p := path.Clean("/" + urlPath)
+	if p == "/" || p == "." {
+		return "index.html"
+	}
+	if strings.HasPrefix(p, "/..") || strings.Contains(p, "..") {
+		return ""
+	}
+	return strings.TrimPrefix(p, "/")
+}
+
+func staticContentType(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".woff2":
+		return "font/woff2"
+	case ".ico":
+		return "image/x-icon"
+	default:
+		return mime.TypeByExtension(path.Ext(name))
+	}
 }
 
 func (s *Server) filterReadableKB(u store.User, ids []string) []string {

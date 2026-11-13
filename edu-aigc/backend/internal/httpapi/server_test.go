@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"edu-aigc/internal/ingest"
 	"edu-aigc/internal/secure"
@@ -523,6 +524,62 @@ func uploadBytes(t *testing.T, base, token, kbID, name string, content []byte) m
 		t.Fatalf("上传失败 %d %v", res.StatusCode, body)
 	}
 	return body
+}
+
+func TestEmbeddedFrontend(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "app.db"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Seed(); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		Store: st, Secret: []byte("test-secret"), DataKey: secure.KeyFrom("test-key"), DailyLimit: 50,
+		StaticFS: fstest.MapFS{
+			"index.html":    {Data: []byte("<!doctype html><title>校本智教</title><div id=app></div>")},
+			"assets/app.js": {Data: []byte("console.log(1)")},
+		},
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), `id=app`) {
+		t.Fatalf("页面回退失败 %d %s", res.StatusCode, body)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("html 类型 %s", ct)
+	}
+
+	js, err := http.Get(ts.URL + "/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBody, _ := io.ReadAll(js.Body)
+	js.Body.Close()
+	if js.StatusCode != 200 || string(jsBody) != "console.log(1)" {
+		t.Fatalf("脚本 %d %s", js.StatusCode, jsBody)
+	}
+	if ct := js.Header.Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Fatalf("脚本类型 %s", ct)
+	}
+
+	loginRes := do(t, http.MethodPost, ts.URL+"/api/auth/login", "", map[string]string{"username": "teacher", "password": store.DemoPassword})
+	if loginRes.StatusCode != 200 {
+		b, _ := io.ReadAll(loginRes.Body)
+		t.Fatalf("演示登录失败 %d %s", loginRes.StatusCode, b)
+	}
 }
 
 func tinyPNG(t *testing.T) []byte {

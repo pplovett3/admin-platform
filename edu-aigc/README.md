@@ -18,6 +18,8 @@ go run ./cmd/server
 
 浏览器打开 http://127.0.0.1:8080
 
+Windows 可以直接下载发布的 `edu-aigc.exe` 双击运行，不需要另外安装 Go 或 Node.js。程序会在本机打开上述地址，数据库和上传文件放在 exe 旁边的 `data` 目录。关闭窗口即停止服务。
+
 演示账号：`admin`、`school`、`lead`、`teacher`、`math`  
 密码都是 `Edu123456`
 
@@ -28,7 +30,7 @@ go run ./cmd/server
 | 变量 | 作用 |
 | --- | --- |
 | `ADDR` | 监听地址，默认 `:8080` |
-| `DATA_DIR` | 数据库与文件目录，默认 `backend/data` |
+| `DATA_DIR` | 数据库与文件目录。直接运行 exe 时默认在程序旁边的 `data`；`go run` 时用当前目录下的 `data` |
 | `JWT_SECRET` | 登录令牌密钥 |
 | `DATA_KEY` | 原始文件加密密钥 |
 | `MODEL_BASE_URL` | OpenAI 兼容接口地址。不绑定具体厂商，留空则不出校 |
